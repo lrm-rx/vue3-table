@@ -51,15 +51,16 @@ const onConfirm = () => {
   const opt = option.value
   // 标记当前列过滤是否激活（用于表头图标高亮）
   if (opt) opt.checked = isFilterActive(name.value, opt.data)
-  ctx?.emitConfirm?.()
+  // 传递 params 以便 tablePro 清除该列的草稿快照（确认后不再恢复）
+  ctx?.emitConfirm?.(props.params)
   ctx?.closePanel?.(props.params)
 }
 
 // 重置：清空当前列过滤条件 -> 抛 filter-reset 事件（面板保持打开）
+// 注意：opt.checked 由 clearCurrent（resetColumnFilter）内部设置，
+//       有 initParam 默认值时 checked=true（恢复默认），无默认值时 checked=false（清空）
 const onReset = () => {
   ctx?.clearCurrent?.(props.params)
-  const opt = option.value
-  if (opt) opt.checked = false
   ctx?.emitReset?.(props.params)
 }
 </script>

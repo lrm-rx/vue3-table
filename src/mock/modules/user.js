@@ -105,12 +105,16 @@ export default [
         pageSize = 10,
         keyword = '',
         status,
+        // FilterCheckbox 多选值以数组传递（如 ['admin', 'developer']）
+        // 参数 key 可通过列配置 defParamKey 自定义：role→roleList, department→departmentList
+        roleList,
         role,
+        departmentList,
+        department,
         // 列过滤使用的单独字段（FilterInput / FilterCheckbox / FilterDateRange）
         username,
         account,
         email,
-        department,
         phone,
         startCreateTime,
         endCreateTime,
@@ -121,8 +125,12 @@ export default [
       const current = Number(page || pageNum || 1)
       const size = Number(pageSize)
 
-      // 辅助：支持 FilterCheckbox 多选逗号分隔值（如 admin,editor），任一匹配即可
-      const splitCsv = (v) => (v == null || v === '' ? [] : String(v).split(',').map((s) => s.trim()).filter(Boolean))
+      // 辅助：将过滤值统一转为数组（支持数组 / 逗号分隔字符串 / 单值）
+      const toArray = (v) => {
+        if (v == null || v === '') return []
+        if (Array.isArray(v)) return v.filter((x) => x != null && x !== '')
+        return String(v).split(',').map((s) => s.trim()).filter(Boolean)
+      }
 
       // 过滤
       let filtered = [...userList]
@@ -155,18 +163,22 @@ export default [
         const kw = String(phone)
         filtered = filtered.filter((item) => String(item.phone).includes(kw))
       }
-      if (department) {
-        const kw = String(department)
-        filtered = filtered.filter((item) => String(item.department).includes(kw))
+      // 部门过滤：兼容 departmentList（defParamKey 自定义）与 department（默认 field）
+      const deptVal = departmentList != null ? departmentList : department
+      if (deptVal) {
+        const allow = toArray(deptVal)
+        if (allow.length) filtered = filtered.filter((item) => allow.includes(item.department))
       }
 
-      // FilterCheckbox：单选单值 / 多选逗号分隔
+      // FilterCheckbox：多选以数组传递，任一匹配即可
       if (status !== undefined && status !== '') {
-        const allow = splitCsv(status).map((s) => Number(s))
+        const allow = toArray(status).map((s) => Number(s))
         if (allow.length) filtered = filtered.filter((item) => allow.includes(item.status))
       }
-      if (role) {
-        const allow = splitCsv(role)
+      // 角色过滤：兼容 roleList（defParamKey 自定义）与 role（默认 field）
+      const roleVal = roleList != null ? roleList : role
+      if (roleVal) {
+        const allow = toArray(roleVal)
         if (allow.length) filtered = filtered.filter((item) => allow.includes(item.role))
       }
 
@@ -181,8 +193,8 @@ export default [
       // ====== 列排序（远程排序模拟）======
       // 约定：sortField / sortOrder 同时存在才生效；逗号分隔表示多字段优先级排序
       // 数字类字段（status, age 之类）按数值排序；字符串按 localeCompare；createTime 按时间字符串字典序（含补足）
-      const sortFields = splitCsv(sortField)
-      const sortOrders = splitCsv(sortOrder)
+      const sortFields = toArray(sortField)
+      const sortOrders = toArray(sortOrder)
       if (sortFields.length) {
         // 数字型字段集合（用于决定比较器）
         const numericFields = new Set(['status', 'phone'])
@@ -321,7 +333,7 @@ export default [
   // 使用 POST 请求，接收组合参数 { field, filters }：
   //   - field: 当前要拉取选项的列 field
   //   - filters: 所有 FilterCheckbox 列的当前过滤值，形如 { roleList: ['admin'], departmentList: [], status: [] }
-  //     参数 key 可通过列配置 filterParamKey 自定义（如 roleList / departmentList），默认取 field
+  //     参数 key 可通过列配置 defParamKey 自定义（如 roleList / departmentList），默认取 field
   // 注意：返回数据使用 name / code 键名，配合 tablePro 的
   // filterOptionKeys={ label: 'name', value: 'code' } 使用。
   // 演示级联过滤：当拉取 department 选项时，若已选角色包含 admin，则只返回 tech / product
@@ -330,7 +342,7 @@ export default [
     method: 'post',
     response: ({ body }) => {
       const { field, filters = {} } = body || {}
-      // 兼容自定义 filterParamKey（roleList）与默认 field（role）两种 key
+      // 兼容自定义 defParamKey（roleList）与默认 field（role）两种 key
       const roleValues = filters.roleList || filters.role || []
       let data = []
       if (field === 'role') {

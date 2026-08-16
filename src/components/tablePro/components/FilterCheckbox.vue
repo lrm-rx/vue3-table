@@ -14,9 +14,7 @@
  *     映射为统一的 { label, value } 结构；
  *   - 未传入 requestFilterAPI 时，回退到列配置 filterRender.props.options。
  *
- * 选项排序：
- *   - 仅在用户尚未主动操作（hasUserInteracted = false）时，把默认已选值置顶
- *   - 用户一旦勾选/取消勾选后（hasUserInteracted = true），保持选项原始顺序
+ * 选项顺序：始终保持选项的原始顺序（不再将已选值置顶），避免勾选/取消时出现跳动
  */
 import { computed, ref, inject, watch, nextTick } from 'vue'
 
@@ -48,12 +46,6 @@ const options = computed(() =>
   useRemote.value ? remoteOptions.value : staticOptions.value,
 )
 
-// 用户是否已主动勾选/取消勾选过（用于控制选项排序行为）
-// false：仅默认已选值置顶；true：保持选项原始顺序
-const hasUserInteracted = ref(false)
-// 记录面板打开时的初始已选值，用于判断用户是否修改了选择
-const initialSelected = ref(null)
-
 const search = computed({
   get: () => props.option.data?.search ?? '',
   set: (v) => {
@@ -66,41 +58,17 @@ const selected = computed({
   get: () => props.option.data?.values ?? [],
   set: (v) => {
     if (!props.option.data) props.option.data = { values: [], search: '' }
-    const prev = props.option.data.values || []
     props.option.data.values = v
-    // 用户主动修改了勾选 → 标记已交互（保持原顺序不再置顶）
-    if (initialSelected.value != null) {
-      const prevSet = new Set(prev.map(String))
-      const nextSet = new Set(v.map(String))
-      const changed =
-        prevSet.size !== nextSet.size ||
-        [...prevSet].some((x) => !nextSet.has(x))
-      if (changed) hasUserInteracted.value = true
-    }
   },
 })
 
-// 经搜索框过滤后的可见选项
-// - hasUserInteracted = false（默认状态）：已选值置顶，确保默认值在面板顶部可见
-// - hasUserInteracted = true（用户已交互）：保持选项原始顺序
+// 经搜索框过滤后的可见选项（始终保持选项原始顺序，不再将已选值置顶）
 const filteredOptions = computed(() => {
   const kw = (search.value || '').toLowerCase()
-  const base = !kw
-    ? options.value
-    : options.value.filter((o) =>
-        String(o.label ?? o.value).toLowerCase().includes(kw),
-      )
-  // 用户已交互 → 保持原顺序（只做关键词过滤，不再置顶）
-  if (hasUserInteracted.value) return base
-  // 默认状态 → 已选值置顶（保持原相对顺序），未选值在后
-  const sel = new Set(selected.value)
-  const checked = []
-  const unchecked = []
-  base.forEach((o) => {
-    if (sel.has(o.value)) checked.push(o)
-    else unchecked.push(o)
-  })
-  return [...checked, ...unchecked]
+  if (!kw) return options.value
+  return options.value.filter((o) =>
+    String(o.label ?? o.value).toLowerCase().includes(kw),
+  )
 })
 
 // 是否存在已配置的选项
@@ -154,13 +122,6 @@ watch(
   ],
   async ([field]) => {
     if (!field) return
-    // 每次重新打开面板 / 切换列时，先复位交互标记与快照
-    // （仅初始化默认值后，等待一个微任务再捕获快照，避免初始化写入误判为用户操作）
-    hasUserInteracted.value = false
-    initialSelected.value = null
-    await nextTick()
-    await nextTick()
-    initialSelected.value = [...(props.option.data?.values ?? [])]
     // 拉取选项（级联条件可能已变化，必须重新取）
     await doFetchOptions()
   },

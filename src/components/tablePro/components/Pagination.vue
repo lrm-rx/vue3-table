@@ -86,11 +86,17 @@ const handleCurrentChange = (page) => {
 </template>
 
 <style lang="scss" scoped>
+// 工具栏图标按钮间距（与 tablePro/index.vue 保持一致）
+$table-toolbar-gap: 12px;
+
 .table-pro-pagination {
+  // 弹性布局：在 table-pro 容器中作为独立一行，不被表格压缩
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 8px 12px;
+  // 左右内边距与工具栏一致（= 按钮间距），保证分页与工具栏左右对齐
+  padding: 8px $table-toolbar-gap;
   border-top: 1px solid var(--el-border-color-light, #ebeef5);
 }
 </style>

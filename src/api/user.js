@@ -30,7 +30,8 @@ export function getUserInfoApi() {
  * 使用 POST 请求，请求体（body）包含分页参数 + 列过滤/排序条件：
  *   - 分页：pageNum / pageSize
  *   - 过滤条件：与 tablePro 过滤时（filterStateToParams 约定）的扁平参数格式一致，
- *     例如 { role: 'admin,developer', status: '1', startCreateTime, endCreateTime, username }
+ *     多选值以数组传递（如 roleList: ['admin', 'developer']），
+ *     参数 key 默认取列 field，可通过列配置 defParamKey 自定义
  *   - 排序：sortField / sortOrder
  * @param {Object} params - 请求体 { pageNum, pageSize, ...过滤条件, sortField, sortOrder }
  * @returns {Promise}
@@ -81,7 +82,7 @@ export function batchDeleteUserApi(ids) {
  * 使用 POST 请求，支持组合参数（多列级联过滤场景）：
  *   - field: 当前要拉取选项的列 field
  *   - filters: 所有 FilterCheckbox 列的当前过滤值，形如 { role: ['admin'], department: [] }
- *     参数 key 可通过列配置 filterParamKey 自定义（如 roleList）
+ *     参数 key 可通过列配置 defParamKey 自定义（如 roleList）
  * 注意：返回数据的键名为 name / code，需配合 tablePro 的
  * filterOptionKeys={ label: 'name', value: 'code' } 使用。
  * @param {Object} params - { field, filters }

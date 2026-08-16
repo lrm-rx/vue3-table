@@ -1,60 +1,158 @@
-<script setup>
+<script setup lang="jsx">
 import { ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElTag, ElButton } from "element-plus";
 import { getUserListApi, getFilterOptionsApi } from "@/api";
 
-// ========== 列配置（匹配 mockjs 用户列表 + 列过滤渲染器 + 排序）==========
+// ========== 编辑控件预置选项（单独传递，不放在 columns 配置中）==========
+// 按列 field 索引，用于 ElSelect / ElRadio / ElCheckbox 等需要 options 的编辑组件
+const editOptions = ref({
+  // 部门编辑（ElSelect 下拉）
+  department: [
+    { label: "研发部", value: "dev" },
+    { label: "产品部", value: "product" },
+    { label: "设计部", value: "design" },
+    { label: "运营部", value: "ops" },
+    { label: "人事部", value: "hr" },
+  ],
+  // 角色编辑（ElRadio 单选）
+  role: [
+    { label: "管理员", value: "admin" },
+    { label: "编辑", value: "editor" },
+    { label: "访客", value: "viewer" },
+    { label: "开发者", value: "developer" },
+  ],
+  // 状态编辑（ElSwitch / ElRadio 通用）
+  status: [
+    { label: "启用", value: 1 },
+    { label: "禁用", value: 0 },
+  ],
+});
+
+// ========== 各列编辑控件的额外公共 props（单独传递，不放在 columns 中）==========
+const cellEditProps = ref({
+  username: { placeholder: "请输入姓名", clearable: true },
+  email: { placeholder: "请输入邮箱", clearable: true },
+  phone: { placeholder: "请输入手机号", clearable: true },
+  department: { placeholder: "请选择部门", clearable: true },
+  age: { min: 0, max: 120, controls: true, controlsPosition: "right" },
+});
+
+// ========== 列公共配置（业务侧高频重复配置统一放这里，降低 columns 噪音）==========
+// - 对齐方式、最小宽度、溢出省略等通用列属性
+// - filterDefaults 配合列的 filterType 自定义属性，让业务侧仅写 filterType: 'FilterInput'
+//   就自动获得完整的 filters + filterRender 配置，无需重复写 filters/data/filterRender
+const defaultColumnConfig = ref({
+  align: "center",
+  headerAlign: "center",
+  showOverflow: "tooltip",
+  minWidth: 120,
+  filterDefaults: {
+    FilterInput: {
+      filters: [{ data: { value: "" } }],
+      filterRender: { name: "FilterInput" },
+    },
+    FilterCheckbox: {
+      filters: [{ data: { values: [], search: "" } }],
+      filterRender: { name: "FilterCheckbox" },
+    },
+    FilterDateRange: {
+      filters: [{ data: { start: "", end: "" } }],
+      filterRender: { name: "FilterDateRange" },
+    },
+  },
+});
+
+// ========== 角色/状态 label 映射（render 显示 + formatter 共用）==========
+const roleTextMap = {
+  admin: { label: "管理员", type: "danger" },
+  editor: { label: "编辑", type: "warning" },
+  viewer: { label: "访客", type: "info" },
+  developer: { label: "开发者", type: "success" },
+};
+const statusTextMap = {
+  1: { label: "启用", type: "success" },
+  0: { label: "禁用", type: "info" },
+};
+
+// ========== 列配置（演示 JSX 只读渲染 + 可编辑单元格 + 配置简化）==========
 const columns = ref([
   { type: "checkbox", width: 50 },
   { type: "seq", width: 60, title: "序号" },
+
+  // 演示 1：filterType: 'FilterInput' + defaultColumnConfig → 自动注入公共配置
+  //         不再需要手动写 minWidth / align / filters:[{data:{value:''}}] / filterRender:{name:'FilterInput'}
+  // 演示 2：editRender 单元格可编辑（ElInput）
   {
     field: "username",
     title: "姓名",
-    minWidth: 130,
     sortable: true,
-    // FilterInput: 按姓名模糊查询
-    filters: [{ data: { value: "" } }],
-    filterRender: { name: "FilterInput" },
+    filterType: "FilterInput",
+    editRender: { name: "ElInput" },
   },
+
+  // 演示：filterType 简化 + editRender
+  //       render: 'cell_account' 字符串引用外部具名插槽（#cell_account）
   {
     field: "account",
     title: "账号",
-    minWidth: 130,
     sortable: true,
-    filters: [{ data: { value: "" } }],
-    filterRender: { name: "FilterInput" },
+    filterType: "FilterInput",
+    editRender: { name: "ElInput" },
+    render: "cell_account",
   },
+
+  // 演示 3：render（JSX 只读渲染）—— 自定义邮箱样式并加图标
   {
     field: "email",
     title: "邮箱",
-    minWidth: 200,
-    filters: [{ data: { value: "" } }],
-    filterRender: { name: "FilterInput" },
+    filterType: "FilterInput",
+    editRender: { name: "ElInput", props: { type: "email" } },
+    render: (h, params) => {
+      const val = params.cellValue;
+      if (!val) return <span style="color:#c0c4cc">—</span>;
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            color: "#409eff",
+          }}
+        >
+          <svg
+            width={14}
+            height={14}
+            viewBox="0 0 1024 1024"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M832 128H192c-53 0-96 43-96 96v576c0 53 43 96 96 96h640c53 0 96-43 96-96V224c0-53-43-96-96-96zm0 128L512 512 192 256V224c0-17.7 14.3-32 32-32h576c17.7 0 32 14.3 32 32v32z" />
+          </svg>
+          {val}
+        </span>
+      );
+    },
   },
+
+  // 演示：render: 'cell_phone' 字符串插槽引用（插槽式渲染）
   {
     field: "phone",
     title: "手机号",
-    minWidth: 130,
     sortable: true,
-    filters: [{ data: { value: "" } }],
-    filterRender: { name: "FilterInput" },
+    filterType: "FilterInput",
+    editRender: { name: "ElInput" },
+    render: "cell_phone",
   },
+
+  // 演示 4：render (JSX 只读) → 使用 Element Plus ElTag 渲染角色
+  //         editRender: ElRadio（使用 editOptions.role 预置选项）
+  //         filterType: FilterCheckbox + defParamKey 自定义参数 key
   {
     field: "role",
     title: "角色",
-    minWidth: 110,
     sortable: true,
-    // 自定义 requestFilterAPI 组合参数的 key（默认取 field）
-    filterParamKey: "roleList",
-    formatter: ({ cellValue }) =>
-      ({
-        admin: "管理员",
-        editor: "编辑",
-        viewer: "访客",
-        developer: "开发者",
-      })[cellValue] ?? cellValue,
-    // FilterCheckbox: 多选角色
-    filters: [{ data: { values: [], search: "" } }],
+    defParamKey: "roleList",
+    filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
       props: {
@@ -66,33 +164,42 @@ const columns = ref([
         ],
       },
     },
+    editRender: { name: "ElRadio" },
+    render: (h, params) => {
+      const info = roleTextMap[params.cellValue] || {
+        label: params.cellValue || "—",
+        type: "",
+      };
+      return (
+        <ElTag type={info.type || "info"} size="small" effect="light">
+          {info.label}
+        </ElTag>
+      );
+    },
   },
+
+  // 演示 5：editRender ElSelect（使用 editOptions.department 预置选项数组）
   {
     field: "department",
     title: "部门",
-    minWidth: 100,
     sortable: true,
-    // 自定义 requestFilterAPI 组合参数的 key（默认取 field）
-    filterParamKey: "departmentList",
-    // FilterCheckbox: 多选部门（远程模式时选项由 requestFilterAPI 提供）
-    filters: [{ data: { values: [], search: "" } }],
+    defParamKey: "departmentList",
+    filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
-      props: {
-        // 静态选项：未传 requestFilterAPI 时使用；传了 requestFilterAPI 时由接口提供
-        options: [],
-      },
+      props: { options: [] }, // 远程模式：选项由 requestFilterAPI 提供
     },
+    editRender: { name: "ElSelect" },
   },
+
+  // 演示 6：editRender ElSwitch（使用 cellEditProps.status 的额外 props）
+  //         render JSX 渲染状态标签
   {
     field: "status",
     title: "状态",
-    width: 100,
+    width: 110,
     sortable: true,
-    formatter: ({ cellValue }) =>
-      ({ 0: "禁用", 1: "启用" })[cellValue] ?? cellValue,
-    // FilterCheckbox: 多选状态
-    filters: [{ data: { values: [], search: "" } }],
+    filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
       props: {
@@ -102,15 +209,88 @@ const columns = ref([
         ],
       },
     },
+    editRender: {
+      name: "ElSwitch",
+      props: {
+        activeValue: 1,
+        inactiveValue: 0,
+        inlinePrompt: true,
+        activeText: "启",
+        inactiveText: "禁",
+      },
+    },
+    render: (h, params) => {
+      const info = statusTextMap[params.cellValue] || {
+        label: String(params.cellValue),
+        type: "info",
+      };
+      return (
+        <ElTag type={info.type} size="small" effect="dark">
+          {info.label}
+        </ElTag>
+      );
+    },
   },
+
+  // 演示 7：editRender ElInputNumber 年龄编辑
+  {
+    field: "age",
+    title: "年龄",
+    width: 120,
+    sortable: true,
+    editRender: { name: "ElInputNumber" },
+  },
+
+  // 演示 8：editRender ElDatePicker 编辑入职日期
+  //         + filterType FilterDateRange 简化配置
   {
     field: "createTime",
     title: "创建时间",
-    minWidth: 180,
     sortable: true,
-    // FilterDateRange: 按创建时间区间过滤
-    filters: [{ data: { start: "", end: "" } }],
-    filterRender: { name: "FilterDateRange" },
+    filterType: "FilterDateRange",
+    editRender: {
+      name: "ElDatePicker",
+      props: {
+        type: "date",
+        valueFormat: "YYYY-MM-DD HH:mm:ss",
+        placeholder: "选择日期",
+      },
+    },
+  },
+
+  // 演示 9：render (JSX 只读) 自定义操作列（插槽式也可，此处演示配置式 JSX）
+  {
+    field: "action",
+    title: "操作",
+    width: 180,
+    fixed: "right",
+    render: (h, params) => {
+      const row = params.row;
+      return (
+        <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+          <ElButton
+            type="primary"
+            link
+            size="small"
+            onClick={() =>
+              ElMessage.success(`编辑：${row.username || row.account}`)
+            }
+          >
+            编辑
+          </ElButton>
+          <ElButton
+            type="danger"
+            link
+            size="small"
+            onClick={() =>
+              ElMessage.warning(`删除：${row.username || row.account}`)
+            }
+          >
+            删除
+          </ElButton>
+        </div>
+      );
+    },
   },
 ]);
 
@@ -118,13 +298,7 @@ const columns = ref([
 const currentApi = ref(getUserListApi);
 
 // ========== 过滤选项远程接口（requestFilterAPI）==========
-// 切换是否使用远程接口拉取 FilterCheckbox 列的过滤选项
-// requestFilterAPI 接收组合参数 { field, filters }：
-//   - field: 当前要拉取选项的列 field
-//   - filters: 所有 FilterCheckbox 列的当前过滤值，形如 { roleList: ['admin'], departmentList: [], status: [] }
-//     参数 key 通过列配置 filterParamKey 自定义（role/department 列），默认取 field（status 列）
 const useRemoteFilter = ref(true);
-// 接口返回数据使用 name / code 键名，配合 filterOptionKeys 映射
 const requestFilterAPI = ref(
   useRemoteFilter.value ? (params) => getFilterOptionsApi(params) : null,
 );
@@ -139,11 +313,6 @@ const onToggleRemoteFilter = () => {
 };
 
 // ========== 默认参数（initParam）==========
-// 首屏加载即应用：默认分页 20 条/页、按创建时间降序、默认过滤角色=admin+developer
-// 演示要点：
-//  - role 多选默认值 ['admin','developer'] → 面板打开时这两个选项会置顶显示
-//  - sortField/sortOrder → 排序图标高亮
-//  - filters → 过滤图标高亮 + 面板内显示默认值
 const initParam = ref({
   pageNum: 1,
   pageSize: 20,
@@ -163,19 +332,16 @@ const onDataCallback = (data) => {
       { admin: "管理员", editor: "编辑", viewer: "访客", developer: "开发者" }[
         item.role
       ] || item.role,
+    // 给 age 填个默认值，方便编辑演示（mock 没返回 age 时也能看到效果）
+    age: item.age != null ? item.age : 18 + ((Math.random() * 40) | 0),
   }));
   return data;
 };
 
-// 过滤选项数据回调：对 requestFilterAPI 返回的原始数据进行二次处理
-// 验证点：
-//   1) 回调被调用 → 控制台打印收到的原始数据
-//   2) 数据处理生效 → 过滤掉 code === 'tester' 的项（mock 默认返回5项，处理后应为4项）
+// 过滤选项数据回调
 const onFilterDataCallback = (data) => {
-  console.log("[filterDataCallback] 收到原始数据:", data);
   if (!Array.isArray(data)) return data;
   const filtered = data.filter((item) => item.code !== "tester");
-  console.log("[filterDataCallback] 处理后数据:", filtered);
   return filtered;
 };
 
@@ -185,135 +351,71 @@ const onRequestError = (error) => {
   ElMessage.error(`表格请求失败：${error?.message || error}`);
 };
 
-// ========== 测试按钮 ==========
+// ========== 测试按钮 / 事件回调 ==========
 const tableProRef = ref();
 const paginationEnabled = ref(true);
 
-const onManualRefresh = () => {
-  tableProRef.value?.getTableList?.();
-  ElMessage.success("已触发手动刷新");
-};
-
-const failingApi = () =>
-  Promise.reject(new Error("模拟请求失败（测试 requestError）"));
-const onTestError = () => {
-  currentApi.value = failingApi;
-  ElMessage.info("已切换为失败 api，点击手动刷新触发 requestError");
-};
-
-const onRestoreApi = () => {
-  currentApi.value = getUserListApi;
-  ElMessage.success("已恢复为 getUserListApi");
-};
-
-const onTogglePagination = () => {
-  paginationEnabled.value = !paginationEnabled.value;
-  ElMessage.info(
-    `分页已${paginationEnabled.value ? "开启" : "关闭"}（重新挂载组件生效）`,
+// 单元格编辑完成事件
+const onCellEditChange = (params) => {
+  const { row, column, field, value, cellValue } = params || {};
+  ElMessage.success(
+    `单元格编辑完成：${column?.title || field} = ${JSON.stringify(value)}（原值=${JSON.stringify(cellValue)}，行：${row?.username || row?.account}）`,
   );
+  console.log("[cell-edit-change]", params);
+};
+
+const onRefresh = (payload) => {
+  const activeFilters = (payload?.filters || []).filter((f) => f.active).length;
+  const activeSorts = (payload?.sorts || []).filter((s) => s.order).length;
+  ElMessage.success(
+    `工具栏刷新：过滤条件 ${activeFilters} 条，排序条件 ${activeSorts} 条`,
+  );
+};
+
+const onResetFilter = (payload) => {
+  const remainingFilters = (payload?.filters || []).filter(
+    (f) => f.active,
+  ).length;
+  ElMessage.info(`工具栏重置过滤：剩余过滤 ${remainingFilters} 条`);
 };
 
 const onCheckboxChange = () => {
   const rows = tableProRef.value?.getCheckboxRecords?.() || [];
   if (rows.length) ElMessage.info(`已选中 ${rows.length} 条`);
 };
-
-// 列过滤确认 / 重置 / 全部重置事件回调（外部监听；内部已联动 useTable）
-const onFilterConfirm = (payload) => {
-  const active = (payload?.filters || []).filter((f) => f.active).length;
-  if (active)
-    ElMessage.success(
-      `列过滤确认：生效条件 ${active} 条（已联动 useTable.search）`,
-    );
-};
-const onFilterReset = (payload) => {
-  const field = payload?.column?.field || "未知";
-  ElMessage.info(`已重置列「${field}」过滤条件（已联动 useTable.search）`);
-};
-const onFilterResetAll = () => {
-  ElMessage.info("已清空所有列过滤条件（已联动 useTable.search）");
-};
-
-// 列排序变化事件回调（外部监听；内部已联动 useTable.search）
-const onSortChange = (payload) => {
-  const field = payload?.field || payload?.property || "未知";
-  const order = payload?.order || "无";
-  ElMessage.success(
-    `列排序变化：${field} → ${order}（已联动 useTable.search）`,
-  );
-};
-
-// 工具栏「刷新」按钮事件：参数为当前所有过滤 + 排序条件
-const onRefresh = (payload) => {
-  const activeFilters = (payload?.filters || []).filter((f) => f.active).length;
-  const activeSorts = (payload?.sorts || []).filter((s) => s.order).length;
-  ElMessage.success(
-    `工具栏刷新：过滤条件 ${activeFilters} 条，排序条件 ${activeSorts} 条（已根据当前搜索条件重新请求）`,
-  );
-};
-
-// 工具栏「重置过滤」按钮事件：参数为清空后的所有过滤 + 排序条件
-const onResetFilter = (payload) => {
-  const remainingFilters = (payload?.filters || []).filter(
-    (f) => f.active,
-  ).length;
-  const activeSorts = (payload?.sorts || []).filter((s) => s.order).length;
-  ElMessage.info(
-    `工具栏重置过滤：剩余过滤 ${remainingFilters} 条，排序 ${activeSorts} 条（已联动 useTable.search）`,
-  );
-};
 </script>
 
 <template>
   <div style="padding: 20px; height: 100vh; box-sizing: border-box">
-    <!-- <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
-      <el-button type="primary" @click="onManualRefresh"
-        >手动刷新（getTableList）</el-button
-      >
-      <el-button type="danger" @click="onTestError"
-        >模拟请求错误（测试 requestError）</el-button
-      >
-      <el-button type="warning" @click="onRestoreApi">恢复正常 api</el-button>
-      <el-button @click="onTogglePagination">切换分页（pagination）</el-button>
-      <el-button
-        :type="useRemoteFilter ? 'success' : 'info'"
-        @click="onToggleRemoteFilter"
-      >
-        过滤选项远程接口：{{ useRemoteFilter ? "开启" : "关闭" }}
-      </el-button>
-      <el-tag v-if="currentApi === getUserListApi" type="success"
-        >当前 api: getUserListApi</el-tag
-      >
-      <el-tag v-else type="danger">当前 api: failingApi</el-tag>
-      <el-tag v-if="paginationEnabled" type="info">pagination: true</el-tag>
-      <el-tag v-else type="warning">pagination: false</el-tag>
-      <el-tag v-if="useRemoteFilter" type="success"
-        >filterOptionKeys: { label: name, value: code }</el-tag
-      >
+    <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
+      <el-tag type="success">
+        演示：<b>filterType</b> 简化过滤配置 + <b>defaultColumnConfig</b> 公共列配置
+      </el-tag>
+      <el-tag type="warning">
+        演示：<b>render</b> JSX 只读渲染（邮箱图标、角色/状态 ElTag、操作列按钮）
+      </el-tag>
+      <el-tag type="danger">
+        演示：<b>editRender</b> 可编辑单元格（单击进入编辑，编辑完触发 cell-edit-change）
+      </el-tag>
+      <el-tag type="info">
+        演示：<b>editOptions</b> / <b>cellEditProps</b> 单独传递编辑选项数组与公共 props
+      </el-tag>
     </div>
-    <div style="margin-bottom: 10px; color: #606266; font-size: 13px">
-      验证提示（默认参数 initParam 已启用）：<br />
-      ·
-      首屏加载即带默认参数：pageSize=20、sortField=createTime&sortOrder=desc、role=admin,developer；<br />
-      · 工具栏「刷新」按钮：根据当前搜索条件（过滤+排序）重新触发请求，并抛出
-      @refresh 事件（参数为所有过滤+排序条件）；<br />
-      · 工具栏「重置过滤」按钮：清空所有列过滤条件并重新请求，抛出 @reset-filter
-      事件（参数为清空后的过滤+排序条件）；<br />
-      · 过滤图标高亮（漏斗变蓝 +
-      红点角标）表示该列有过滤条件生效；排序图标高亮表示该列有排序生效；<br />
-      ·
-      打开「角色」过滤面板，默认选中的「管理员」「开发者」会置顶显示（多选默认值可见性保障）；<br />
-      · 列排序仅通过点击排序图标触发（trigger:
-      'button'），点击列标题文字不会触发排序。<br />
-      ·
-      <b>requestFilterAPI</b
-      >：开启后点击「角色」「部门」「状态」列的过滤图标会远程拉取选项（接口返回
-      name/code 键名，通过 filterOptionKeys 映射为
-      label/value）；关闭后「角色」「状态」回退到列配置静态
-      options，「部门」无静态 options 则显示「无匹配数据」。<br />
-      · 仅 FilterCheckbox 列受 requestFilterAPI 影响，FilterInput /
-      FilterDateRange 列不受影响。
-    </div> -->
+    <div style="margin-bottom: 10px; color: #606266; font-size: 13px; line-height: 1.8">
+      功能验证要点：<br />
+      · <b>配置简化</b>：姓名/账号/手机号/邮箱列仅写 <code>filterType: 'FilterInput'</code>，
+        不再手动写 <code>filters: [{ data: { value: '' } }] filterRender: { name: 'FilterInput' }</code>
+        （由 defaultColumnConfig.filterDefaults 自动注入）<br />
+      · <b>公共列配置</b>：所有列自动居中对齐、120 最小宽度、溢出省略（由 defaultColumnConfig 批量注入）<br />
+      · <b>render (JSX 只读)</b>：邮箱列显示图标、角色列/状态列渲染 ElTag、操作列渲染 ElButton
+        （配置式写 render 函数即可，无需在 template 定义具名插槽）<br />
+      · <b>editRender (可编辑)</b>：单击单元格进入编辑模式（双击也可），
+        姓名/账号/邮箱/手机号 → ElInput，年龄 → ElInputNumber，部门 → ElSelect，
+        角色 → ElRadio，状态 → ElSwitch，创建时间 → ElDatePicker<br />
+      · <b>editOptions 单独传递</b>：部门/角色/状态列的编辑选项数组未放在 columns 里，
+        而是通过 tablePro 的 :edit-options 单独注入，保持 columns 纯净无数据噪音<br />
+      · <b>cell-edit-change 事件</b>：任意单元格编辑完成后弹出消息提示并在控制台打印完整参数
+    </div>
 
     <TablePro
       ref="tableProRef"
@@ -333,20 +435,32 @@ const onResetFilter = (payload) => {
       :pagination="paginationEnabled"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"
+      :default-column-config="defaultColumnConfig"
+      :edit-options="editOptions"
+      :cell-edit-props="cellEditProps"
       height="auto"
       @checkbox-change="onCheckboxChange"
       @checkbox-all="onCheckboxChange"
-      @filter-confirm="onFilterConfirm"
-      @filter-reset="onFilterReset"
-      @filter-reset-all="onFilterResetAll"
-      @sort-change="onSortChange"
       @refresh="onRefresh"
       @reset-filter="onResetFilter"
+      @cell-edit-change="onCellEditChange"
     >
       <template #toolbarButtons>
         <el-button type="primary">按钮1</el-button>
         <el-button type="primary">按钮2</el-button>
-        <el-button type="primary">按钮3</el-button>
+      </template>
+
+      <!-- 插槽式渲染演示：外部具名插槽 #cell_xxx（对应 columns[i].field）-->
+      <!-- 也支持在 columns 里写 render: "cell_phone"（字符串引用外部插槽名）-->
+      <template #cell_phone="{ row }">
+        <el-tag type="primary" size="small" effect="plain">
+          📞 {{ row.phone }}
+        </el-tag>
+      </template>
+      <template #cell_account="{ row }">
+        <el-link type="primary" :underline="false">
+          <b>@{{ row.account || '' }}</b>
+        </el-link>
       </template>
     </TablePro>
   </div>
