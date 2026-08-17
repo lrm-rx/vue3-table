@@ -236,6 +236,7 @@ const columns = ref([
     width: 120,
     sortable: true,
     filterType: "FilterNumberRange",
+    filterRender: { name: "FilterNumberRange", suffix: "岁" },
     editRender: { name: "ElInputNumber" },
   },
 
