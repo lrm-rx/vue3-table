@@ -26,7 +26,6 @@ const min = computed({
   set: (v) => {
     const n = normalize(v)
     if (n === undefined) return // 非合理数字，不写入
-    if (!props.option.data) props.option.data = { min: null, max: null }
     props.option.data.min = n
   },
 })
@@ -36,7 +35,6 @@ const max = computed({
   set: (v) => {
     const n = normalize(v)
     if (n === undefined) return // 非合理数字，不写入
-    if (!props.option.data) props.option.data = { min: null, max: null }
     props.option.data.max = n
   },
 })
@@ -93,7 +91,6 @@ const suffix = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-
   &__sep {
     color: var(--el-text-color-secondary, #909399);
     flex-shrink: 0;
@@ -106,7 +103,7 @@ const suffix = computed(() => {
   }
 
   :deep(.el-input-number) {
-    width: 100%;
+    max-width: 130px !important;
   }
 }
 </style>

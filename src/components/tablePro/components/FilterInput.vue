@@ -16,7 +16,6 @@ const emit = defineEmits(['confirm'])
 const value = computed({
   get: () => props.option.data?.value ?? '',
   set: (v) => {
-    if (!props.option.data) props.option.data = { value: '' }
     props.option.data.value = v
   },
 })

@@ -458,9 +458,9 @@ const onCheckboxChange = () => {
         </el-tag>
       </template>
       <template #cell_account="{ row }">
-        <el-link type="primary" :underline="false">
+        <el-button link type="primary" :underline="false">
           <b>@{{ row.account || '' }}</b>
-        </el-link>
+        </el-button>
       </template>
 
       <!-- 字符串式 editRender 演示：editRender: 'edit_email' 引用此插槽 -->

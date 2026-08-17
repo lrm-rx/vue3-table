@@ -49,7 +49,6 @@ const options = computed(() =>
 const search = computed({
   get: () => props.option.data?.search ?? '',
   set: (v) => {
-    if (!props.option.data) props.option.data = { values: [], search: '' }
     props.option.data.search = v
   },
 })
@@ -57,7 +56,6 @@ const search = computed({
 const selected = computed({
   get: () => props.option.data?.values ?? [],
   set: (v) => {
-    if (!props.option.data) props.option.data = { values: [], search: '' }
     props.option.data.values = v
   },
 })

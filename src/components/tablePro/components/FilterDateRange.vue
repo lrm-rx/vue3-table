@@ -17,9 +17,9 @@ const range = computed({
     return d.start || d.end ? [d.start || '', d.end || ''] : []
   },
   set: (v) => {
-    if (!props.option.data) props.option.data = { start: '', end: '' }
-    props.option.data.start = v?.[0] || ''
-    props.option.data.end = v?.[1] || ''
+    const data = props.option.data
+    data.start = v?.[0] || ''
+    data.end = v?.[1] || ''
   },
 })
 
