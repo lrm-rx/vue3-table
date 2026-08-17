@@ -37,30 +37,8 @@ const cellEditProps = ref({
   age: { min: 0, max: 120, controls: true, controlsPosition: "right" },
 });
 
-// ========== 列公共配置（业务侧高频重复配置统一放这里，降低 columns 噪音）==========
-// - 对齐方式、最小宽度、溢出省略等通用列属性
-// - filterDefaults 配合列的 filterType 自定义属性，让业务侧仅写 filterType: 'FilterInput'
-//   就自动获得完整的 filters + filterRender 配置，无需重复写 filters/data/filterRender
-const defaultColumnConfig = ref({
-  align: "center",
-  headerAlign: "center",
-  showOverflow: "tooltip",
-  minWidth: 120,
-  filterDefaults: {
-    FilterInput: {
-      filters: [{ data: { value: "" } }],
-      filterRender: { name: "FilterInput" },
-    },
-    FilterCheckbox: {
-      filters: [{ data: { values: [], search: "" } }],
-      filterRender: { name: "FilterCheckbox" },
-    },
-    FilterDateRange: {
-      filters: [{ data: { start: "", end: "" } }],
-      filterRender: { name: "FilterDateRange" },
-    },
-  },
-});
+// 注：列公共配置（showOverflow / minWidth / filterDefaults 等）已内置到 tablePro 组件
+// 默认值，业务侧无需再写 defaultColumnConfig；如需覆盖可传入 :default-column-config
 
 // ========== 角色/状态 label 映射（render 显示 + formatter 共用）==========
 const roleTextMap = {
@@ -79,8 +57,8 @@ const columns = ref([
   { type: "checkbox", width: 50 },
   { type: "seq", width: 60, title: "序号" },
 
-  // 演示 1：filterType: 'FilterInput' + defaultColumnConfig → 自动注入公共配置
-  //         不再需要手动写 minWidth / align / filters:[{data:{value:''}}] / filterRender:{name:'FilterInput'}
+  // 演示 1：filterType: 'FilterInput' → 自动注入完整过滤配置
+  //         不再需要手动写 filters:[{data:{value:''}}] / filterRender:{name:'FilterInput'}
   // 演示 2：editRender 单元格可编辑（ElInput）
   {
     field: "username",
@@ -106,8 +84,10 @@ const columns = ref([
     field: "email",
     title: "邮箱",
     filterType: "FilterInput",
-    editRender: { name: "ElInput", props: { type: "email" } },
-    render: (h, params) => {
+    sortable: true,
+    // 字符串式 editRender：引用 #edit_email 外部具名插槽
+    editRender: "edit_email",
+    render: (params, h) => {
       const val = params.cellValue;
       if (!val) return <span style="color:#c0c4cc">—</span>;
       return (
@@ -135,12 +115,29 @@ const columns = ref([
   },
 
   // 演示：render: 'cell_phone' 字符串插槽引用（插槽式渲染）
+  //       editRender 函数式 JSX 自定义编辑控件（直接 v-model 绑 row[field]，编辑即生效）
   {
     field: "phone",
     title: "手机号",
     sortable: true,
     filterType: "FilterInput",
-    editRender: { name: "ElInput" },
+    // headerRender: (params, h) => {
+    //   return <span>手机号aaa</span>;
+    // },
+    headerRender: "header_phone",
+    editRender: (params, h) => {
+      const { row, field } = params;
+      return (
+        <ElInput
+          modelValue={row[field]}
+          onUpdate:modelValue={(v) => {
+            row[field] = v;
+          }}
+          placeholder="请输入手机号"
+          clearable
+        />
+      );
+    },
     render: "cell_phone",
   },
 
@@ -165,7 +162,7 @@ const columns = ref([
       },
     },
     editRender: { name: "ElRadio" },
-    render: (h, params) => {
+    render: (params, h) => {
       const info = roleTextMap[params.cellValue] || {
         label: params.cellValue || "—",
         type: "",
@@ -202,12 +199,12 @@ const columns = ref([
     filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
-      props: {
-        options: [
-          { label: "启用", value: 1 },
-          { label: "禁用", value: 0 },
-        ],
-      },
+      // props: {
+      //   options: [
+      //     { label: "启用", value: 1 },
+      //     { label: "禁用", value: 0 },
+      //   ],
+      // },
     },
     editRender: {
       name: "ElSwitch",
@@ -219,7 +216,7 @@ const columns = ref([
         inactiveText: "禁",
       },
     },
-    render: (h, params) => {
+    render: (params, h) => {
       const info = statusTextMap[params.cellValue] || {
         label: String(params.cellValue),
         type: "info",
@@ -238,6 +235,7 @@ const columns = ref([
     title: "年龄",
     width: 120,
     sortable: true,
+    filterType: "FilterNumberRange",
     editRender: { name: "ElInputNumber" },
   },
 
@@ -258,13 +256,14 @@ const columns = ref([
     },
   },
 
-  // 演示 9：render (JSX 只读) 自定义操作列（插槽式也可，此处演示配置式 JSX）
+  // 演示 9：操作列专用插槽 —— 列里写 render: 'operation' 引用 #operation 具名插槽
+  //         （tablePro 会自动把 #operation 透传给 vxe-grid 对应列的 default 插槽）
   {
     field: "action",
     title: "操作",
     width: 180,
     fixed: "right",
-    render: (h, params) => {
+    render: (params, h) => {
       const row = params.row;
       return (
         <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
@@ -291,6 +290,7 @@ const columns = ref([
         </div>
       );
     },
+    // render: "operation",
   },
 ]);
 
@@ -389,7 +389,7 @@ const onCheckboxChange = () => {
   <div style="padding: 20px; height: 100vh; box-sizing: border-box">
     <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
       <el-tag type="success">
-        演示：<b>filterType</b> 简化过滤配置 + <b>defaultColumnConfig</b> 公共列配置
+        演示：<b>filterType</b> 简化过滤配置 + 组件内置公共列配置
       </el-tag>
       <el-tag type="warning">
         演示：<b>render</b> JSX 只读渲染（邮箱图标、角色/状态 ElTag、操作列按钮）
@@ -405,8 +405,8 @@ const onCheckboxChange = () => {
       功能验证要点：<br />
       · <b>配置简化</b>：姓名/账号/手机号/邮箱列仅写 <code>filterType: 'FilterInput'</code>，
         不再手动写 <code>filters: [{ data: { value: '' } }] filterRender: { name: 'FilterInput' }</code>
-        （由 defaultColumnConfig.filterDefaults 自动注入）<br />
-      · <b>公共列配置</b>：所有列自动居中对齐、120 最小宽度、溢出省略（由 defaultColumnConfig 批量注入）<br />
+        （由组件内置 DEFAULT_FILTER_CONFIG 自动注入）<br />
+      · <b>公共列配置</b>：所有数据列默认左对齐、120 最小宽度、溢出省略（由组件内置默认值生效）<br />
       · <b>render (JSX 只读)</b>：邮箱列显示图标、角色列/状态列渲染 ElTag、操作列渲染 ElButton
         （配置式写 render 函数即可，无需在 template 定义具名插槽）<br />
       · <b>editRender (可编辑)</b>：单击单元格进入编辑模式（双击也可），
@@ -435,7 +435,6 @@ const onCheckboxChange = () => {
       :pagination="paginationEnabled"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"
-      :default-column-config="defaultColumnConfig"
       :edit-options="editOptions"
       :cell-edit-props="cellEditProps"
       height="auto"
@@ -461,6 +460,46 @@ const onCheckboxChange = () => {
         <el-link type="primary" :underline="false">
           <b>@{{ row.account || '' }}</b>
         </el-link>
+      </template>
+
+      <!-- 字符串式 editRender 演示：editRender: 'edit_email' 引用此插槽 -->
+      <template #edit_email="{ row }">
+        <el-input
+          :model-value="row.email"
+          @update:model-value="(v) => (row.email = v)"
+          type="email"
+          placeholder="请输入邮箱"
+          clearable
+        />
+      </template>
+
+      <!-- 表头插槽式渲染演示：#header_xxx（对应 columns[i].field）-->
+      <!-- 也支持在 columns 里写 headerRender: "header_phone"（字符串引用外部插槽名）-->
+      <template #header_phone="{ column }">
+        <span style="color: var(--el-color-primary)">
+          📱 {{ column.title }}
+        </span>
+      </template>
+      <!-- 操作列专用插槽：列配置 render: 'operation' 引用此插槽 -->
+      <template #operation="{ row }">
+        <div style="display: flex; gap: 8px; justify-content: center">
+          <el-button
+            type="primary"
+            link
+            size="small"
+            @click="ElMessage.success(`编辑：${row.username || row.account}`)"
+          >
+            编辑
+          </el-button>
+          <el-button
+            type="danger"
+            link
+            size="small"
+            @click="ElMessage.warning(`删除：${row.username || row.account}`)"
+          >
+            删除
+          </el-button>
+        </div>
       </template>
     </TablePro>
   </div>

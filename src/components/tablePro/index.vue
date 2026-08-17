@@ -73,8 +73,26 @@ const props = defineProps({
   radioConfig: { type: Object, default: () => ({}) },
   sortConfig: {
     type: Object,
-    default: () => ({ remote: true, multiple: true, trigger: "button" }),
+    default: () => ({ remote: true, multiple: false, trigger: "button" }),
   },
+  // ========== 排序参数 key 自定义配置 ==========
+  // 远程排序时，控制最终发送到后端的排序参数 key 名与格式。
+  // 默认行为：
+  //   单字段排序：params.sortField = 'xxx' / params.sortOrder = 'asc' | 'desc'
+  //   多字段排序：params.sortField = 'a,b' / params.sortOrder = 'asc,desc'
+  // 可通过该 prop 自定义：
+  //   {
+  //     fieldKey: 'sortField',         // 排序字段的参数 key（默认 'sortField'）
+  //     orderKey: 'sortOrder',         // 排序方向的参数 key（默认 'sortOrder'）
+  //     combined: false,               // 是否将字段+方向合并到一个 key（默认 false）
+  //     combinedKey: 'orderBy',         // 合并模式的 key 名（默认 'orderBy'）
+  //     combinedSeparator: ' ',        // 合并模式字段与方向之间的分隔符（默认空格）
+  //     combinedMultiSeparator: ','    // 多字段合并时各排序项之间的分隔符（默认逗号）
+  //   }
+  // 合并模式示例（combined: true）：
+  //   单字段：params.orderBy = 'createTime desc'
+  //   多字段：params.orderBy = 'createTime desc,username asc'
+  sortParamConfig: { type: Object, default: () => ({}) },
   // 过滤配置（默认 remote：由外部根据 filter-confirm 事件自行过滤，vxe 不做客户端过滤）
   // transfer: true — 将过滤面板 teleport 到 body，避免面板定位越界时触发表格水平滚动条
   filterConfig: {
@@ -85,9 +103,15 @@ const props = defineProps({
   expandConfig: { type: Object, default: () => ({}) },
   columnConfig: { type: Object, default: () => ({}) },
   // 单元格编辑配置（vxe editConfig，控制触发方式：click/manual/dblclick 等）
+  // keepSource: true 保留行源数据，编辑后可对比修改（标记脏数据）
   editConfig: {
     type: Object,
-    default: () => ({ trigger: "click", mode: "cell", showStatus: true }),
+    default: () => ({
+      trigger: "click",
+      mode: "cell",
+      showStatus: true,
+      keepSource: true,
+    }),
   },
   // 工具栏开关
   showToolbar: { type: Boolean, default: true },
@@ -148,7 +172,7 @@ const props = defineProps({
   //   {
   //     pageNum: 1,                  // 默认页码
   //     pageSize: 20,                // 默认每页条数
-  //     sortField: 'createTime',      // 默认排序字段（逗号分隔多字段）
+  //     sortField: 'createTime',      // 默认排序字段（逗号分隔多字段；最终发送的参数 key 由 sortParamConfig 控制）
   //     sortOrder: 'desc',            // 默认排序方向（逗号分隔多字段）
   //     filters: {                    // 默认列过滤值（按 field 索引）
   //       username: '袁',                          // FilterInput
@@ -161,20 +185,15 @@ const props = defineProps({
   initParam: { type: Object, default: () => ({}) },
 
   // ========== 列公共配置（基于业务封装，减少 columns 中重复配置）==========
-  // 对所有列自动合并，列自身配置优先级更高。示例：
-  //   {
-  //     align: 'center',           // 对齐方式
-  //     headerAlign: 'center',     // 表头对齐
-  //     showOverflow: 'tooltip',   // 内容溢出省略 + tooltip
-  //     minWidth: 120,             // 最小宽度
-  //     // 过滤器公共默认值（所有使用 FilterInput 的列自动带默认配置）
-  //     filterDefaults: {
-  //       FilterInput:   { filters: [{ data: { value: '' } }], filterRender: { name: 'FilterInput' } },
-  //       FilterCheckbox:{ filters: [{ data: { values: [], search: '' } }], filterRender: { name: 'FilterCheckbox' } },
-  //       FilterDateRange:{ filters: [{ data: { start: '', end: '' } }], filterRender: { name: 'FilterDateRange' } },
-  //     }
-  //   }
-  defaultColumnConfig: { type: Object, default: () => ({}) },
+  // 对所有列自动合并，列自身配置优先级更高。组件已内置默认值：
+  //   { showOverflow: 'tooltip', minWidth: 120 }
+  // 业务侧可通过该 prop 覆盖或扩展（如自定义 align / headerAlign）。
+  // 注：filterDefaults 的兜底由组件内部 DEFAULT_FILTER_CONFIG 提供（FilterInput / FilterCheckbox /
+  //     FilterDateRange / FilterNumberRange），无需在此重复配置；如需自定义渲染器默认值可覆盖。
+  defaultColumnConfig: {
+    type: Object,
+    default: () => ({ showOverflow: "tooltip", minWidth: 120 }),
+  },
 
   // ========== 单元格可编辑功能：预置的选项数组（单独传递，不放在 columns 中）==========
   // 按列 field 索引：{ [field]: [{ label, value, disabled? }, ...] }
@@ -245,8 +264,8 @@ function resolveEditStateKey(row, field) {
     : `auto:${(row[ROW_ID_KEY] = ++_rowAutoIdSeq)}`
   return `${prefix}:${String(field)}`
 }
-// 进入编辑态：用 row[field] 初始化本地值
-function onEditActived(params) {
+// 进入编辑态：用 row[field] 初始化本地值（作为 actived 时的"旧值"快照）
+function onEditActivated(params) {
   const row = params && params.row
   const field = params && params.column && params.column.field
   if (!row || !field) return
@@ -254,6 +273,10 @@ function onEditActived(params) {
   editLocalState[key] = row[field]
 }
 // 退出编辑态：从本地值写回 row + 发射事件 + 清理本地态
+// 分流：
+//   - 对象式 editRender：editLocalState 存本地编辑值（新值），row[field] 为旧值 → 写回 row
+//   - 函数式/字符串式 editRender：用户编辑期间直接绑 row[field]（新值已落 row），
+//     editLocalState 为 actived 时的旧值 → 不覆盖 row，仅以 row[field] 为新值发射事件
 function onEditClosed(params) {
   const row = params && params.row
   const col = params && params.column
@@ -261,15 +284,29 @@ function onEditClosed(params) {
   if (!row || !field) return
   const key = resolveEditStateKey(row, field)
   if (!(key in editLocalState)) return
-  const newValue = editLocalState[key]
-  const oldValue = row[field]
-  try { delete editLocalState[key] } catch (e) { editLocalState[key] = undefined }
-  // 严格避免引用 / 严格相等判断不一致时仍然提交（保证组件可控）
-  if (true || newValue !== oldValue) {
-    // 直接在原 row 上修改（不调用 $table.setCellValue，避免触发 vxe 重新进入编辑态）
+
+  const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
+  let newValue, oldValue
+
+  if (isCustomEdit) {
+    // 函数式/字符串式：row[field] 已是用户改后的新值，editLocalState 是旧值快照
+    newValue = row[field]
+    oldValue = editLocalState[key]
+    // 不覆盖 row（已是新值）
+  } else {
+    // 对象式：editLocalState 是本地编辑值（新值），row[field] 是旧值
+    newValue = editLocalState[key]
+    oldValue = row[field]
+    // 写回 row（不调用 $table.setCellValue，避免触发 vxe 重新进入编辑态）
     try {
       row[field] = newValue
     } catch (e) { /* noop */ }
+  }
+
+  try { delete editLocalState[key] } catch (e) { editLocalState[key] = undefined }
+
+  // 值发生变化才发射 cell-edit-change（避免进编辑又退出无改动时也触发）
+  if (newValue !== oldValue) {
     const ctx = getEditContext_()
     if (typeof ctx.onCellEditChange === 'function') {
       ctx.onCellEditChange({
@@ -499,8 +536,23 @@ const mergedColumns = computed(() => {
       col = { ...defColumnCommon, ...col }
       // 列 slots 在上面展开 defColumnCommon 时可能被覆盖，重新恢复
       col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      // 保证单元格对齐与表头一致：若仅显式设置了 headerAlign 而未设置 align，则用 headerAlign
-      if (col.headerAlign != null && col.align == null) col.align = col.headerAlign
+    }
+
+    // ---------- 1a) 对齐默认值与一致性 ----------
+    // - checkbox/seq 特殊列默认居中（未显式设置时生效）
+    // - 普通列默认左对齐（align='left'）；若仅显式设置了 headerAlign 而未设置 align，
+    //   则用 headerAlign 保证单元格与表头对齐一致
+    // 优先级：列显式配置 > defaultColumnConfig > 组件默认 'left'
+    // 注：vxe-table 会根据 headerAlign 自动给表头 th 加 col--left/center/right class，
+    //     样式侧直接用该原生 class 做差异化布局，无需在此注入自定义标记 class。
+    if (colType === 'checkbox' || colType === 'seq') {
+      if (col.align == null) col.align = 'center'
+      if (col.headerAlign == null) col.headerAlign = 'center'
+    } else if (col.headerAlign != null && col.align == null) {
+      col.align = col.headerAlign
+    } else if (col.align == null && col.headerAlign == null) {
+      col.align = 'left'
+      col.headerAlign = 'left'
     }
 
     // ---------- 2) filterType 自动注入过滤配置 ----------
@@ -516,6 +568,8 @@ const mergedColumns = computed(() => {
 
     // ---------- 3) render → slots.default（配置式 JSX 只读渲染 + 插槽式字符串引用）----------
     // 优先级：用户显式 slots.default > col.render > (editRender + options 的 label 回退)
+    // 函数签名：(params, h) => VNode，params 为标准化参数对象，h 为 Vue 渲染函数
+    // （params 比 h 更常用，故 params 置首；JSX 写法下 h 可省略，仅在需手写 h(...) 时用到）
     const field = col.field || ''
     if (!col.slots.default) {
       if (typeof col.render === 'function') {
@@ -533,7 +587,7 @@ const mergedColumns = computed(() => {
               columnIndex: scope.$columnIndex,
               $table: scope.$table,
             }
-            return userRender(h, params)
+            return userRender(params, h)
           } catch (e) {
             return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
           }
@@ -547,84 +601,160 @@ const mergedColumns = computed(() => {
       }
     }
 
-    // ---------- 4) editRender → editable:true + slots.edit 构建 Element Plus 编辑控件 ----------
-    if (col.editRender && col.editRender.name) {
-      if (col.editable == null) col.editable = true
-      const erName = col.editRender.name
-      const mapEntry = EL_EDIT_MAP[erName]
-      if (mapEntry) {
-        const Comp = mapEntry.comp
-        const wrapName = mapEntry.wrap
-        // 构建 slots.edit（若用户未显式写）
-        if (!col.slots.edit) {
-          // 使用 markRaw 标记为原始对象，避免 Vue 深度劫持造成渲染循环或状态丢失
-          col.slots.edit = markRaw((scope) => {
-            const row = scope.row
-            const originalVal = field != null && row ? row[field] : undefined
-            const currentVal = scope.cellValue != null ? scope.cellValue : originalVal
-            // 从全局编辑态取本地值（由 edit-actived 初始化），避免在 slots 函数里新建 ref/watch
-            const stateKey = resolveEditStateKey(row, field)
-            if (!(stateKey in editLocalState)) editLocalState[stateKey] = currentVal
-            const bindProps = mergeEditCompProps(field, col.editRender, undefined, {
-              modelValue: editLocalState[stateKey],
-              'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
-            })
-            // onBlur / onChange 不再主动 commit，统一在 edit-closed 提交，避免 vxe 内部状态机混乱
-
-            if (!wrapName) {
-              // Input / InputNumber / DatePicker / TimePicker / Switch / Rate：无子项
-              return h(Comp, bindProps)
+    // ---------- 3a) headerRender → slots.header（配置式 JSX 自定义表头 + 插槽式字符串引用）----------
+    // 优先级：用户显式 slots.header > col.headerRender
+    // 支持：
+    //   1) 函数式 JSX：(params, h) => VNode，params 标准化字段：column/field/title/$table/$rowIndex/$columnIndex
+    //   2) 字符串：引用外部具名插槽名（如 headerRender: 'header_role' 对应 <template #header_role="{column}">）
+    if (!col.slots.header) {
+      if (typeof col.headerRender === 'function') {
+        const userHeader = col.headerRender
+        col.slots.header = markRaw((scope) => {
+          try {
+            const params = {
+              column: col,
+              field,
+              title: col.title,
+              $table: scope.$table,
+              rowIndex: scope.$rowIndex,
+              columnIndex: scope.$columnIndex,
             }
-
-            // Select / Radio* / Checkbox*：渲染 options
-            const erInnerProps = (col.editRender && col.editRender.props) || {}
-            const options = resolveEditOptions(field, erInnerProps)
-            const WrapComp = WRAP_COMPONENTS[wrapName]
-            const children = options.map((opt, idx) => {
-              const labelText = opt.label != null ? opt.label : opt.value
-              const optValue = opt.value != null ? opt.value : opt.label
-              const key = `${field}-opt-${idx}-${String(optValue)}`
-              const wrapProps = { key }
-              // ElOption：value + label（显示）
-              if (wrapName === 'ElOption') {
-                wrapProps.label = labelText
-                wrapProps.value = optValue
-              } else {
-                // ElRadio / ElCheckbox 组内子项：label 是 group 的选中绑定值
-                wrapProps.label = optValue
-                wrapProps.value = optValue
-              }
-              if (opt.disabled != null) wrapProps.disabled = !!opt.disabled
-              return h(WrapComp, wrapProps, () => labelText)
-            })
-
-            return h(Comp, bindProps, { default: () => children })
-          })
-        } else if (typeof col.slots.edit === 'string') {
-          // 用户写 slots.edit: 'edit_username' 字符串时，什么都不做，直接交给外部具名插槽
+            return userHeader(params, h)
+          } catch (e) {
+            return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
+          }
+        })
+      } else if (typeof col.headerRender === 'string') {
+        const slotName = col.headerRender
+        if (typeof externalSlots[slotName] === 'function') {
+          col.slots.header = slotName
         }
+      }
+    }
 
-        // 如果用户没有提供 render/slots.default，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
-        if (!col.slots.default) {
-          col.slots.default = markRaw((scope) => {
-            const raw = field != null && scope.row ? scope.row[field] : undefined
-            const erInnerProps = (col.editRender && col.editRender.props) || {}
-            const options = resolveEditOptions(field, erInnerProps)
-            if (options.length) {
-              const findLabel = (v) => {
-                const hit = options.find((o) => o.value === v || String(o.value) === String(v))
-                return hit ? hit.label : (v == null ? '' : String(v))
+    // ---------- 4) editRender → editable:true + slots.edit 构建编辑控件 ----------
+    // 支持三种形式（优先级：用户显式 slots.edit > editRender）：
+    //   1) 函数式 JSX：editRender: (params, h) => VNode
+    //      params 标准化字段：row/column/field/cellValue/rowIndex/columnIndex/$table
+    //      适用：完全自定义编辑控件（如组合组件、第三方组件、条件渲染等）
+    //      注：函数式下编辑态值需用户自行管理（如 v-model 绑 row[field]），
+    //          退出编辑由 vxe edit-closed 统一提交，组件不自动接管 modelValue。
+    //   2) 字符串引用外部具名插槽：editRender: 'edit_phone' → <template #edit_phone>
+    //   3) 对象配置式（原有）：editRender: { name: 'ElInput', props: {...} }
+    //      通过 EL_EDIT_MAP 映射到 Element Plus 组件，自动管理本地编辑态 + label 回退
+    if (col.editRender) {
+      if (typeof col.editRender === 'function') {
+        // (1) 函数式 JSX
+        if (col.editable == null) col.editable = true
+        if (!col.slots.edit) {
+          const userEdit = col.editRender
+          col.slots.edit = markRaw((scope) => {
+            try {
+              const row = scope.row
+              const originalVal = field != null && row ? row[field] : undefined
+              const params = {
+                row,
+                column: col,
+                field,
+                cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
+                rowIndex: scope.$rowIndex,
+                columnIndex: scope.$columnIndex,
+                $table: scope.$table,
               }
-              if (Array.isArray(raw)) {
-                return h(
-                  'span',
-                  raw.map((v, i) => h('span', { key: i, style: i ? 'margin-left:6px' : '' }, findLabel(v)))
-                )
-              }
-              return h('span', findLabel(raw))
+              return userEdit(params, h)
+            } catch (e) {
+              return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
             }
-            return h('span', raw == null ? '' : String(raw))
           })
+        }
+      } else if (typeof col.editRender === 'string') {
+        // (2) 字符串引用外部具名插槽
+        if (col.editable == null) col.editable = true
+        if (!col.slots.edit) {
+          const slotName = col.editRender
+          if (typeof externalSlots[slotName] === 'function') {
+            col.slots.edit = slotName
+          }
+        }
+      } else if (col.editRender.name) {
+        // (3) 对象配置式（原有逻辑：EL_EDIT_MAP 映射 + 本地编辑态 + label 回退）
+        if (col.editable == null) col.editable = true
+        const erName = col.editRender.name
+        const mapEntry = EL_EDIT_MAP[erName]
+        if (mapEntry) {
+          const Comp = mapEntry.comp
+          const wrapName = mapEntry.wrap
+          // 构建 slots.edit（若用户未显式写）
+          if (!col.slots.edit) {
+            // 使用 markRaw 标记为原始对象，避免 Vue 深度劫持造成渲染循环或状态丢失
+            col.slots.edit = markRaw((scope) => {
+              const row = scope.row
+              const originalVal = field != null && row ? row[field] : undefined
+              const currentVal = scope.cellValue != null ? scope.cellValue : originalVal
+              // 从全局编辑态取本地值（由 edit-actived 初始化），避免在 slots 函数里新建 ref/watch
+              const stateKey = resolveEditStateKey(row, field)
+              if (!(stateKey in editLocalState)) editLocalState[stateKey] = currentVal
+              const bindProps = mergeEditCompProps(field, col.editRender, undefined, {
+                modelValue: editLocalState[stateKey],
+                'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
+              })
+              // onBlur / onChange 不再主动 commit，统一在 edit-closed 提交，避免 vxe 内部状态机混乱
+
+              if (!wrapName) {
+                // Input / InputNumber / DatePicker / TimePicker / Switch / Rate：无子项
+                return h(Comp, bindProps)
+              }
+
+              // Select / Radio* / Checkbox*：渲染 options
+              const erInnerProps = (col.editRender && col.editRender.props) || {}
+              const options = resolveEditOptions(field, erInnerProps)
+              const WrapComp = WRAP_COMPONENTS[wrapName]
+              const children = options.map((opt, idx) => {
+                const labelText = opt.label != null ? opt.label : opt.value
+                const optValue = opt.value != null ? opt.value : opt.label
+                const key = `${field}-opt-${idx}-${String(optValue)}`
+                const wrapProps = { key }
+                // ElOption：value + label（显示）
+                if (wrapName === 'ElOption') {
+                  wrapProps.label = labelText
+                  wrapProps.value = optValue
+                } else {
+                  // ElRadio / ElCheckbox 组内子项：label 是 group 的选中绑定值
+                  wrapProps.label = optValue
+                  wrapProps.value = optValue
+                }
+                if (opt.disabled != null) wrapProps.disabled = !!opt.disabled
+                return h(WrapComp, wrapProps, () => labelText)
+              })
+
+              return h(Comp, bindProps, { default: () => children })
+            })
+          } else if (typeof col.slots.edit === 'string') {
+            // 用户写 slots.edit: 'edit_username' 字符串时，什么都不做，直接交给外部具名插槽
+          }
+
+          // 如果用户没有提供 render/slots.default，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
+          if (!col.slots.default) {
+            col.slots.default = markRaw((scope) => {
+              const raw = field != null && scope.row ? scope.row[field] : undefined
+              const erInnerProps = (col.editRender && col.editRender.props) || {}
+              const options = resolveEditOptions(field, erInnerProps)
+              if (options.length) {
+                const findLabel = (v) => {
+                  const hit = options.find((o) => o.value === v || String(o.value) === String(v))
+                  return hit ? hit.label : (v == null ? '' : String(v))
+                }
+                if (Array.isArray(raw)) {
+                  return h(
+                    'span',
+                    raw.map((v, i) => h('span', { key: i, style: i ? 'margin-left:6px' : '' }, findLabel(v)))
+                  )
+                }
+                return h('span', findLabel(raw))
+              }
+              return h('span', raw == null ? '' : String(raw))
+            })
+          }
         }
       }
     }
@@ -647,6 +777,23 @@ const mergedColumns = computed(() => {
 
     return col
   })
+})
+
+// ========== 函数式/字符串式 editRender 标记 ==========
+// 这两种形式下用户编辑期间直接绑 row[field]（值已落 row），onEditClosed 不能用
+// editLocalState（actived 时的旧值）覆盖 row[field]，否则会回滚编辑 + cell-edit-change
+// 参数 value/cellValue 颠倒。这里收集这类列的 field，供 onEditClosed 分流处理。
+const customEditFields = computed(() => {
+  const m = {}
+  ;(mergedColumns.value || []).forEach((col) => {
+    if (!col || typeof col !== 'object') return
+    const er = col.editRender
+    // 函数式 / 字符串式均视为自定义编辑（用户意图自管编辑态）
+    if (typeof er === 'function' || typeof er === 'string') {
+      m[col.field] = true
+    }
+  })
+  return m
 })
 
 // 实际渲染的表格数据：远程模式由 useTable 接管，否则使用外部传入的 data
@@ -710,13 +857,18 @@ const applyInitParam = () => {
       tableHook.pageable.value.pageSize = Number(ip.pageSize) || 10;
   }
 
-  // 2) 排序默认值 → 写入 searchParam
+  // 2) 排序默认值 → 写入 searchParam（复用 sortStateToParams，自动遵循 sortParamConfig 自定义 key）
   if (sortFields.length) {
     const sp = tableHook.searchParam.value;
-    sp.sortField = ip.sortField;
-    if (ip.sortOrder) sp.sortOrder = ip.sortOrder;
-    lastSortParamKeys.add("sortField");
-    lastSortParamKeys.add("sortOrder");
+    const initSorts = sortFields.map((f, i) => ({
+      field: f,
+      order: sortOrders[i] || "asc",
+    }));
+    const { params: sortParams, paramKeys } = sortStateToParams(initSorts);
+    Object.keys(sortParams).forEach((k) => {
+      sp[k] = sortParams[k];
+    });
+    paramKeys.forEach((k) => lastSortParamKeys.add(k));
   }
 
   // 3) 列过滤默认值 → 写入 searchParam + 收集 fakeFilters 供 UI 同步
@@ -750,31 +902,30 @@ const applyInitParam = () => {
 
   // 4) 统一在一个 nextTick 中同步 vxe-grid UI 状态（sort 图标 + filter 面板默认值 + 图标高亮）
   nextTick(() => {
-    const $table = gridRef.value;
-    if (!$table) {
+    try {
+      const $table = gridRef.value;
+      if (!$table) return;
+
+      // 4a) 同步排序 UI 状态（让 sort 图标高亮）
+      if (sortFields.length && $table.sort) {
+        sortFields.forEach((f, i) => {
+          const order = sortOrders[i] || "asc";
+          try {
+            $table.sort(f, order);
+          } catch (e) {
+            /* ignore */
+          }
+        });
+      }
+
+      // 4b) 列过滤 UI 状态已由 mergedColumns（列配置注入默认 data + checked）处理，
+      //     vxe-grid 渲染时即携带默认值，无需在此手动同步 opt.data。
+      //     但仍需手动同步过滤图标高亮 class（部分 vxe 版本不自动加 is--filter-active）。
+      syncFilterHeaderClass();
+    } finally {
+      // 4c) UI 同步完成，解除 guard（无论中间是否抛错都必须解除，避免后续 sort-change 被永久跳过）
       isApplyingDefaults.value = false;
-      return;
     }
-
-    // 4a) 同步排序 UI 状态（让 sort 图标高亮）
-    if (sortFields.length && $table.sort) {
-      sortFields.forEach((f, i) => {
-        const order = sortOrders[i] || "asc";
-        try {
-          $table.sort(f, order);
-        } catch (e) {
-          /* ignore */
-        }
-      });
-    }
-
-    // 4b) 列过滤 UI 状态已由 mergedColumns（列配置注入默认 data + checked）处理，
-    //     vxe-grid 渲染时即携带默认值，无需在此手动同步 opt.data。
-    //     但仍需手动同步过滤图标高亮 class（部分 vxe 版本不自动加 is--filter-active）。
-    syncFilterHeaderClass();
-
-    // 4c) UI 同步完成，解除 guard
-    isApplyingDefaults.value = false;
   });
 };
 
@@ -1110,15 +1261,15 @@ const applyFilterStateAndSearch = (filterSortPayload) => {
 
 /**
  * 把列排序状态数组 -> 请求参数对象 + 涉及的 key 集合
- * 约定（后端常见参数名，可在 requestApi 侧约定）：
- *  单字段排序：
- *    params.sortField = field
- *    params.sortOrder = 'asc' | 'desc'
- *  多字段排序（sortConfig.multiple=true）：
- *    params.sortField = 'field1,field2'
- *    params.sortOrder = 'asc,desc'
+ * 参数 key 名与格式由 props.sortParamConfig 控制：
+ *  - 非合并模式（默认）：
+ *      单字段：  params[fieldKey] = field          params[orderKey] = 'asc'|'desc'
+ *      多字段：  params[fieldKey] = 'a,b'          params[orderKey] = 'asc,desc'
+ *  - 合并模式（sortParamConfig.combined = true）：
+ *      单字段：  params[combinedKey] = 'field desc'          （分隔符 combinedSeparator，默认空格）
+ *      多字段：  params[combinedKey] = 'a desc,b asc'         （项间分隔符 combinedMultiSeparator，默认逗号）
+ *    合并模式忽略 fieldKey/orderKey，所有信息写入 combinedKey
  */
-const SORT_PARAM_KEYS = ["sortField", "sortOrder"];
 const sortStateToParams = (sorts) => {
   const active = (sorts || []).filter(
     (s) => s && s.order && s.order !== "null" && (s.field || s.property),
@@ -1128,14 +1279,32 @@ const sortStateToParams = (sorts) => {
   const fields = active.map((s) => s.field || s.property);
   const orders = active.map((s) => s.order);
 
+  const cfg = props.sortParamConfig || {};
+  const combined = cfg.combined === true;
+
+  if (combined) {
+    const combinedKey = cfg.combinedKey || "orderBy";
+    const sep =
+      cfg.combinedSeparator != null ? cfg.combinedSeparator : " ";
+    const multiSep =
+      cfg.combinedMultiSeparator != null ? cfg.combinedMultiSeparator : ",";
+    // 每项形如 "field order"，项间用 multiSep 连接
+    const value = active
+      .map((_, i) => `${fields[i]}${sep}${orders[i]}`)
+      .join(multiSep);
+    return { params: { [combinedKey]: value }, paramKeys: new Set([combinedKey]) };
+  }
+
+  const fieldKey = cfg.fieldKey || "sortField";
+  const orderKey = cfg.orderKey || "sortOrder";
   const params = {
-    sortField: fields.length === 1 ? fields[0] : fields.join(","),
-    sortOrder: orders.length === 1 ? orders[0] : orders.join(","),
+    [fieldKey]: fields.length === 1 ? fields[0] : fields.join(","),
+    [orderKey]: orders.length === 1 ? orders[0] : orders.join(","),
   };
-  return { params, paramKeys: new Set(SORT_PARAM_KEYS) };
+  return { params, paramKeys: new Set([fieldKey, orderKey]) };
 };
 
-// 记录上一轮排序写入的 key（固定为 sortField / sortOrder），与过滤 key 集合互不重叠
+// 记录上一轮排序写入的 key（随 sortParamConfig 动态变化），与过滤 key 集合互不重叠
 const lastSortParamKeys = new Set();
 
 /**
@@ -1144,7 +1313,6 @@ const lastSortParamKeys = new Set();
  */
 const applySortStateAndSearch = (sorts) => {
   const { params: sortParams, paramKeys } = sortStateToParams(sorts);
-
   if (!isRemoteMode.value) return;
 
   const sp = tableHook.searchParam.value;
@@ -1430,7 +1598,7 @@ const toolbarConfig = computed(() => {
   // 内置「重置过滤」走 toolSuffix 插槽（右侧工具区，刷新按钮左侧）。
   cfg.buttons = [...(userCfg.buttons || [])];
   cfg.slots = {
-    toolSuffix: "toolbar_tool_suffix",
+    toolSuffix: "toolbarToolSuffix",
     ...(userCfg.slots || {}),
     buttons: "toolbarButtons",
   };
@@ -1448,18 +1616,48 @@ const customConfig = computed(() => ({
 }));
 
 // ========== 外部插槽透传（插槽式渲染）==========
-// 遍历父组件传入 TablePro 的所有具名插槽，凡以 `cell_` / `edit_` 前缀开头的，
-// 都作为对应列的 default/edit 插槽透传给 vxe-grid，实现插槽式渲染：
-//   - <template #cell_role="{ row }">...</template>
-//   - <template #edit_role="{ row }">...</template>
+// 透传规则（取并集）：
+//   1) 列配置中字符串引用的 slot 名：通过 `render: 'xxx'` / `headerRender: 'xxx'`
+//      引用的任意具名插槽（如 operation / cell_role / header_phone）都会被透传
+//      给 vxe-grid 对应列的 default/header 插槽，实现"结合列配置"的插槽式渲染。
+//   2) 外部传入的 `cell_` / `edit_` / `header_` 前缀插槽：即使列未显式 render 字符串
+//      引用，也宽松透传，便于直接通过 vxe 原生 `slots.default = 'cell_role'` 使用。
+// 用法示例：
+//   - 列里写 render: 'operation'                  → <template #operation="{ row }">
+//   - 列里写 render: 'cell_role'                  → <template #cell_role="{ row }">
+//   - 列里写 headerRender: 'header_phone'         → <template #header_phone="{ column }">
+//   - 操作列专用快捷：{ field: 'action', render: 'operation' } + <template #operation>
 const passthroughSlotNames = computed(() => {
-  const names = []
+  const nameSet = new Set()
+
+  // (1) 从列配置中收集字符串引用的 slot 名
+  ;(mergedColumns.value || []).forEach((col) => {
+    if (!col || typeof col !== 'object') return
+    const collectFrom = (val) => {
+      if (typeof val === 'string' && val && slots && typeof slots[val] === 'function') {
+        nameSet.add(val)
+      }
+    }
+    collectFrom(col.render)
+    collectFrom(col.headerRender)
+    // 兼容 vxe 原生 slots.default/header 字符串引用
+    if (col.slots && typeof col.slots === 'object') {
+      collectFrom(col.slots.default)
+      collectFrom(col.slots.header)
+      collectFrom(col.slots.edit)
+    }
+  })
+
+  // (2) 宽松透传 cell_ / edit_ / header_ 前缀的外部具名插槽
   if (slots && typeof slots === 'object') {
     Object.keys(slots).forEach((n) => {
-      if (n.startsWith('cell_') || n.startsWith('edit_')) names.push(n)
+      if (n.startsWith('cell_') || n.startsWith('edit_') || n.startsWith('header_')) {
+        nameSet.add(n)
+      }
     })
   }
-  return names
+
+  return Array.from(nameSet)
 })
 
 // ========== vxe-grid 属性 ==========
@@ -1473,7 +1671,16 @@ const gridProps = computed(() => ({
   rowConfig: { isHover: true, ...props.rowConfig },
   checkboxConfig: props.checkboxConfig,
   radioConfig: props.radioConfig,
-  editConfig: { trigger: "click", mode: "cell", showStatus: true, ...props.editConfig },
+  // keepSource 是 vxe-table 的根级 prop（非 editConfig 属性），
+  // 必须放在根级，vxe-table 才会缓存源数据快照，isUpdateByRow 才能正确判断 dirty 状态，
+  // 进而给单元格 td 加上 col--dirty 类，渲染编辑标记。
+  keepSource: true,
+  editConfig: {
+    trigger: "click",
+    mode: "cell",
+    showStatus: true,
+    ...props.editConfig,
+  },
   sortConfig: { trigger: "button", ...props.sortConfig },
   filterConfig: { remote: true, ...props.filterConfig },
   treeConfig: props.treeConfig,
@@ -1567,13 +1774,13 @@ defineExpose({
         @row-click="(e) => emit('row-click', e)"
         @row-dblclick="(e) => emit('row-dblclick', e)"
         @filter-visible="onFilterVisible"
-        @edit-actived="onEditActived"
+        @edit-activated="onEditActivated"
         @edit-closed="onEditClosed"
       >
         <template #toolbarButtons="scope">
           <slot name="toolbarButtons" v-bind="scope" />
         </template>
-        <template #toolbar_tool_suffix="scope">
+        <template #toolbarToolSuffix="scope">
           <vxe-button
             v-if="showResetFilter && hasColumnFilter"
             circle
@@ -1582,7 +1789,7 @@ defineExpose({
             class="table-pro__reset-filter-btn"
             @click="onResetAllFilter"
           />
-          <slot name="toolbar_tool_suffix" v-bind="scope" />
+          <slot name="toolbarToolSuffix" v-bind="scope" />
         </template>
 
         <!-- ========== 插槽式渲染：外部 cell_xxx / edit_xxx 具名插槽透传 ==========
@@ -1638,18 +1845,23 @@ $table-toolbar-gap: 12px;
       height: 100%;
     }
 
-    // ========== 列头布局：标题与排序/过滤图标两端对齐 ==========
+    // ========== 列头布局：标题与排序/过滤图标 按 headerAlign 差异化处理 ==========
     // vxe-table 4.x 列头结构：
-    //   <div class="vxe-cell">  <!-- flex 容器 -->
-    //     <div class="vxe-cell--wrapper vxe-header-cell--wrapper">  <!-- 默认 block -->
-    //       <span class="vxe-cell--title">姓名</span>
-    //       <span class="vxe-cell--sort">...</span>
-    //       <span class="vxe-cell--filter">...</span>
+    //   <th class="vxe-header--column col--left|center|right ...">
+    //     <div class="vxe-cell">  <!-- flex 容器 -->
+    //       <div class="vxe-cell--wrapper vxe-header-cell--wrapper">  <!-- 默认 block -->
+    //         <span class="vxe-cell--title">姓名</span>
+    //         <span class="vxe-cell--sort">...</span>
+    //         <span class="vxe-cell--filter">...</span>
+    //       </div>
     //     </div>
-    //   </div>
-    // 默认 wrapper 是 block，title 和 sort/filter 紧靠左侧。
-    // 改为 flex 后让 title 占据剩余空间，把排序/过滤图标推到列头右端，形成两端对齐。
-    :deep(.vxe-header--column) {
+    //   </th>
+    // vxe-table 已根据 headerAlign 自动给表头 th 加 col--left/center/right class。
+    // 策略：
+    // - col--left：title 占剩余空间 + 图标靠右（两端对齐），视觉上"图标在列头右端"
+    // - col--center/right：保持默认 block，title 与图标一起作为 inline 内容，
+    //   跟随列头 text-align 整体居中/右对齐，避免两端对齐导致标题被推到左侧而图标撑到右/中间。
+    :deep(.vxe-header--column.col--left) {
       .vxe-cell--wrapper.vxe-header-cell--wrapper {
         display: flex;
         align-items: center;
@@ -1660,18 +1872,21 @@ $table-toolbar-gap: 12px;
           margin-right: auto;
         }
       }
+    }
 
-      // ========== 列过滤图标高亮（有激活的过滤条件时）==========
-      // vxe 在列有过滤条件且 opt.checked=true 时，会给列头加 .is--filter-active
-      // 同时过滤按钮 .vxe-filter--btn 也需要高亮（主色调）
-      // 过滤图标激活态
+    // ========== 列过滤/排序图标高亮（与对齐方式无关，所有列统一生效）==========
+    :deep(.vxe-header--column) {
+      // 让过滤按钮相对定位，便于角标定位
+      .vxe-filter--btn {
+        position: relative;
+      }
+
+      // 过滤图标激活态（主色 + 角标提示）
       &.is--filter-active,
       &.col--filter.is--filter-active {
         .vxe-filter--btn {
           color: var(--el-color-primary, #409eff) !important;
         }
-
-        // 过滤图标加角标提示（小圆点）让用户一眼看到有过滤生效
         .vxe-filter--btn::after {
           content: "";
           position: absolute;
@@ -1685,13 +1900,7 @@ $table-toolbar-gap: 12px;
         }
       }
 
-      // 让过滤按钮相对定位，便于角标定位
-      .vxe-filter--btn {
-        position: relative;
-      }
-
-      // ========== 列排序图标高亮 ==========
-      // vxe 排序激活时，列头加 .is--sort-active，对应 asc/desc 按钮加 .is--active
+      // 排序图标激活态（主色高亮 asc/desc 激活按钮）
       &.is--sort-active {
         .vxe-sort--asc-btn.is--active,
         .vxe-sort--desc-btn.is--active {
@@ -1851,6 +2060,58 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
     .el-range-input {
       min-width: 0;
       width: 100%;
+    }
+  }
+}
+
+// ======= 编辑态：约束 Element Plus 输入类组件不超出单元格宽度 =======
+// vxe-table 编辑激活时，单元格 td.vxe-body--column 会带 col--active class，
+// 内部 .vxe-cell 内渲染 Element Plus 编辑组件。
+// Element Plus 默认宽度（如 .el-input-number 150px、.el-date-editor 220px）会超出窄列单元格，
+// 这里统一覆盖为 100%，并保证 box-sizing 一致。
+.vxe-table {
+  .vxe-body--column.col--active {
+    // 让 .vxe-cell 在编辑态下成为定宽容器，使内部 100% 子元素能正确收缩
+    > .vxe-cell {
+      width: 100%;
+      box-sizing: border-box;
+
+      // 1) 所有 Element Plus 输入类组件本体宽度统一 100%
+      .el-input,
+      .el-input-number,
+      .el-input__wrapper,
+      .el-select,
+      .el-select-v2,
+      .el-date-editor,
+      .el-time-editor,
+      .el-time-picker,
+      .el-time-select {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+      }
+
+      // 2) InputNumber 内部输入框自适应（+/- 按钮采用绝对定位，不影响布局）
+      .el-input-number {
+        .el-input__wrapper {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+      }
+
+      // 3) DatePicker / TimePicker 范围选择器内部 input 自适应（避免清空按钮撑宽）
+      .el-range-editor {
+        .el-range-input-wrapper {
+          flex: 1 1 auto;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .el-range-input {
+          min-width: 0;
+          width: 100%;
+        }
+      }
     }
   }
 }

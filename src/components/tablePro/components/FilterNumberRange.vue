@@ -37,12 +37,11 @@ const attrs = computed(() => props.renderOpts?.props || {})
       placeholder="最小值"
       v-bind="attrs"
     />
-    <span class="filter-number-range__sep">至</span>
+    <span class="filter-number-range__sep"> - </span>
     <el-input-number
       v-model="max"
       :controls="false"
       placeholder="最大值"
-      size="small"
       v-bind="attrs"
     />
   </div>
