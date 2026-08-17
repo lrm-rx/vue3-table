@@ -1,10 +1,11 @@
 <script setup>
 /**
  * 数字区间过滤
- * - 最小值 / 最大值分别映射到 data.min / data.max
+ * - 最小值 / 最大值合并到 data.values 数组（[min, max]，与 FilterCheckbox 的 data.values 属性 key 保持一致）
  * - 仅允许输入合理的有限数字，否则拒绝写入
  * - 失焦时若 min > max，自动交换两者
  * - 可通过 renderOpts.suffix 配置后缀（如 %、℃、°），不配置则不显示
+ * - 任一端无值时存 null（最终请求参数的占位值由 filterRender.props.emptyValue 配置，默认 null）
  */
 import { computed } from 'vue'
 
@@ -22,34 +23,55 @@ const normalize = (v) => {
 }
 
 const min = computed({
-  get: () => (props.option.data ? props.option.data.min : null),
+  get: () => {
+    const v = props.option.data?.values
+    return Array.isArray(v) ? (v[0] ?? null) : null
+  },
   set: (v) => {
     const n = normalize(v)
     if (n === undefined) return // 非合理数字，不写入
-    props.option.data.min = n
+    if (!props.option.data) return
+    const arr = Array.isArray(props.option.data.values)
+      ? [...props.option.data.values]
+      : [null, null]
+    arr[0] = n
+    props.option.data.values = arr
   },
 })
 
 const max = computed({
-  get: () => (props.option.data ? props.option.data.max : null),
+  get: () => {
+    const v = props.option.data?.values
+    return Array.isArray(v) ? (v[1] ?? null) : null
+  },
   set: (v) => {
     const n = normalize(v)
     if (n === undefined) return // 非合理数字，不写入
-    props.option.data.max = n
+    if (!props.option.data) return
+    const arr = Array.isArray(props.option.data.values)
+      ? [...props.option.data.values]
+      : [null, null]
+    arr[1] = n
+    props.option.data.values = arr
   },
 })
 
 const handleBlur = () => {
   if (!props.option.data) return
-  const mn = props.option.data.min
-  const mx = props.option.data.max
-  if (mn !== null && mn !== undefined && mx !== null && mx !== undefined && mn > mx) {
-    props.option.data.min = mx
-    props.option.data.max = mn
+  const vals = props.option.data.values
+  if (!Array.isArray(vals)) return
+  const mn = vals[0]
+  const mx = vals[1]
+  if (mn != null && mn !== '' && mx != null && mx !== '' && mn > mx) {
+    props.option.data.values = [mx, mn]
   }
 }
 
-const attrs = computed(() => props.renderOpts?.props || {})
+// 透传给 el-input-number 的 props：剥离内部使用的 emptyValue 配置项
+const attrs = computed(() => {
+  const { emptyValue: _ev, ...rest } = props.renderOpts?.props || {}
+  return rest
+})
 
 // 后缀配置：通过 renderOpts.suffix 传入字符串（如 '%'、'℃'、'°'），未配置则为空
 const suffix = computed(() => {

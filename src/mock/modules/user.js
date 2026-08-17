@@ -111,13 +111,21 @@ export default [
         role,
         departmentList,
         department,
-        // 列过滤使用的单独字段（FilterInput / FilterCheckbox / FilterDateRange）
+        // 列过滤使用的单独字段（FilterInput / FilterCheckbox）
         username,
         account,
         email,
         phone,
+        // 区间类过滤：同时兼容三种参数呈现方式
+        //   1) paramMode='array'（默认）：createTime: [start, end], age: [min, max]
+        //   2) paramMode='split'：        startCreateTime / endCreateTime, ageMin / ageMax
+        //   3) paramMode='both'：         以上两者都会发送（array + split 任一存在即生效）
+        createTime,
+        age,
         startCreateTime,
         endCreateTime,
+        ageMin,
+        ageMax,
         // 列排序参数（sortField / sortOrder，支持单字段或多字段逗号分隔）
         sortField,
         sortOrder,
@@ -182,12 +190,32 @@ export default [
         if (allow.length) filtered = filtered.filter((item) => allow.includes(item.role))
       }
 
-      // FilterDateRange：按 createTime 做区间过滤
-      if (startCreateTime) {
-        filtered = filtered.filter((item) => item.createTime >= String(startCreateTime))
+      // FilterDateRange：按 createTime 做区间过滤，同时兼容两种参数格式
+      //   array 格式：createTime: [start, end]
+      //   split 格式：startCreateTime + endCreateTime
+      {
+        const startT = Array.isArray(createTime) ? createTime[0] : startCreateTime
+        const endT = Array.isArray(createTime) ? createTime[1] : endCreateTime
+        if (startT) {
+          filtered = filtered.filter((item) => item.createTime >= String(startT))
+        }
+        if (endT) {
+          filtered = filtered.filter((item) => item.createTime <= String(endT) + ' 23:59:59')
+        }
       }
-      if (endCreateTime) {
-        filtered = filtered.filter((item) => item.createTime <= String(endCreateTime) + ' 23:59:59')
+
+      // FilterNumberRange：按 age 做区间过滤，同时兼容两种参数格式
+      //   array 格式：age: [min, max]
+      //   split 格式：ageMin + ageMax
+      {
+        const minAge = Array.isArray(age) ? age[0] : ageMin
+        const maxAge = Array.isArray(age) ? age[1] : ageMax
+        if (minAge != null && minAge !== '') {
+          filtered = filtered.filter((item) => Number(item.age) >= Number(minAge))
+        }
+        if (maxAge != null && maxAge !== '') {
+          filtered = filtered.filter((item) => Number(item.age) <= Number(maxAge))
+        }
       }
 
       // ====== 列排序（远程排序模拟）======

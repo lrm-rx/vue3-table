@@ -178,8 +178,8 @@ const props = defineProps({
   //       username: '袁',                          // FilterInput
   //       role: ['admin', 'developer'],            // FilterCheckbox（多选）
   //       status: 1,                                // FilterCheckbox（单选）
-  //       createTime: { start: '2020-01-01', end: '2025-12-31' }, // FilterDateRange
-  //       age: { min: 18, max: 30 },                // FilterNumberRange
+  //       createTime: ['2020-01-01', '2025-12-31'], // FilterDateRange（[startCreateTime, endCreateTime]）
+  //       age: [18, 30],                            // FilterNumberRange（[min, max]）
   //     }
   //   }
   initParam: { type: Object, default: () => ({}) },
@@ -423,15 +423,25 @@ const buildFilterDataFromDefault = (name, defaultVal) => {
         search: "",
       };
     case "FilterDateRange":
+    case "FilterNumberRange": {
+      // 区间类默认值支持数组 [first, second]（推荐，与 FilterCheckbox 一致）
+      // 兼容旧对象格式 { start, end } / { min, max }
+      let a = null;
+      let b = null;
+      if (Array.isArray(defaultVal)) {
+        a = defaultVal[0];
+        b = defaultVal[1];
+      } else if (defaultVal && typeof defaultVal === "object") {
+        a = defaultVal.start != null ? defaultVal.start : defaultVal.min;
+        b = defaultVal.end != null ? defaultVal.end : defaultVal.max;
+      }
       return {
-        start: (defaultVal && defaultVal.start) || "",
-        end: (defaultVal && defaultVal.end) || "",
+        values: [
+          a != null && a !== "" ? a : null,
+          b != null && b !== "" ? b : null,
+        ],
       };
-    case "FilterNumberRange":
-      return {
-        min: (defaultVal && defaultVal.min) != null ? defaultVal.min : null,
-        max: (defaultVal && defaultVal.max) != null ? defaultVal.max : null,
-      };
+    }
     default:
       return null;
   }
@@ -511,8 +521,8 @@ const mergedColumns = computed(() => {
   const DEFAULT_FILTER_CONFIG = {
     FilterInput:       { filters: [{ data: { value: '' } }],                 filterRender: { name: 'FilterInput' } },
     FilterCheckbox:    { filters: [{ data: { values: [], search: '' } }],   filterRender: { name: 'FilterCheckbox' } },
-    FilterDateRange:   { filters: [{ data: { start: '', end: '' } }],       filterRender: { name: 'FilterDateRange' } },
-    FilterNumberRange: { filters: [{ data: { min: null, max: null } }],     filterRender: { name: 'FilterNumberRange' } },
+    FilterDateRange:   { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterDateRange' } },
+    FilterNumberRange: { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterNumberRange' } },
   }
   const filterDefaults = { ...DEFAULT_FILTER_CONFIG, ...(defFilterDefaults || {}) }
 
@@ -888,6 +898,8 @@ const applyInitParam = () => {
         title: (col && col.title) || field,
         type: fName,
         data,
+        // 透传 filterRender.props，供 filterStateToParams 读取区间类的 emptyValue 等配置
+        props: col && col.filterRender ? col.filterRender.props : undefined,
         active: isFilterActive(fName, data),
       });
     });
@@ -1086,11 +1098,15 @@ const getFilterSortState = () => {
   if (!$table) return { filters: [], sorts: [] };
   const cols = $table.getColumns ? $table.getColumns() : [];
   // vxe-grid 的 getColumns() 返回的内部列对象不保留自定义顶层属性（如 defParamKey），
-  // 需要从原始 props.columns 配置中按 field 查找 defParamKey
+  // 需要从原始 props.columns 配置中按 field 查找 defParamKey / filterRender.props
   const fieldToParamKey = new Map();
+  const fieldToRenderProps = new Map();
   (props.columns || []).forEach((col) => {
     if (col.field) {
       fieldToParamKey.set(col.field, col.defParamKey || col.field);
+      if (col.filterRender && col.filterRender.props) {
+        fieldToRenderProps.set(col.field, col.filterRender.props);
+      }
     }
   });
   const filters = [];
@@ -1106,6 +1122,8 @@ const getFilterSortState = () => {
         title: col.title,
         type: fName,
         data: opt.data,
+        // 透传 filterRender.props，供 filterStateToParams 读取区间类的 emptyValue 等配置
+        props: fieldToRenderProps.get(col.field),
         active: opt.checked,
       });
     });
@@ -1121,12 +1139,23 @@ const getFilterSortState = () => {
  * 约定（参数 key 默认取 field，可通过列配置 defParamKey 自定义 → f.paramKey）：
  *  FilterInput({ value })       → params[paramKey] = value
  *  FilterCheckbox({ values })   → params[paramKey] = [v1, v2, ...]（始终为数组）
- *  FilterDateRange({ start, end })
- *                               → params[`start${Capitalize(paramKey)}`] = start
- *                               → params[`end${Capitalize(paramKey)}`] = end
- *  FilterNumberRange({ min, max })
- *                               → params[`${paramKey}Min`] = min
- *                               → params[`${paramKey}Max`] = max
+ *
+ * 区间类（FilterDateRange / FilterNumberRange）支持 3 种参数呈现方式，
+ *   通过列配置 filterRender.props.paramMode 控制（默认 'array'）：
+ *   1) paramMode='array'（默认，与 FilterCheckbox 风格一致）：
+ *        FilterDateRange({ values: [start, end] })   → params[paramKey] = [start, end]（2 元素数组）
+ *        FilterNumberRange({ values: [min, max] })   → params[paramKey] = [min, max]（2 元素数组）
+ *   2) paramMode='split'（原始分开传递）：
+ *        FilterDateRange   → params[`start${Capitalize(paramKey)}`] = start
+ *                        → params[`end${Capitalize(paramKey)}`]   = end
+ *        FilterNumberRange → params[`${paramKey}Min`] = min
+ *                        → params[`${paramKey}Max`] = max
+ *   3) paramMode='both'：同时输出以上两种格式
+ *
+ * 区间类通用说明：
+ *  - 元素位置固定：[first, second]（FilterDateRange=[起, 止]，FilterNumberRange=[min, max]）
+ *  - 某一端无值时使用占位值，默认 null，可通过列配置 filterRender.props.emptyValue 自定义（如 ''）
+ *  - 两端均无值时不发送对应参数（split 模式下按端独立判断；array / both 模式下整组一起判断）
  */
 const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 const filterStateToParams = (filters) => {
@@ -1157,29 +1186,46 @@ const filterStateToParams = (filters) => {
         }
         break;
       }
-      case "FilterDateRange": {
-        const sk = `start${capitalize(key)}`;
-        const ek = `end${capitalize(key)}`;
-        if (d.start) {
-          params[sk] = d.start;
-          paramKeys.add(sk);
-        }
-        if (d.end) {
-          params[ek] = d.end;
-          paramKeys.add(ek);
-        }
-        break;
-      }
+      case "FilterDateRange":
       case "FilterNumberRange": {
-        const mn = `${key}Min`;
-        const mx = `${key}Max`;
-        if (d.min != null && d.min !== "") {
-          params[mn] = d.min;
-          paramKeys.add(mn);
+        const raw = Array.isArray(d.values) ? [...d.values] : [null, null];
+        // 补齐为 2 元素数组，保证位置语义稳定
+        while (raw.length < 2) raw.push(null);
+        // 占位值：默认 null，可通过 filterRender.props.emptyValue 自定义
+        const ev =
+          f.props && f.props.emptyValue !== undefined
+            ? f.props.emptyValue
+            : null;
+        const normalized = raw.map((v) =>
+          v == null || v === "" ? ev : v,
+        );
+        // paramMode：'array'（默认）/ 'split' / 'both'
+        const mode =
+          f.props && ["array", "split", "both"].includes(f.props.paramMode)
+            ? f.props.paramMode
+            : "array";
+        // split 两端的 key 命名规则（与原始逻辑保持一致）
+        const isDate = f.type === "FilterDateRange";
+        const key0 = isDate ? `start${capitalize(key)}` : `${key}Min`;
+        const key1 = isDate ? `end${capitalize(key)}` : `${key}Max`;
+
+        if (mode === "array" || mode === "both") {
+          // 数组格式：两端至少一端有值才发送
+          if (normalized.some((v) => v != null && v !== "")) {
+            params[key] = normalized;
+            paramKeys.add(key);
+          }
         }
-        if (d.max != null && d.max !== "") {
-          params[mx] = d.max;
-          paramKeys.add(mx);
+        if (mode === "split" || mode === "both") {
+          // 分开格式：按端独立判断（某端有值才写）
+          if (normalized[0] != null && normalized[0] !== "") {
+            params[key0] = normalized[0];
+            paramKeys.add(key0);
+          }
+          if (normalized[1] != null && normalized[1] !== "") {
+            params[key1] = normalized[1];
+            paramKeys.add(key1);
+          }
         }
         break;
       }
@@ -1573,9 +1619,9 @@ const onResetAllFilter = () => {
   emit("reset-filter", payload);
 };
 
-// 是否存在列过滤配置（有列配置了 filters + filterRender 才显示重置按钮）
+// 是否存在列过滤配置（基于 mergedColumns 判断，兼容 filterType 自动注入的情况）
 const hasColumnFilter = computed(() =>
-  props.columns.some(
+  mergedColumns.value.some(
     (col) => col.filters && col.filters.length > 0 && col.filterRender,
   ),
 );

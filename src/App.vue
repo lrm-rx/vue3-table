@@ -230,6 +230,10 @@ const columns = ref([
   },
 
   // 演示 7：editRender ElInputNumber 年龄编辑
+  // filterRender.props.paramMode 控制参数呈现方式（可选 'array' / 'split' / 'both'，默认 'array'）：
+  //   'array' → age: [min, max]（与 FilterCheckbox 风格一致，单个数组）
+  //   'split' → ageMin: min, ageMax: max（原始分开传递）
+  //   'both'  → 以上两种都传递
   {
     field: "age",
     title: "年龄",
