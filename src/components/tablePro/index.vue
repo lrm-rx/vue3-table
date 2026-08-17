@@ -255,7 +255,7 @@ provide("tableProEditContext", {
 const editLocalState = reactive({});
 let _rowAutoIdSeq = 0;
 const ROW_ID_KEY = Symbol("__tblRowId");
-function resolveEditStateKey(row, field) {
+const resolveEditStateKey = (row, field) => {
   if (!row) return `__no_row__:${String(field)}`
   // 优先用稳定 ID（如 mock 的 id）
   const stableId = row.id != null ? `id:${row.id}` : (row[ROW_ID_KEY] != null ? `auto:${row[ROW_ID_KEY]}` : null)
@@ -265,7 +265,7 @@ function resolveEditStateKey(row, field) {
   return `${prefix}:${String(field)}`
 }
 // 进入编辑态：用 row[field] 初始化本地值（作为 actived 时的"旧值"快照）
-function onEditActivated(params) {
+const onEditActivated = (params) => {
   const row = params && params.row
   const field = params && params.column && params.column.field
   if (!row || !field) return
@@ -277,7 +277,7 @@ function onEditActivated(params) {
 //   - 对象式 editRender：editLocalState 存本地编辑值（新值），row[field] 为旧值 → 写回 row
 //   - 函数式/字符串式 editRender：用户编辑期间直接绑 row[field]（新值已落 row），
 //     editLocalState 为 actived 时的旧值 → 不覆盖 row，仅以 row[field] 为新值发射事件
-function onEditClosed(params) {
+const onEditClosed = (params) => {
   const row = params && params.row
   const col = params && params.column
   const field = col && col.field
@@ -469,13 +469,13 @@ const EL_EDIT_MAP = {
 const WRAP_COMPONENTS = { ElOption, ElRadio, ElRadioButton, ElCheckbox, ElCheckboxButton }
 
 // 读取某列的编辑选项数组（优先级：editRender.props.options → props.editOptions[field]）
-function resolveEditOptions(field, editRenderProps) {
+const resolveEditOptions = (field, editRenderProps) => {
   if (editRenderProps && Array.isArray(editRenderProps.options)) return editRenderProps.options
   const eo = props.editOptions || {}
   return Array.isArray(eo[field]) ? eo[field] : []
 }
 // 合并编辑控件 props（列 editRender.props.props + cellEditProps[field] + v-model）
-function mergeEditCompProps(field, editRender, editValue, extra = {}) {
+const mergeEditCompProps = (field, editRender, editValue, extra = {}) => {
   const erProps = (editRender && editRender.props) || {}
   const innerProps = erProps.props || {}
   // cellEditProps（外部单独注入，优先级更高）
