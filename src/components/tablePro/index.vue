@@ -1,3 +1,100 @@
+<script>
+// ========== vxe-grid 原生事件透传清单（模块作用域）==========
+// 取自 vxe-table tableEmits + gridEmits，覆盖除以下三类外的全部事件：
+//   1) 已在模板内显式绑定并按同名 emit 的事件：
+//      toolbar-button-click / sort-change / checkbox-change / checkbox-all /
+//      radio-change / cell-click / cell-dblclick / row-click / row-dblclick
+//   2) page-change（与组件内 element-plus 分页的 page-change emit 冲突，且 vxe-grid 自带分页未启用）
+//   3) update:data（v-model 专用）及已废弃事件：current-change / resizable-change / edit-actived / change-fnr
+// 注：filter-visible / edit-activated / edit-closed 既由内部 handler 处理业务逻辑，也在此透传，
+//     父组件可同时监听同名事件（不冲突，cell-edit-change 仍由 edit-closed 内部处理时单独抛出）。
+// 放在普通 <script> 中作为模块作用域常量，供 export default 的 emits 选项与
+// <script setup> 内的 gridListeners 转发器共用（defineEmits 不能引用 setup 内的局部变量）。
+const FORWARD_GRID_EVENTS = [
+  // 生命周期
+  "ready", "init-rendered", "data-rendered",
+  // 键盘 / 剪贴板
+  "keydown-start", "keydown", "keydown-end",
+  "paste", "copy", "cut", "undo", "redo", "context-menu",
+  // 数据 / 列变化
+  "columns-change", "data-change", "footer-data-change",
+  // 当前行 / 列
+  "current-row-change", "current-row-disabled",
+  "current-column-change", "current-column-disabled",
+  // 复选框区间选择
+  "checkbox-range-start", "checkbox-range-change", "checkbox-range-end", "checkbox-range-select",
+  // 单元格交互
+  "cell-menu", "cell-mouseenter", "cell-mouseleave", "cell-selected",
+  "cell-delete-value", "cell-backspace-value",
+  // 表头 / 表尾
+  "header-cell-click", "header-cell-dblclick", "header-cell-menu",
+  "footer-cell-click", "footer-cell-dblclick", "footer-cell-menu",
+  // 合并 / 排序 / 过滤
+  "clear-merge",
+  "clear-sort", "clear-all-sort",
+  "filter-change", "filter-visible",
+  "clear-filter", "clear-all-filter",
+  // 列 / 行拖拽缩放
+  "column-resizable-change", "row-resizable-change",
+  // 展开 / 树
+  "toggle-row-group-expand", "toggle-row-expand", "toggle-tree-expand",
+  // 右键菜单
+  "menu-click",
+  // 编辑
+  "edit-closed", "edit-activated", "edit-disabled", "valid-error",
+  // 行 / 列拖拽
+  "row-dragstart", "row-dragover", "row-dragend",
+  "row-remove-dragend", "row-insert-dragend",
+  "column-dragstart", "column-dragover", "column-dragend",
+  // 追加行
+  "enter-append-row", "tab-append-row",
+  // 滚动
+  "scroll", "scroll-boundary",
+  // 列个性化面板
+  "custom", "custom-open", "custom-close", "custom-cancel",
+  "custom-reset", "custom-confirm",
+  "custom-visible-change", "custom-visible-all",
+  "custom-fixed-change", "custom-sort-change",
+  "custom-align-change", "custom-header-align-change", "custom-footer-align-change",
+  // 查找 / 替换
+  "open-fnr", "show-fnr", "hide-fnr",
+  "fnr-change", "fnr-find", "fnr-find-all", "fnr-replace", "fnr-replace-all",
+  // 单元格区域选择（电子表格模式）
+  "cell-area-copy", "cell-area-cut", "cell-area-paste", "cell-area-merge",
+  "clear-cell-area-selection", "clear-cell-area-merge",
+  "header-cell-area-selection",
+  "cell-area-selection-invalid",
+  "cell-area-selection-start", "cell-area-selection-drag", "cell-area-selection-end",
+  "cell-area-extension-start", "cell-area-extension-drag", "cell-area-extension-end", "cell-area-extension-fill",
+  "cell-area-selection-all-start", "cell-area-selection-all-end",
+  "cell-area-arrows-start", "cell-area-arrows-end",
+  "cell-area-fill-copy",
+  "active-cell-change-start", "active-cell-change-end",
+  // grid 级（工具栏 / 表单 / 代理 / 缩放）
+  "form-submit", "form-submit-invalid", "form-reset",
+  "form-collapse", "form-toggle-collapse",
+  "proxy-query", "proxy-delete", "proxy-save",
+  "toolbar-tool-click", "zoom",
+];
+
+// TablePro 自身事件（非 vxe-grid 透传）：工具栏、分页、过滤、编辑等自定义事件
+const TABLE_PRO_EVENTS = [
+  "refresh", "export", "search", "density-change",
+  "toolbar-button-click", "update:pagerConfig", "page-change",
+  "sort-change", "checkbox-change", "checkbox-all", "radio-change",
+  "cell-click", "cell-dblclick", "row-click", "row-dblclick",
+  "filter-confirm", "filter-reset", "filter-reset-all", "reset-filter",
+  "cell-edit-change",
+];
+
+// 统一在此声明组件 emits（vxe-grid 透传 + 自身事件）。
+// <script setup> 内用 defineEmits()（无参）仅获取 emit 函数、不生成 emits 选项，
+// 避免编译期 Object.assign 用 setup 的 defineEmits 覆盖此处的 emits 声明。
+export default {
+  emits: [...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS],
+};
+</script>
+
 <script setup>
 /**
  * TablePro 通用表格组件
@@ -27,6 +124,7 @@ import {
   watch,
   h,
   markRaw,
+  toHandlerKey,
 } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
@@ -49,6 +147,7 @@ import {
 import "./renderers.js";
 import { FILTER_DEFAULTS, isFilterActive } from "./filter-config.js";
 import { useTable } from "@/hooks/useTable";
+import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
 import Pagination from "./components/Pagination.vue";
 
@@ -72,7 +171,7 @@ const props = defineProps({
   // 表格 id（用于列状态记忆隔离，开启 customStorage 时必填且唯一）
   tableId: { type: String, default: "" },
   // 行 / 选择 / 排序 / 树 / 展开配置
-  rowConfig: { type: Object, default: () => ({}) },
+  rowConfig: { type: Object, default: () => ({ keyField: "id" }) },
   checkboxConfig: { type: Object, default: () => ({}) },
   radioConfig: { type: Object, default: () => ({}) },
   sortConfig: {
@@ -137,8 +236,8 @@ const props = defineProps({
   toolbarConfig: { type: Object, default: () => ({}) },
   // 额外传入的 customConfig（与内部默认合并）
   customConfig: { type: Object, default: () => ({}) },
-  // 分页（element-plus ElPagination）
-  showPagination: { type: Boolean, default: true },
+  // 是否需要分页组件（默认 true ）
+  pagination: { type: Boolean, default: true },
   pagerConfig: {
     type: Object,
     default: () => ({ currentPage: 1, pageSize: 10, total: 0 }),
@@ -168,8 +267,6 @@ const props = defineProps({
     type: Object,
     default: () => ({ label: "label", value: "value" }),
   },
-  // 是否需要分页组件（默认 true；与 showPagination 同时控制分页显示）
-  pagination: { type: Boolean, default: true },
 
   // ========== 默认参数（初始化时应用，并同步到表格 UI）==========
   // 形如：
@@ -209,37 +306,34 @@ const props = defineProps({
   cellEditProps: { type: Object, default: () => ({}) },
 });
 
-const emit = defineEmits([
-  "refresh",
-  "export",
-  "search",
-  "density-change",
-  "toolbar-button-click",
-  "update:pagerConfig",
-  "page-change",
-  "sort-change",
-  "checkbox-change",
-  "checkbox-all",
-  "radio-change",
-  "cell-click",
-  "cell-dblclick",
-  "row-click",
-  "row-dblclick",
-  // 表头过滤：点击面板「确定」后抛出全部过滤 + 排序的组合参数
-  "filter-confirm",
-  // 表头过滤：点击面板「重置」（单列表头）后抛出事件，含被重置的列信息与最新组合参数
-  "filter-reset",
-  // 工具栏「重置过滤」按钮：清空所有列过滤条件后抛出重置事件
-  "filter-reset-all",
-  // 工具栏「重置过滤」按钮：自定义事件，参数为当前所有过滤 + 排序条件
-  "reset-filter",
-  // 单元格编辑完成：{ row, column, field, value, cellValue }
-  "cell-edit-change",
-]);
+// 获取 emit 函数：所有 emits（vxe-grid 透传 FORWARD_GRID_EVENTS + TablePro 自身 TABLE_PRO_EVENTS）
+// 已在文件顶部普通 <script> 的 export default.emits 中统一声明。
+// 此处 defineEmits() 不传参，仅获取 emit 函数、不生成 emits 选项，避免编译期 Object.assign
+// 用 setup 的 defineEmits 覆盖普通 <script> 中的 emits 声明。
+const emit = defineEmits();
 
 const slots = useSlots();
 const attrs = useAttrs();
 const gridRef = ref();
+
+// ========== 单选/多选数据收集（useSelection）==========
+// 收集 vxe-grid checkbox-change / radio-change 事件抛出的选中行，
+// 按 props.rowConfig.keyField 提取选中 id
+// 供 #toolbarButtons 插槽与 defineExpose 对外使用。
+const {
+  // 多选
+  isSelected,
+  selectedList,
+  selectedListIds,
+  selectionChange,
+  // 单选
+  selectedRow,
+  selectedId,
+  isRadioSelected,
+  radioChange,
+  // 通用
+  clearSelection,
+} = useSelection(props.rowConfig.keyField);
 
 // ========== 单元格编辑上下文 ==========
 // - 给 mergedColumns 内部使用（局部变量 getEditContext_）
@@ -816,6 +910,10 @@ const renderData = computed(() =>
   isRemoteMode.value ? tableHook.tableData.value : props.data,
 );
 
+// 数据刷新时清空收集的选中数据：vxe-grid 默认 reserve:false 会清除选中 UI，
+// 这里同步清空 selectedList / selectedRow，避免对外暴露的选中数据与表格实际状态脱节。
+watch(renderData, () => clearSelection());
+
 // 实际使用的分页配置：远程模式由 useTable 的 pageable 接管
 const currentPager = computed(() => {
   if (isRemoteMode.value) {
@@ -829,9 +927,6 @@ const currentPager = computed(() => {
   }
   return props.pagerConfig;
 });
-
-// 是否实际展示分页组件：pagination 与 showPagination 同时为 true 才显示
-const showPager = computed(() => props.pagination && props.showPagination);
 
 // ========== 默认参数同步 ==========
 /**
@@ -1607,6 +1702,23 @@ const onToolbarButtonClick = ({ code, button }) => {
   emit("toolbar-button-click", { code, button });
 };
 
+// ========== 单选/多选事件：收集选中数据 + 透传事件 ==========
+// vxe-grid checkbox-change 事件 params 含 records（当前全部选中行）
+const onCheckboxChange = (e) => {
+  selectionChange(e?.records || []);
+  emit("checkbox-change", e);
+};
+// vxe-grid checkbox-all 事件（全选/取消全选）同样需要同步选中数据
+const onCheckboxAll = (e) => {
+  selectionChange(e?.records || []);
+  emit("checkbox-all", e);
+};
+// vxe-grid radio-change 事件 params 含 row（当前选中行）
+const onRadioChange = (e) => {
+  radioChange(e?.row || null);
+  emit("radio-change", e);
+};
+
 // 内置「重置过滤」工具按钮点击：清空所有列过滤条件并触发重置事件
 const onResetAllFilter = () => {
   resetAllFilter();
@@ -1711,14 +1823,27 @@ const passthroughSlotNames = computed(() => {
   return Array.from(nameSet)
 })
 
+// ========== vxe-grid 原生事件透传 ==========
+// 将 FORWARD_GRID_EVENTS 中每个事件名转成 onXxx 监听器，vxe-grid 触发时按同名 emit 抛给父组件。
+// 事件名与 vxe-grid 完全一致，父组件可直接 @scroll / @cell-mouseenter / @header-cell-click ... 监听。
+const gridListeners = computed(() => {
+  const obj = {};
+  FORWARD_GRID_EVENTS.forEach((name) => {
+    obj[toHandlerKey(name)] = (e) => emit(name, e);
+  });
+  return obj;
+});
+
 // ========== vxe-grid 属性 ==========
 // 父组件传入的、未在 defineProps 中声明的 vxe-grid 原生属性会进入 attrs，
 // 这里通过展开 attrs 实现属性透传；class / style 排除（绑定到根元素 .table-pro）。
+// 同时合并 gridListeners（事件透传），统一由一个 v-bind 绑定到 <vxe-grid>。
 // 显式声明的 props 写在后面，优先级更高，避免被透传属性意外覆盖。
 const gridProps = computed(() => {
   const { class: _class, style: _style, ...restAttrs } = attrs;
   return {
     ...restAttrs,
+    ...gridListeners.value,
     id: props.tableId || undefined,
     border: props.border,
     stripe: props.stripe,
@@ -1790,6 +1915,17 @@ defineExpose({
     gridRef.value?.setCheckboxRow?.(rows, checked),
   toggleCheckboxRow: (rows) => gridRef.value?.toggleCheckboxRow?.(rows),
   clearRadioRow: () => gridRef.value?.clearRadioRow?.(),
+  // ========== 单选/多选数据收集（useSelection）==========
+  // 多选：是否选中、选中行数组、选中 id 数组（按 props.rowConfig.keyField 提取）
+  isSelected,
+  selectedList,
+  selectedListIds,
+  // 单选：选中行、选中 id、是否选中
+  selectedRow,
+  selectedId,
+  isRadioSelected,
+  // 清空单选 + 多选
+  clearSelection,
   scrollTo: (x, y) => gridRef.value?.scrollTo?.(x, y),
   scrollToRow: (row) => gridRef.value?.scrollToRow?.(row),
   scrollToColumn: (col) => gridRef.value?.scrollToColumn?.(col),
@@ -1824,9 +1960,9 @@ defineExpose({
         v-bind="gridProps"
         @toolbar-button-click="onToolbarButtonClick"
         @sort-change="onSortChange"
-        @checkbox-change="(e) => emit('checkbox-change', e)"
-        @checkbox-all="(e) => emit('checkbox-all', e)"
-        @radio-change="(e) => emit('radio-change', e)"
+        @checkbox-change="onCheckboxChange"
+        @checkbox-all="onCheckboxAll"
+        @radio-change="onRadioChange"
         @cell-click="(e) => emit('cell-click', e)"
         @cell-dblclick="(e) => emit('cell-dblclick', e)"
         @row-click="(e) => emit('row-click', e)"
@@ -1836,7 +1972,20 @@ defineExpose({
         @edit-closed="onEditClosed"
       >
         <template #toolbarButtons="scope">
-          <slot name="toolbarButtons" v-bind="scope" />
+          <slot
+            name="toolbarButtons"
+            v-bind="{
+              ...scope,
+              // 单选/多选收集的数据（useSelection）
+              isSelected,
+              selectedList,
+              selectedListIds,
+              selectedRow,
+              selectedId,
+              isRadioSelected,
+              clearSelection,
+            }"
+          />
         </template>
         <template #toolbarToolSuffix="scope">
           <vxe-button
@@ -1871,8 +2020,8 @@ defineExpose({
       </vxe-grid>
     </div>
     <Pagination
-      v-if="showPager"
-      :visible="showPager"
+      v-if="pagination"
+      :visible="pagination"
       :pager-config="currentPager"
       @change="onPagerChange"
     />

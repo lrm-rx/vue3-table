@@ -53,6 +53,14 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
+    css: {
+      preprocessorOptions: {
+        // 使用 Sass modern API，消除 legacy-js-api deprecation 警告（Vite 5.4+）
+        scss: {
+          api: 'modern-compiler',
+        },
+      },
+    },
     server: {
       port: 5173,
       open: false,
