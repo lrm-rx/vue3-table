@@ -56,7 +56,7 @@ const statusTextMap = {
 const columns = ref([
   { type: "checkbox", width: 50 },
   { type: "seq", width: 60, title: "序号" },
-
+  { type: "radio", width: 60 },
   // 演示 1：filterType: 'FilterInput' → 自动注入完整过滤配置
   //         不再需要手动写 filters:[{data:{value:''}}] / filterRender:{name:'FilterInput'}
   // 演示 2：editRender 单元格可编辑（ElInput）
@@ -397,29 +397,48 @@ const onCheckboxChange = () => {
         演示：<b>filterType</b> 简化过滤配置 + 组件内置公共列配置
       </el-tag>
       <el-tag type="warning">
-        演示：<b>render</b> JSX 只读渲染（邮箱图标、角色/状态 ElTag、操作列按钮）
+        演示：<b>render</b> JSX 只读渲染（邮箱图标、角色/状态
+        ElTag、操作列按钮）
       </el-tag>
       <el-tag type="danger">
-        演示：<b>editRender</b> 可编辑单元格（单击进入编辑，编辑完触发 cell-edit-change）
+        演示：<b>editRender</b> 可编辑单元格（单击进入编辑，编辑完触发
+        cell-edit-change）
       </el-tag>
       <el-tag type="info">
-        演示：<b>editOptions</b> / <b>cellEditProps</b> 单独传递编辑选项数组与公共 props
+        演示：<b>editOptions</b> /
+        <b>cellEditProps</b> 单独传递编辑选项数组与公共 props
       </el-tag>
     </div>
-    <div style="margin-bottom: 10px; color: #606266; font-size: 13px; line-height: 1.8">
+    <div
+      style="
+        margin-bottom: 10px;
+        color: #606266;
+        font-size: 13px;
+        line-height: 1.8;
+      "
+    >
       功能验证要点：<br />
-      · <b>配置简化</b>：姓名/账号/手机号/邮箱列仅写 <code>filterType: 'FilterInput'</code>，
-        不再手动写 <code>filters: [{ data: { value: '' } }] filterRender: { name: 'FilterInput' }</code>
-        （由组件内置 DEFAULT_FILTER_CONFIG 自动注入）<br />
-      · <b>公共列配置</b>：所有数据列默认左对齐、120 最小宽度、溢出省略（由组件内置默认值生效）<br />
-      · <b>render (JSX 只读)</b>：邮箱列显示图标、角色列/状态列渲染 ElTag、操作列渲染 ElButton
-        （配置式写 render 函数即可，无需在 template 定义具名插槽）<br />
+      · <b>配置简化</b>：姓名/账号/手机号/邮箱列仅写
+      <code>filterType: 'FilterInput'</code>， 不再手动写
+      <code
+        >filters: [{ data: { value: '' } }] filterRender: { name: 'FilterInput'
+        }</code
+      >
+      （由组件内置 DEFAULT_FILTER_CONFIG 自动注入）<br />
+      · <b>公共列配置</b>：所有数据列默认左对齐、120
+      最小宽度、溢出省略（由组件内置默认值生效）<br />
+      · <b>render (JSX 只读)</b>：邮箱列显示图标、角色列/状态列渲染
+      ElTag、操作列渲染 ElButton （配置式写 render 函数即可，无需在 template
+      定义具名插槽）<br />
       · <b>editRender (可编辑)</b>：单击单元格进入编辑模式（双击也可），
-        姓名/账号/邮箱/手机号 → ElInput，年龄 → ElInputNumber，部门 → ElSelect，
-        角色 → ElRadio，状态 → ElSwitch，创建时间 → ElDatePicker<br />
-      · <b>editOptions 单独传递</b>：部门/角色/状态列的编辑选项数组未放在 columns 里，
-        而是通过 tablePro 的 :edit-options 单独注入，保持 columns 纯净无数据噪音<br />
-      · <b>cell-edit-change 事件</b>：任意单元格编辑完成后弹出消息提示并在控制台打印完整参数
+      姓名/账号/邮箱/手机号 → ElInput，年龄 → ElInputNumber，部门 → ElSelect，
+      角色 → ElRadio，状态 → ElSwitch，创建时间 → ElDatePicker<br />
+      · <b>editOptions 单独传递</b>：部门/角色/状态列的编辑选项数组未放在
+      columns 里， 而是通过 tablePro 的 :edit-options 单独注入，保持 columns
+      纯净无数据噪音<br />
+      ·
+      <b>cell-edit-change 事件</b
+      >：任意单元格编辑完成后弹出消息提示并在控制台打印完整参数
     </div>
 
     <TablePro
@@ -463,7 +482,7 @@ const onCheckboxChange = () => {
       </template>
       <template #cell_account="{ row }">
         <el-button link type="primary" :underline="false">
-          <b>@{{ row.account || '' }}</b>
+          <b>@{{ row.account || "" }}</b>
         </el-button>
       </template>
 

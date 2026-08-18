@@ -20,12 +20,12 @@ import {
   reactive,
   computed,
   useSlots,
+  useAttrs,
   provide,
   nextTick,
   onMounted,
   watch,
   h,
-  shallowRef,
   markRaw,
 } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
@@ -51,6 +51,10 @@ import { FILTER_DEFAULTS, isFilterActive } from "./filter-config.js";
 import { useTable } from "@/hooks/useTable";
 // 抽离的分页组件
 import Pagination from "./components/Pagination.vue";
+
+// 关闭自动 inheritAttrs（避免父组件传入的未声明属性落到根 div），
+// 改由下方 gridProps 显式将这些属性透传到 <vxe-grid>；class / style 仍绑定到根元素 .table-pro
+defineOptions({ inheritAttrs: false });
 
 const props = defineProps({
   // 列配置（vxe-grid columns）
@@ -234,6 +238,7 @@ const emit = defineEmits([
 ]);
 
 const slots = useSlots();
+const attrs = useAttrs();
 const gridRef = ref();
 
 // ========== 单元格编辑上下文 ==========
@@ -1707,37 +1712,44 @@ const passthroughSlotNames = computed(() => {
 })
 
 // ========== vxe-grid 属性 ==========
-const gridProps = computed(() => ({
-  id: props.tableId || undefined,
-  border: props.border,
-  stripe: props.stripe,
-  round: props.round,
-  height: props.height,
-  size: currentDensity.value,
-  rowConfig: { isHover: true, ...props.rowConfig },
-  checkboxConfig: props.checkboxConfig,
-  radioConfig: props.radioConfig,
-  // keepSource 是 vxe-table 的根级 prop（非 editConfig 属性），
-  // 必须放在根级，vxe-table 才会缓存源数据快照，isUpdateByRow 才能正确判断 dirty 状态，
-  // 进而给单元格 td 加上 col--dirty 类，渲染编辑标记。
-  keepSource: true,
-  editConfig: {
-    trigger: "click",
-    mode: "cell",
-    showStatus: true,
-    ...props.editConfig,
-  },
-  sortConfig: { trigger: "button", ...props.sortConfig },
-  filterConfig: { remote: true, ...props.filterConfig },
-  treeConfig: props.treeConfig,
-  expandConfig: props.expandConfig,
-  columnConfig: { resizable: true, ...props.columnConfig },
-  columns: mergedColumns.value,
-  // 远程模式使用 useTable 接管的数据；静态模式使用外部传入的 data
-  data: renderData.value,
-  toolbarConfig: toolbarConfig.value,
-  customConfig: customConfig.value,
-}));
+// 父组件传入的、未在 defineProps 中声明的 vxe-grid 原生属性会进入 attrs，
+// 这里通过展开 attrs 实现属性透传；class / style 排除（绑定到根元素 .table-pro）。
+// 显式声明的 props 写在后面，优先级更高，避免被透传属性意外覆盖。
+const gridProps = computed(() => {
+  const { class: _class, style: _style, ...restAttrs } = attrs;
+  return {
+    ...restAttrs,
+    id: props.tableId || undefined,
+    border: props.border,
+    stripe: props.stripe,
+    round: props.round,
+    height: props.height,
+    size: currentDensity.value,
+    rowConfig: { isHover: true, ...props.rowConfig },
+    checkboxConfig: props.checkboxConfig,
+    radioConfig: props.radioConfig,
+    // keepSource 是 vxe-table 的根级 prop（非 editConfig 属性），
+    // 必须放在根级，vxe-table 才会缓存源数据快照，isUpdateByRow 才能正确判断 dirty 状态，
+    // 进而给单元格 td 加上 col--dirty 类，渲染编辑标记。
+    keepSource: true,
+    editConfig: {
+      trigger: "click",
+      mode: "cell",
+      showStatus: true,
+      ...props.editConfig,
+    },
+    sortConfig: { trigger: "button", ...props.sortConfig },
+    filterConfig: { remote: true, ...props.filterConfig },
+    treeConfig: props.treeConfig,
+    expandConfig: props.expandConfig,
+    columnConfig: { resizable: true, ...props.columnConfig },
+    columns: mergedColumns.value,
+    // 远程模式使用 useTable 接管的数据；静态模式使用外部传入的 data
+    data: renderData.value,
+    toolbarConfig: toolbarConfig.value,
+    customConfig: customConfig.value,
+  };
+});
 
 // ========== 分页（element-plus，抽离到 ./components/Pagination.vue）==========
 /**
@@ -1805,7 +1817,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="table-pro">
+  <div class="table-pro" :class="attrs.class" :style="attrs.style">
     <div class="table-pro__body">
       <vxe-grid
         ref="gridRef"
