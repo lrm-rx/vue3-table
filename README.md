@@ -40,6 +40,7 @@ src/
 - **表头过滤 4 种**：FilterInput / FilterCheckbox / FilterDateRange / FilterNumberRange，支持远程选项接口
 - **远程排序参数可定制**：`sortParamConfig` 控制排序参数 key 名与格式（含合并模式 `orderBy=field desc`）
 - **vxe-grid 原生能力透传**：列拖拽排序、固定左/右、显示隐藏、缩放、查找替换、右键菜单等
+- **虚拟滚动默认启用**：数据列（不含复选/单选/序号/展开/操作列）> 26 列时自动启用横向虚拟滚动；行数 > 200 时自动启用纵向虚拟滚动；两个条件独立判断，同时满足则同时启用。可通过 `:virtual-x-config` / `:virtual-y-config` 显式覆盖
 
 ---
 
@@ -481,6 +482,7 @@ tableProRef.value.selectedId;         // 选中 id
 | `showToolbar` / `showRefresh` / `showColumnSetting` / `showExport` / `showSearch` / `showDensity` / `showResetFilter` | Boolean | `true` | 工具栏开关 |
 | `customStorage` | Boolean | `false` | 列状态记忆 |
 | `toolbarConfig` / `customConfig` | Object | `{}` | 额外 vxe 配置 |
+| `virtualXConfig` / `virtualYConfig` | Object | `null` | 横向 / 纵向虚拟滚动配置。未传时按阈值自动启用：数据列 > 26 启用横向、行数 > 200 启用纵向（数据列不计复选/单选/序号/展开/操作列）；传入则覆盖默认，如 `{ enabled: false }` 强制关闭 |
 
 ---
 

@@ -1715,11 +1715,77 @@ const gridListeners = computed(() => {
   return obj;
 });
 
+// ========== 虚拟滚动默认配置 ==========
+// 横向虚拟滚动阈值：数据列数（不含复选/单选/序号/展开/操作列）> 26 时默认启用
+// 纵向虚拟滚动阈值：行数 > 200 时默认启用
+// 两个条件独立判断，同时满足则同时启用纵向与横向虚拟滚动
+// 用户可通过 :virtual-x-config / :virtual-y-config 显式传入覆盖默认（优先级最高）
+const VIRTUAL_SCROLL_X_THRESHOLD = 26;
+const VIRTUAL_SCROLL_Y_THRESHOLD = 200;
+
+// 操作列识别：field 为 action/operation 或 title 为「操作」的列视为操作列
+// 不计入横向虚拟滚动阈值（这类列通常 fixed:'right'，不参与横向虚拟渲染）
+const isOperationColumn = (col) => {
+  if (!col) return false;
+  const f = col.field;
+  if (f === "action" || f === "operation") return true;
+  if (col.title === "操作") return true;
+  return false;
+};
+
+// 统计实际渲染的数据列数（叶子列，排除复选/单选/序号/展开/操作列）
+const dataColumnCount = computed(() => {
+  let count = 0;
+  forEachLeafColumn(props.columns, (col) => {
+    if (!col) return;
+    const t = col.type;
+    if (t && /^(checkbox|seq|radio|expand)$/.test(t)) return;
+    if (isOperationColumn(col)) return;
+    count++;
+  });
+  return count;
+});
+
+// 自动横向虚拟滚动配置：仅当数据列数 > 阈值时启用
+const autoVirtualXConfig = computed(() =>
+  dataColumnCount.value > VIRTUAL_SCROLL_X_THRESHOLD
+    ? { enabled: true, gt: VIRTUAL_SCROLL_X_THRESHOLD }
+    : null,
+);
+
+// 自动纵向虚拟滚动配置：仅当行数 > 阈值时启用
+const autoVirtualYConfig = computed(() =>
+  (renderData.value || []).length > VIRTUAL_SCROLL_Y_THRESHOLD
+    ? { enabled: true, gt: VIRTUAL_SCROLL_Y_THRESHOLD }
+    : null,
+);
+
 // ========== vxe-grid 属性 ==========
 // 展开 attrs 实现 vxe-grid 原生属性透传（class/style 排除，绑定到根元素 .table-pro）
 // 合并 gridListeners（事件透传），显式声明的 props 写在后面优先级更高
 const gridProps = computed(() => {
-  const { class: _class, style: _style, ...restAttrs } = attrs;
+  // 剥离 class/style（绑定到根元素 .table-pro）
+  // 剥离 virtualXConfig/virtualYConfig（camelCase + kebab-case）及已废弃的 scrollX/scrollY，
+  // 统一由下方默认虚拟滚动逻辑接管，避免 restAttrs 残留导致重复传参
+  const {
+    class: _class,
+    style: _style,
+    virtualXConfig: userVirtualXCamel,
+    "virtual-x-config": userVirtualXKebab,
+    virtualYConfig: userVirtualYCamel,
+    "virtual-y-config": userVirtualYKebab,
+    scrollX: userScrollXC,
+    "scroll-x": userScrollXK,
+    scrollY: userScrollYC,
+    "scroll-y": userScrollYK,
+    ...restAttrs
+  } = attrs;
+  // 用户显式传入的虚拟滚动配置优先级最高（同时兼容新版 virtualXConfig 与已废弃 scrollX）
+  // 未传则按列/行数阈值自动启用
+  const finalVirtualX =
+    userVirtualXCamel ?? userVirtualXKebab ?? userScrollXC ?? userScrollXK ?? autoVirtualXConfig.value;
+  const finalVirtualY =
+    userVirtualYCamel ?? userVirtualYKebab ?? userScrollYC ?? userScrollYK ?? autoVirtualYConfig.value;
   return {
     ...restAttrs,
     ...gridListeners.value,
@@ -1755,6 +1821,9 @@ const gridProps = computed(() => {
     data: renderData.value,
     toolbarConfig: toolbarConfig.value,
     customConfig: customConfig.value,
+    // 虚拟滚动：用户显式配置优先，否则按列/行数阈值自动启用
+    ...(finalVirtualX ? { virtualXConfig: finalVirtualX } : {}),
+    ...(finalVirtualY ? { virtualYConfig: finalVirtualY } : {}),
   };
 });
 
