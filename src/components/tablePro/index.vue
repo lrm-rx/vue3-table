@@ -613,6 +613,33 @@ const mergeEditCompProps = (field, editRender, editValue, extra = {}) => {
 //      非编辑态 slots.default 若用户没写 render，则自动按 editOptions 显示 label 文本（否则原值）。
 //   5. 插槽式渲染：外部 <TablePro> 的 template 中 #cell_xxx / #edit_xxx 具名插槽透传到 vxe-grid 对应列，
 //      列配置 slots.default/edit 写字符串时按插槽名匹配；写函数时按响应式 JSX 插槽使用。
+
+// ========== 列查找/遍历工具（支持表头分组 children 递归）==========
+// 用于 applyInitParam / getFilterSortState / collectCheckboxFilterParams 等
+// 需要按 field 查找列或遍历叶子列的场景，递归进入 children。
+const findColumnByField = (cols, field) => {
+  if (!Array.isArray(cols) || !field) return undefined
+  for (const col of cols) {
+    if (!col || typeof col !== 'object') continue
+    if (col.field === field) return col
+    if (Array.isArray(col.children) && col.children.length) {
+      const hit = findColumnByField(col.children, field)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+const forEachLeafColumn = (cols, fn) => {
+  ;(cols || []).forEach((col) => {
+    if (!col || typeof col !== 'object') return
+    if (Array.isArray(col.children) && col.children.length) {
+      forEachLeafColumn(col.children, fn)
+    } else {
+      fn(col)
+    }
+  })
+}
+
 const mergedColumns = computed(() => {
   const defCfg = props.defaultColumnConfig || {}
   const { filterDefaults: defFilterDefaults, ...defColumnCommon } = defCfg
@@ -631,7 +658,41 @@ const mergedColumns = computed(() => {
   // 外部插槽集合（用于支持 render: 'cell_role' 这种字符串引用外部具名插槽）
   const externalSlots = slots || {}
 
-  return (props.columns || []).map((rawCol) => {
+  // 应用 headerRender → slots.header（叶子列与父分组列共用）
+  // 优先级：用户显式 slots.header > col.headerRender
+  // 支持：
+  //   1) 函数式 JSX：(params, h) => VNode，params 标准化字段：column/field/title/$table/$rowIndex/$columnIndex
+  //   2) 字符串：引用外部具名插槽名（如 headerRender: 'header_role' 对应 <template #header_role="{column}">）
+  const applyHeaderRender = (col, field) => {
+    if (col.slots.header) return
+    if (typeof col.headerRender === 'function') {
+      const userHeader = col.headerRender
+      col.slots.header = markRaw((scope) => {
+        try {
+          const params = {
+            column: col,
+            field,
+            title: col.title,
+            $table: scope.$table,
+            rowIndex: scope.$rowIndex,
+            columnIndex: scope.$columnIndex,
+          }
+          return userHeader(params, h)
+        } catch (e) {
+          return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
+        }
+      })
+    } else if (typeof col.headerRender === 'string') {
+      const slotName = col.headerRender
+      if (typeof externalSlots[slotName] === 'function') {
+        col.slots.header = slotName
+      }
+    }
+  }
+
+  // 叶子列处理函数（原有完整数据列处理逻辑：defaultColumnConfig / 对齐 / filterType /
+  // render / headerRender / editRender / 默认过滤值注入）
+  const transformLeafColumn = (rawCol) => {
     if (!rawCol || typeof rawCol !== 'object') return rawCol
     const colType = rawCol.type
     const isSpecialCol = !!(colType && /^(checkbox|seq|radio|expand)$/.test(colType))
@@ -710,36 +771,8 @@ const mergedColumns = computed(() => {
       }
     }
 
-    // ---------- 3a) headerRender → slots.header（配置式 JSX 自定义表头 + 插槽式字符串引用）----------
-    // 优先级：用户显式 slots.header > col.headerRender
-    // 支持：
-    //   1) 函数式 JSX：(params, h) => VNode，params 标准化字段：column/field/title/$table/$rowIndex/$columnIndex
-    //   2) 字符串：引用外部具名插槽名（如 headerRender: 'header_role' 对应 <template #header_role="{column}">）
-    if (!col.slots.header) {
-      if (typeof col.headerRender === 'function') {
-        const userHeader = col.headerRender
-        col.slots.header = markRaw((scope) => {
-          try {
-            const params = {
-              column: col,
-              field,
-              title: col.title,
-              $table: scope.$table,
-              rowIndex: scope.$rowIndex,
-              columnIndex: scope.$columnIndex,
-            }
-            return userHeader(params, h)
-          } catch (e) {
-            return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
-          }
-        })
-      } else if (typeof col.headerRender === 'string') {
-        const slotName = col.headerRender
-        if (typeof externalSlots[slotName] === 'function') {
-          col.slots.header = slotName
-        }
-      }
-    }
+    // ---------- 3a) headerRender → slots.header（与父分组列共用 applyHeaderRender）----------
+    applyHeaderRender(col, field)
 
     // ---------- 4) editRender → editable:true + slots.edit 构建编辑控件 ----------
     // 支持三种形式（优先级：用户显式 slots.edit > editRender）：
@@ -885,7 +918,25 @@ const mergedColumns = computed(() => {
     }
 
     return col
-  })
+  }
+
+  // 递归列处理：父分组列（含 children）只递归子列 + 应用 headerRender，
+  // 跳过数据列专属逻辑（defaultColumnConfig / filterType / render / editRender / 默认过滤值），
+  // 避免父分组列被错误注入数据列属性（showOverflow/minWidth/align 等），同时让子列继承完整合并逻辑。
+  const transformColumn = (rawCol) => {
+    if (!rawCol || typeof rawCol !== 'object') return rawCol
+    if (Array.isArray(rawCol.children) && rawCol.children.length) {
+      const col = { ...rawCol }
+      col.slots = rawCol.slots ? { ...rawCol.slots } : {}
+      col.children = rawCol.children.map(transformColumn)
+      // 父分组列也支持 headerRender（自定义表头渲染）
+      applyHeaderRender(col, col.field || '')
+      return col
+    }
+    return transformLeafColumn(rawCol)
+  }
+
+  return (props.columns || []).map(transformColumn)
 })
 
 // ========== 函数式/字符串式 editRender 标记 ==========
@@ -894,27 +945,84 @@ const mergedColumns = computed(() => {
 // 参数 value/cellValue 颠倒。这里收集这类列的 field，供 onEditClosed 分流处理。
 const customEditFields = computed(() => {
   const m = {}
-  ;(mergedColumns.value || []).forEach((col) => {
-    if (!col || typeof col !== 'object') return
-    const er = col.editRender
-    // 函数式 / 字符串式均视为自定义编辑（用户意图自管编辑态）
-    if (typeof er === 'function' || typeof er === 'string') {
-      m[col.field] = true
-    }
-  })
+  // 递归遍历含 children 的表头分组列，收集所有叶子列的自定义 editRender
+  const visit = (cols) => {
+    ;(cols || []).forEach((col) => {
+      if (!col || typeof col !== 'object') return
+      const er = col.editRender
+      // 函数式 / 字符串式均视为自定义编辑（用户意图自管编辑态）
+      if ((typeof er === 'function' || typeof er === 'string') && col.field) {
+        m[col.field] = true
+      }
+      if (Array.isArray(col.children) && col.children.length) {
+        visit(col.children)
+      }
+    })
+  }
+  visit(mergedColumns.value || [])
   return m
 })
 
-// 实际渲染的表格数据：远程模式由 useTable 接管，否则使用外部传入的 data
-const renderData = computed(() =>
-  isRemoteMode.value ? tableHook.tableData.value : props.data,
+// ========== 静态模式前端分页（pagination=true 且父组件传 data 数组时启用）==========
+// 本地分页状态：初始值来自 props.pagerConfig，父组件可通过 v-model:pagerConfig 双向同步。
+// total 不从外部同步，由 props.data.length 自动计算（前端分页场景下 total 必须等于全量数据长度）。
+const localPager = ref({
+  currentPage: props.pagerConfig?.currentPage ?? 1,
+  pageSize: props.pagerConfig?.pageSize ?? 10,
+  pageSizes: props.pagerConfig?.pageSizes,
+});
+
+// 父组件 pagerConfig 变化时同步到 localPager（v-model:pagerConfig 双向同步）
+// 仅静态模式 + pagination=true 时启用，避免覆盖远程模式 useTable 的 pageable
+watch(
+  () => props.pagerConfig,
+  (newPager) => {
+    if (isRemoteMode.value || !props.pagination || !newPager) return;
+    if (newPager.currentPage != null)
+      localPager.value.currentPage = newPager.currentPage;
+    if (newPager.pageSize != null)
+      localPager.value.pageSize = newPager.pageSize;
+    if (newPager.pageSizes) localPager.value.pageSizes = newPager.pageSizes;
+    // total 由 data.length 自动计算，不在此同步
+  },
+  { deep: true },
 );
+
+// 数据长度变化时夹紧 currentPage（避免删除数据后停留在不存在的页码）
+watch(
+  () => (props.data || []).length,
+  (len) => {
+    if (isRemoteMode.value || !props.pagination) return;
+    const size = localPager.value.pageSize || 10;
+    const maxPage = Math.max(1, Math.ceil(len / size));
+    if (localPager.value.currentPage > maxPage) {
+      localPager.value.currentPage = maxPage;
+    }
+  },
+);
+
+// 实际渲染的表格数据：
+// - 远程模式：useTable 接管
+// - 静态模式 + pagination=true：按 localPager 切片 props.data（前端分页）
+// - 静态模式 + pagination=false：返回完整 props.data
+const renderData = computed(() => {
+  if (isRemoteMode.value) return tableHook.tableData.value;
+  if (!props.pagination) return props.data;
+  const all = props.data || [];
+  const size = localPager.value.pageSize || 10;
+  const page = localPager.value.currentPage || 1;
+  const start = (page - 1) * size;
+  return all.slice(start, start + size);
+});
 
 // 数据刷新时清空收集的选中数据：vxe-grid 默认 reserve:false 会清除选中 UI，
 // 这里同步清空 selectedList / selectedRow，避免对外暴露的选中数据与表格实际状态脱节。
 watch(renderData, () => clearSelection());
 
-// 实际使用的分页配置：远程模式由 useTable 的 pageable 接管
+// 实际使用的分页配置：
+// - 远程模式：由 useTable 的 pageable 接管
+// - 静态模式 + pagination=true：使用 localPager，total 自动同步 data.length
+// - 静态模式 + pagination=false：返回 props.pagerConfig 原样（不参与分页）
 const currentPager = computed(() => {
   if (isRemoteMode.value) {
     const pg = tableHook.pageable.value || {};
@@ -923,6 +1031,14 @@ const currentPager = computed(() => {
       pageSize: pg.pageSize || 10,
       total: pg.total || 0,
       pageSizes: props.pagerConfig?.pageSizes || [10, 20, 50, 100],
+    };
+  }
+  if (props.pagination) {
+    return {
+      currentPage: localPager.value.currentPage,
+      pageSize: localPager.value.pageSize,
+      total: (props.data || []).length,
+      pageSizes: localPager.value.pageSizes || [10, 20, 50, 100],
     };
   }
   return props.pagerConfig;
@@ -985,7 +1101,7 @@ const applyInitParam = () => {
   if (ip.filters && typeof ip.filters === "object") {
     const sp = tableHook.searchParam.value;
     Object.keys(ip.filters).forEach((field) => {
-      const col = (props.columns || []).find((c) => c.field === field);
+      const col = findColumnByField(props.columns || [], field);
       const fName = col && col.filterRender && col.filterRender.name;
       if (!fName || !FILTER_DEFAULTS[fName]) return;
       const defaultVal = ip.filters[field];
@@ -1199,9 +1315,10 @@ const getFilterSortState = () => {
   const cols = $table.getColumns ? $table.getColumns() : [];
   // vxe-grid 的 getColumns() 返回的内部列对象不保留自定义顶层属性（如 defParamKey），
   // 需要从原始 props.columns 配置中按 field 查找 defParamKey / filterRender.props
+  // 使用 forEachLeafColumn 递归进入表头分组 children，让子列的 defParamKey / filterRender.props 也能被查到
   const fieldToParamKey = new Map();
   const fieldToRenderProps = new Map();
-  (props.columns || []).forEach((col) => {
+  forEachLeafColumn(props.columns || [], (col) => {
     if (col.field) {
       fieldToParamKey.set(col.field, col.defParamKey || col.field);
       if (col.filterRender && col.filterRender.props) {
@@ -1406,6 +1523,18 @@ const applyFilterStateAndSearch = (filterSortPayload) => {
 };
 
 /**
+ * 获取当前表头过滤的扁平参数对象（不含排序）
+ * 返回 { params, paramKeys }：
+ *  - params：扁平化的过滤参数对象（按 filterStateToParams 约定转换）
+ *  - paramKeys：本轮生效的过滤 key 集合
+ * 对外暴露供父组件读取当前过滤条件（如自定义查询、外部同步等场景）。
+ */
+const getFilterParams = () => {
+  const { filters } = getFilterSortState();
+  return filterStateToParams(filters);
+};
+
+/**
  * 把列排序状态数组 -> 请求参数对象 + 涉及的 key 集合
  * 参数 key 名与格式由 props.sortParamConfig 控制：
  *  - 非合并模式（默认）：
@@ -1563,8 +1692,9 @@ const collectCheckboxFilterParams = () => {
   const cols = $table.getColumns();
   // vxe-grid 的 getColumns() 返回的内部列对象不保留自定义顶层属性（如 defParamKey），
   // 需要从原始 props.columns 配置中按 field 查找 defParamKey
+  // 使用 forEachLeafColumn 递归进入表头分组 children
   const fieldToParamKey = new Map();
-  (props.columns || []).forEach((col) => {
+  forEachLeafColumn(props.columns || [], (col) => {
     if (col.field) {
       fieldToParamKey.set(col.field, col.defParamKey || col.field);
     }
@@ -1737,11 +1867,19 @@ const onResetAllFilter = () => {
 };
 
 // 是否存在列过滤配置（基于 mergedColumns 判断，兼容 filterType 自动注入的情况）
-const hasColumnFilter = computed(() =>
-  mergedColumns.value.some(
-    (col) => col.filters && col.filters.length > 0 && col.filterRender,
-  ),
-);
+// 递归进入表头分组 children，让子列的过滤配置也能触发「重置过滤」按钮显示
+const hasColumnFilter = computed(() => {
+  let has = false
+  const visit = (cols) => {
+    ;(cols || []).forEach((col) => {
+      if (!col || typeof col !== 'object') return
+      if (col.filters && col.filters.length > 0 && col.filterRender) has = true
+      if (Array.isArray(col.children) && col.children.length) visit(col.children)
+    })
+  }
+  visit(mergedColumns.value || [])
+  return has
+})
 
 // ========== 工具栏配置（vxe-grid 配置式）==========
 const toolbarConfig = computed(() => {
@@ -1794,22 +1932,27 @@ const passthroughSlotNames = computed(() => {
   const nameSet = new Set()
 
   // (1) 从列配置中收集字符串引用的 slot 名
-  ;(mergedColumns.value || []).forEach((col) => {
-    if (!col || typeof col !== 'object') return
-    const collectFrom = (val) => {
-      if (typeof val === 'string' && val && slots && typeof slots[val] === 'function') {
-        nameSet.add(val)
+  // 递归进入表头分组 children，让子列的 render/headerRender/slots 字符串引用也能被透传
+  const visitCol = (cols) => {
+    ;(cols || []).forEach((col) => {
+      if (!col || typeof col !== 'object') return
+      const collectFrom = (val) => {
+        if (typeof val === 'string' && val && slots && typeof slots[val] === 'function') {
+          nameSet.add(val)
+        }
       }
-    }
-    collectFrom(col.render)
-    collectFrom(col.headerRender)
-    // 兼容 vxe 原生 slots.default/header 字符串引用
-    if (col.slots && typeof col.slots === 'object') {
-      collectFrom(col.slots.default)
-      collectFrom(col.slots.header)
-      collectFrom(col.slots.edit)
-    }
-  })
+      collectFrom(col.render)
+      collectFrom(col.headerRender)
+      // 兼容 vxe 原生 slots.default/header 字符串引用
+      if (col.slots && typeof col.slots === 'object') {
+        collectFrom(col.slots.default)
+        collectFrom(col.slots.header)
+        collectFrom(col.slots.edit)
+      }
+      if (Array.isArray(col.children) && col.children.length) visitCol(col.children)
+    })
+  }
+  visitCol(mergedColumns.value || [])
 
   // (2) 宽松透传 cell_ / edit_ / header_ 前缀的外部具名插槽
   if (slots && typeof slots === 'object') {
@@ -1882,8 +2025,9 @@ const gridProps = computed(() => {
  * 子组件已自行计算并 emit 最新的 pagerConfig（{ currentPage, pageSize, total, ... }）
  * 这里负责：
  *  1) 远程模式：派发到 useTable 的 handleSizeChange / handleCurrentChange
- *  2) 静态模式：透传 update:pagerConfig 给父组件
- *  3) 始终 emit("page-change", newPager) 供外部监听
+ *  2) 静态模式 + pagination=true：更新 localPager（驱动 renderData 切片）+ 透传 update:pagerConfig
+ *  3) 静态模式 + pagination=false：仅透传 update:pagerConfig 给父组件
+ *  4) 始终 emit("page-change", newPager) 供外部监听
  */
 const onPagerChange = (newPager) => {
   // 远程模式：交给 useTable（其内部会重新拉取数据）
@@ -1899,7 +2043,15 @@ const onPagerChange = (newPager) => {
     emit("page-change", currentPager.value);
     return;
   }
-  // 静态模式：透传给父组件
+  // 静态模式 + pagination=true：先更新本地分页状态（驱动 renderData 切片）
+  if (props.pagination) {
+    localPager.value = {
+      ...localPager.value,
+      currentPage: newPager.currentPage,
+      pageSize: newPager.pageSize,
+    };
+  }
+  // 透传给父组件（v-model:pagerConfig 双向同步）
   emit("update:pagerConfig", newPager);
   emit("page-change", newPager);
 };
@@ -1934,8 +2086,21 @@ defineExpose({
   exportData: (opts) => gridRef.value?.exportData?.(opts),
   // 重置所有列的过滤条件
   resetAllFilter,
+  // 重置指定列的过滤条件
+  resetColumnFilter,
   // 获取当前「过滤 + 排序」组合参数
   getFilterSortState,
+  // ========== 表头过滤参数（对外可读）==========
+  // 获取当前表头过滤的扁平参数对象（{ params, paramKeys }，不含排序）
+  getFilterParams,
+  // 上一次过滤写入的参数 key 集合（Set，用于外部判断哪些 key 是过滤产生的）
+  lastFilterParamKeys,
+  // ========== 分页参数（对外可读）==========
+  // 当前生效的分页配置（computed：远程模式取 useTable.pageable，静态模式取 localPager，total 自动同步 data.length）
+  currentPager,
+  // 静态模式前端分页的本地分页状态（ref：currentPage / pageSize / pageSizes）
+  // 仅静态模式 + pagination=true 时有效；远程模式请使用 pageable
+  localPager,
   // ========== useTable 暴露（远程模式可用）==========
   // 主动拉取表格数据
   getTableList: tableHook.getTableList,
