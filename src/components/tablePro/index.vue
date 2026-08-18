@@ -177,6 +177,11 @@ const props = defineProps({
       keepSource: true,
     }),
   },
+  // 全局可编辑开关（权限控制）：false 时所有列均不可编辑
+  //   - 不设置 col.editable → 表头不显示编辑图标
+  //   - 不传 editConfig → 点击单元格不会进入编辑态（即使组件配置了 editRender）
+  //   - 对象式 editRender 的 slots.default label 回退仍生效（仅显示，不可编辑）
+  editable: { type: Boolean, default: true },
   // 工具栏开关
   showToolbar: { type: Boolean, default: true },
   // 内置刷新按钮（vxe-grid 工具栏）
@@ -472,6 +477,14 @@ const getColumnDefaultData = (field, filterRenderName) => {
 };
 
 // ========== Element Plus 组件映射（editRender.name -> 组件 + 选项包裹配置）==========
+// 模块作用域常量：mergedColumns computed 内复用，避免每次 recompute 重建
+const DEFAULT_FILTER_CONFIG = {
+  FilterInput:       { filters: [{ data: { value: '' } }],                 filterRender: { name: 'FilterInput' } },
+  FilterCheckbox:    { filters: [{ data: { values: [], search: '' } }],   filterRender: { name: 'FilterCheckbox' } },
+  FilterDateRange:   { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterDateRange' } },
+  FilterNumberRange: { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterNumberRange' } },
+}
+
 const EL_EDIT_MAP = {
   ElInput:        { comp: ElInput },
   ElInputNumber:  { comp: ElInputNumber },
@@ -535,12 +548,6 @@ const mergedColumns = computed(() => {
   const defCfg = props.defaultColumnConfig || {}
   const { filterDefaults: defFilterDefaults, ...defColumnCommon } = defCfg
 
-  const DEFAULT_FILTER_CONFIG = {
-    FilterInput:       { filters: [{ data: { value: '' } }],                 filterRender: { name: 'FilterInput' } },
-    FilterCheckbox:    { filters: [{ data: { values: [], search: '' } }],   filterRender: { name: 'FilterCheckbox' } },
-    FilterDateRange:   { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterDateRange' } },
-    FilterNumberRange: { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterNumberRange' } },
-  }
   const filterDefaults = { ...DEFAULT_FILTER_CONFIG, ...(defFilterDefaults || {}) }
 
   const ip = props.initParam || {}
@@ -656,53 +663,60 @@ const mergedColumns = computed(() => {
 
     // ---------- 4) editRender → editable:true + slots.edit ----------
     // 优先级：用户显式 slots.edit > editRender（支持函数式 JSX / 字符串插槽 / 对象配置式，详见 README）
+    // props.editable=false 时（权限控制）：不设置 col.editable / 不构建 slots.edit，
+    //   点击不进入编辑态、表头无编辑图标；对象式的 slots.default label 回退仍生效（仅显示）
     if (col.editRender) {
+      const editEnabled = props.editable !== false
       if (typeof col.editRender === 'function') {
         // (1) 函数式 JSX
-        if (col.editable == null) col.editable = true
-        if (!col.slots.edit) {
-          const userEdit = col.editRender
-          col.slots.edit = markRaw((scope) => {
-            try {
-              const row = scope.row
-              const originalVal = field != null && row ? row[field] : undefined
-              const params = {
-                row,
-                column: col,
-                field,
-                cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
-                rowIndex: scope.$rowIndex,
-                columnIndex: scope.$columnIndex,
-                $table: scope.$table,
+        if (editEnabled) {
+          if (col.editable == null) col.editable = true
+          if (!col.slots.edit) {
+            const userEdit = col.editRender
+            col.slots.edit = markRaw((scope) => {
+              try {
+                const row = scope.row
+                const originalVal = field != null && row ? row[field] : undefined
+                const params = {
+                  row,
+                  column: col,
+                  field,
+                  cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
+                  rowIndex: scope.$rowIndex,
+                  columnIndex: scope.$columnIndex,
+                  $table: scope.$table,
+                }
+                return userEdit(params, h)
+              } catch (e) {
+                return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
               }
-              return userEdit(params, h)
-            } catch (e) {
-              return h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
-            }
-          })
+            })
+          }
         }
         // 函数式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
         delete col.editRender
       } else if (typeof col.editRender === 'string') {
         // (2) 字符串引用外部具名插槽
-        if (col.editable == null) col.editable = true
-        if (!col.slots.edit) {
-          const slotName = col.editRender
-          if (typeof externalSlots[slotName] === 'function') {
-            col.slots.edit = slotName
+        if (editEnabled) {
+          if (col.editable == null) col.editable = true
+          if (!col.slots.edit) {
+            const slotName = col.editRender
+            if (typeof externalSlots[slotName] === 'function') {
+              col.slots.edit = slotName
+            }
           }
         }
         // 字符串式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
         delete col.editRender
       } else if (col.editRender.name) {
         // (3) 对象配置式
-        if (col.editable == null) col.editable = true
+        if (editEnabled && col.editable == null) col.editable = true
         const erName = col.editRender.name
         const mapEntry = EL_EDIT_MAP[erName]
         if (mapEntry) {
           const Comp = mapEntry.comp
           const wrapName = mapEntry.wrap
-          if (!col.slots.edit) {
+          if (editEnabled && !col.slots.edit) {
             // markRaw 避免 Vue 深度劫持造成渲染循环或状态丢失
             col.slots.edit = markRaw((scope) => {
               const row = scope.row
@@ -746,11 +760,12 @@ const mergedColumns = computed(() => {
 
               return h(Comp, bindProps, { default: () => children })
             })
-          } else if (typeof col.slots.edit === 'string') {
+          } else if (editEnabled && typeof col.slots.edit === 'string') {
             // 用户写 slots.edit: 'edit_xxx' 字符串时直接交给外部具名插槽
           }
 
           // 未提供 render/slots.default 时，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
+          // 注：editEnabled=false 时也生效，确保不可编辑状态下仍按 options 显示 label
           if (!col.slots.default) {
             col.slots.default = markRaw((scope) => {
               const raw = field != null && scope.row ? scope.row[field] : undefined
@@ -1720,12 +1735,17 @@ const gridProps = computed(() => {
     // 注：keepSource 是 vxe-table 根级 prop（非 editConfig 属性），必须放根级
     // 才能缓存源数据快照让 isUpdateByRow 判断 dirty + td 加 col--dirty 类
     keepSource: true,
-    editConfig: {
-      trigger: "click",
-      mode: "cell",
-      showStatus: true,
-      ...props.editConfig,
-    },
+    // editable=false（权限控制）：不传 editConfig，vxe 不会进入编辑态、不显示编辑图标
+    ...(props.editable === false
+      ? {}
+      : {
+          editConfig: {
+            trigger: "click",
+            mode: "cell",
+            showStatus: true,
+            ...props.editConfig,
+          },
+        }),
     sortConfig: { trigger: "button", ...props.sortConfig },
     filterConfig: { remote: true, ...props.filterConfig },
     treeConfig: props.treeConfig,

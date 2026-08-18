@@ -238,6 +238,22 @@ const onCellEditChange = ({ row, column, field, value, cellValue }) => {
 };
 ```
 
+### 权限控制：全局禁用编辑（`editable` prop）
+
+通过 `:editable="false"` 全局关闭单元格编辑能力（典型用于无编辑权限的用户）：
+
+```vue
+<TablePro :columns="columns" :editable="hasEditPermission" />
+```
+
+`editable=false` 时组件行为：
+
+- **表头不显示编辑图标**：不设置 `col.editable`，vxe-grid 不会渲染编辑态标识
+- **点击单元格不进入编辑态**：不传 `editConfig` 给 vxe-grid，即使列配置了 `editRender` 也不会触发编辑（不会渲染禁用态的输入控件，符合"不可见即不可编辑"的权限要求）
+- **对象式 `editRender` 的 label 回退仍生效**：`slots.default` 仍按 `editOptions` 显示 label 文本（仅显示，不可编辑）
+- **函数式 / 字符串式 `editRender`**：完全不构建 `slots.edit`，`editRender` 仍会被删除以避免 vxe 校验警告
+- **`editOptions` / `cellEditProps`**：可正常传递（用于 label 回退显示），不会触发编辑
+
 ---
 
 ## 表头过滤（filterType）
@@ -448,6 +464,7 @@ tableProRef.value.selectedId;         // 选中 id
 | `filterConfig` | Object | `{ remote: true, transfer: true }` | 过滤配置 |
 | `treeConfig` / `expandConfig` / `columnConfig` | Object | `{}` | 树 / 展开 / 列配置 |
 | `editConfig` | Object | `{ trigger: 'click', mode: 'cell', showStatus: true, keepSource: true }` | 编辑配置 |
+| `editable` | Boolean | `true` | 全局可编辑开关（权限控制），`false` 时所有列不可编辑：表头无编辑图标、点击不进入编辑态（详见下文） |
 | `pagination` | Boolean | `true` | 是否显示分页 |
 | `pagerConfig` | Object | `{ currentPage: 1, pageSize: 10, total: 0 }` | 分页配置（v-model:pagerConfig） |
 | `defaultColumnConfig` | Object | `{ showOverflow: 'tooltip', minWidth: 120 }` | 公共列配置 |

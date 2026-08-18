@@ -359,6 +359,7 @@ const onRequestError = (error) => {
 // ========== 测试按钮 / 事件回调 ==========
 const tableProRef = ref();
 const paginationEnabled = ref(true);
+const editableEnabled = ref(true);
 
 // 单元格编辑完成事件
 const onCellEditChange = (params) => {
@@ -408,6 +409,12 @@ const onCheckboxChange = () => {
         演示：<b>editOptions</b> /
         <b>cellEditProps</b> 单独传递编辑选项数组与公共 props
       </el-tag>
+      <span style="display: inline-flex; align-items: center; gap: 6px; margin-left: 8px">
+        <el-switch v-model="editableEnabled" size="small" />
+        <span style="font-size: 12px; color: #606266">
+          editable={{ editableEnabled ? "true（可编辑）" : "false（只读）" }}
+        </span>
+      </span>
     </div>
     <div
       style="
@@ -457,6 +464,7 @@ const onCheckboxChange = () => {
           : { label: 'label', value: 'value' }
       "
       :pagination="paginationEnabled"
+      :editable="editableEnabled"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"
       :edit-options="editOptions"
