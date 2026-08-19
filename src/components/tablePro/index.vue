@@ -1,90 +1,3 @@
-<script>
-// ========== vxe-grid 原生事件透传清单 ==========
-// 覆盖 tableEmits + gridEmits，排除模板内显式绑定的事件、page-change（与 element-plus 冲突）、update:data 与已废弃事件
-// filter-visible / edit-activated / edit-closed 既由内部 handler 处理业务逻辑，也在此透传
-const FORWARD_GRID_EVENTS = [
-  // 生命周期
-  "ready", "init-rendered", "data-rendered",
-  // 键盘 / 剪贴板
-  "keydown-start", "keydown", "keydown-end",
-  "paste", "copy", "cut", "undo", "redo", "context-menu",
-  // 数据 / 列变化
-  "columns-change", "data-change", "footer-data-change",
-  // 当前行 / 列
-  "current-row-change", "current-row-disabled",
-  "current-column-change", "current-column-disabled",
-  // 复选框区间选择
-  "checkbox-range-start", "checkbox-range-change", "checkbox-range-end", "checkbox-range-select",
-  // 单元格交互
-  "cell-menu", "cell-mouseenter", "cell-mouseleave", "cell-selected",
-  "cell-delete-value", "cell-backspace-value",
-  // 表头 / 表尾
-  "header-cell-click", "header-cell-dblclick", "header-cell-menu",
-  "footer-cell-click", "footer-cell-dblclick", "footer-cell-menu",
-  // 合并 / 排序 / 过滤
-  "clear-merge",
-  "clear-sort", "clear-all-sort",
-  "filter-change", "filter-visible",
-  "clear-filter", "clear-all-filter",
-  // 列 / 行拖拽缩放
-  "column-resizable-change", "row-resizable-change",
-  // 展开 / 树
-  "toggle-row-group-expand", "toggle-row-expand", "toggle-tree-expand",
-  // 右键菜单
-  "menu-click",
-  // 编辑
-  "edit-closed", "edit-activated", "edit-disabled", "valid-error",
-  // 行 / 列拖拽
-  "row-dragstart", "row-dragover", "row-dragend",
-  "row-remove-dragend", "row-insert-dragend",
-  "column-dragstart", "column-dragover", "column-dragend",
-  // 追加行
-  "enter-append-row", "tab-append-row",
-  // 滚动
-  "scroll", "scroll-boundary",
-  // 列个性化面板
-  "custom", "custom-open", "custom-close", "custom-cancel",
-  "custom-reset", "custom-confirm",
-  "custom-visible-change", "custom-visible-all",
-  "custom-fixed-change", "custom-sort-change",
-  "custom-align-change", "custom-header-align-change", "custom-footer-align-change",
-  // 查找 / 替换
-  "open-fnr", "show-fnr", "hide-fnr",
-  "fnr-change", "fnr-find", "fnr-find-all", "fnr-replace", "fnr-replace-all",
-  // 单元格区域选择（电子表格模式）
-  "cell-area-copy", "cell-area-cut", "cell-area-paste", "cell-area-merge",
-  "clear-cell-area-selection", "clear-cell-area-merge",
-  "header-cell-area-selection",
-  "cell-area-selection-invalid",
-  "cell-area-selection-start", "cell-area-selection-drag", "cell-area-selection-end",
-  "cell-area-extension-start", "cell-area-extension-drag", "cell-area-extension-end", "cell-area-extension-fill",
-  "cell-area-selection-all-start", "cell-area-selection-all-end",
-  "cell-area-arrows-start", "cell-area-arrows-end",
-  "cell-area-fill-copy",
-  "active-cell-change-start", "active-cell-change-end",
-  // grid 级（工具栏 / 表单 / 代理 / 缩放）
-  "form-submit", "form-submit-invalid", "form-reset",
-  "form-collapse", "form-toggle-collapse",
-  "proxy-query", "proxy-delete", "proxy-save",
-  "toolbar-tool-click", "zoom",
-];
-
-// TablePro 自身事件
-const TABLE_PRO_EVENTS = [
-  "refresh", "export", "search", "density-change",
-  "toolbar-button-click", "update:pagerConfig", "page-change",
-  "sort-change", "checkbox-change", "checkbox-all", "radio-change",
-  "cell-click", "cell-dblclick", "row-click", "row-dblclick",
-  "filter-confirm", "filter-reset", "filter-reset-all", "reset-filter",
-  "cell-edit-change",
-];
-
-// 统一在普通 <script> 中声明 emits，<script setup> 内 defineEmits() 不传参仅获取 emit 函数
-export default {
-  emits: [...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS],
-};
-</script>
-
 <script setup>
 /**
  * TablePro 基于 vxe-grid 二次封装的通用表格组件（详细使用说明见 README.md）。
@@ -103,6 +16,7 @@ import {
   h,
   markRaw,
   toHandlerKey,
+  camelize,
 } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
@@ -124,6 +38,8 @@ import {
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers.js";
 import { FILTER_DEFAULTS, isFilterActive } from "./filter-config.js";
+// 事件清单（vxe-grid 透传事件 + TablePro 自身事件），用于 defineEmits 与原生事件转发
+import { FORWARD_GRID_EVENTS, TABLE_PRO_EVENTS } from "./events.js";
 import { useTable } from "@/hooks/useTable";
 import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
@@ -249,8 +165,8 @@ const props = defineProps({
   cellEditProps: { type: Object, default: () => ({}) },
 });
 
-// defineEmits() 不传参仅获取 emit 函数，emits 选项已在顶部 <script> 中声明
-const emit = defineEmits();
+// 声明组件 emits：vxe-grid 透传事件 + TablePro 自身事件
+const emit = defineEmits([...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS]);
 
 const slots = useSlots();
 const attrs = useAttrs();
@@ -1127,6 +1043,7 @@ const clampFilterPanelToViewport = async (column) => {
   }, 0);
 };
 const onFilterVisible = (payload) => {
+  ElMessage.success("过滤面板打开");
   if (!payload || !payload.column) return;
   const column = payload.column;
   if (payload.visible) {
@@ -1593,20 +1510,24 @@ const onToolbarButtonClick = ({ code, button }) => {
 
 // ========== 单选/多选事件：收集选中数据 + 透传事件 ==========
 const onCheckboxChange = (e) => {
+  ElMessage.success("多选");
   selectionChange(e?.records || []);
   emit("checkbox-change", e);
 };
 const onCheckboxAll = (e) => {
+  ElMessage.success("全选");
   selectionChange(e?.records || []);
   emit("checkbox-all", e);
 };
 const onRadioChange = (e) => {
+  ElMessage.success("单选");
   radioChange(e?.row || null);
   emit("radio-change", e);
 };
 
 // 内置「重置过滤」工具按钮：清空所有列过滤条件并触发重置事件
-const onResetAllFilter = () => {
+const onResetAllFilter = () => {  
+  ElMessage.success("重置所有过滤");
   resetAllFilter();
   // 清除所有待恢复的快照（工具栏重置优先于面板草稿）
   Object.keys(pendingFilterSnapshots).forEach((k) => {
@@ -1707,10 +1628,15 @@ const passthroughSlotNames = computed(() => {
 
 // ========== vxe-grid 原生事件透传 ==========
 // FORWARD_GRID_EVENTS 中每个事件名 → onXxx 监听器，vxe-grid 触发时按同名 emit 抛给父组件
+// 关键：必须先 camelize 再 toHandlerKey，否则 'filter-visible' 会生成 'onFilter-visible'（带连字符），
+// Vue 的 emit 在查找处理函数时会优先匹配带连字符的形式，从而覆盖模板内显式绑定的 camelCase
+// 处理函数（@filter-visible="onFilterVisible" → props.onFilterVisible），
+// 导致本地 handler 不被调用。先 camelize 得到 'onFilterVisible' 后，
+// Vue 编译器对 v-bind + @event 的 mergeProps 会将两个同 key 的 onXxx 合并为数组，两者都触发。
 const gridListeners = computed(() => {
   const obj = {};
   FORWARD_GRID_EVENTS.forEach((name) => {
-    obj[toHandlerKey(name)] = (e) => emit(name, e);
+    obj[toHandlerKey(camelize(name))] = (e) => emit(name, e);
   });
   return obj;
 });
