@@ -17,6 +17,7 @@ import {
   markRaw,
   toHandlerKey,
   camelize,
+  mergeProps,
 } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
@@ -1641,6 +1642,30 @@ const gridListeners = computed(() => {
   return obj;
 });
 
+// ========== vxe-grid 显式事件绑定（内部处理 + 转发）==========
+// 用 v-bind 批量绑定替代模板里一行行 @xxx="..."，逻辑完全等价：
+//   · 内部 handler 已 emit 转发的事件（toolbar-button-click/sort-change/checkbox-*/radio-change）→ 处理业务 + emit
+//   · 仅 inline 转发的事件（cell-click/dblclick/row-click/dblclick）→ 直接 emit
+//   · 仅内部处理的事件（filter-visible/edit-activated/edit-closed）→ 处理业务，转发由 gridListeners 负责
+// 关键：key 必须是 onXxx 形式（camelCase + on 前缀），不能用 kebab-case
+//   · v-on="obj" 对动态对象变量不会自动 camelize key（kebab-case 不会被识别为事件处理器）
+//   · 用 v-bind 传递 onXxx 形式的 key，Vue 编译器把两个 v-bind 编译为 mergeProps
+//   · 与 gridListeners 的同名 onXxx（forwarding 函数）合并为数组，两者都触发
+const gridEventHandlers = {
+  onToolbarButtonClick,
+  onSortChange,
+  onCheckboxChange,
+  onCheckboxAll,
+  onRadioChange,
+  onCellClick: (e) => emit("cell-click", e),
+  onCellDblclick: (e) => emit("cell-dblclick", e),
+  onRowClick: (e) => emit("row-click", e),
+  onRowDblclick: (e) => emit("row-dblclick", e),
+  onFilterVisible,
+  onEditActivated,
+  onEditClosed,
+};
+
 // ========== 虚拟滚动默认配置 ==========
 // 横向虚拟滚动阈值：数据列数（不含复选/单选/序号/展开/操作列）> 26 时默认启用
 // 纵向虚拟滚动阈值：行数 > 200 时默认启用
@@ -1712,45 +1737,48 @@ const gridProps = computed(() => {
     userVirtualXCamel ?? userVirtualXKebab ?? userScrollXC ?? userScrollXK ?? autoVirtualXConfig.value;
   const finalVirtualY =
     userVirtualYCamel ?? userVirtualYKebab ?? userScrollYC ?? userScrollYK ?? autoVirtualYConfig.value;
-  return {
-    ...restAttrs,
-    ...gridListeners.value,
-    id: props.tableId || undefined,
-    border: props.border,
-    stripe: props.stripe,
-    round: props.round,
-    height: props.height,
-    size: currentDensity.value,
-    rowConfig: { isHover: true, ...props.rowConfig },
-    checkboxConfig: props.checkboxConfig,
-    radioConfig: props.radioConfig,
-    // 注：keepSource 是 vxe-table 根级 prop（非 editConfig 属性），必须放根级
-    // 才能缓存源数据快照让 isUpdateByRow 判断 dirty + td 加 col--dirty 类
-    keepSource: true,
-    // editable=false（权限控制）：不传 editConfig，vxe 不会进入编辑态、不显示编辑图标
-    ...(props.editable === false
-      ? {}
-      : {
-          editConfig: {
-            trigger: "click",
-            mode: "cell",
-            showStatus: true,
-            ...props.editConfig,
-          },
-        }),
-    sortConfig: { trigger: "button", ...props.sortConfig },
-    filterConfig: { remote: true, ...props.filterConfig },
-    treeConfig: props.treeConfig,
-    expandConfig: props.expandConfig,
-    columnConfig: { resizable: true, ...props.columnConfig },
-    columns: mergedColumns.value,
-    data: renderData.value,
-    toolbarConfig: toolbarConfig.value,
-    customConfig: customConfig.value,
-    // 虚拟滚动：用户显式配置优先，否则按列/行数阈值自动启用
-    ...(finalVirtualX ? { virtualXConfig: finalVirtualX } : {}),
-    ...(finalVirtualY ? { virtualYConfig: finalVirtualY } : {}),
-  };
+  return mergeProps(
+    {
+      ...restAttrs,
+      id: props.tableId || undefined,
+      border: props.border,
+      stripe: props.stripe,
+      round: props.round,
+      height: props.height,
+      size: currentDensity.value,
+      rowConfig: { isHover: true, ...props.rowConfig },
+      checkboxConfig: props.checkboxConfig,
+      radioConfig: props.radioConfig,
+      // 注：keepSource 是 vxe-table 根级 prop（非 editConfig 属性），必须放根级
+      // 才能缓存源数据快照让 isUpdateByRow 判断 dirty + td 加 col--dirty 类
+      keepSource: true,
+      // editable=false（权限控制）：不传 editConfig，vxe 不会进入编辑态、不显示编辑图标
+      ...(props.editable === false
+        ? {}
+        : {
+            editConfig: {
+              trigger: "click",
+              mode: "cell",
+              showStatus: true,
+              ...props.editConfig,
+            },
+          }),
+      sortConfig: { trigger: "button", ...props.sortConfig },
+      filterConfig: { remote: true, ...props.filterConfig },
+      treeConfig: props.treeConfig,
+      expandConfig: props.expandConfig,
+      columnConfig: { resizable: true, ...props.columnConfig },
+      columns: mergedColumns.value,
+      data: renderData.value,
+      toolbarConfig: toolbarConfig.value,
+      customConfig: customConfig.value,
+      // 虚拟滚动：用户显式配置优先，否则按列/行数阈值自动启用
+      ...(finalVirtualX ? { virtualXConfig: finalVirtualX } : {}),
+      ...(finalVirtualY ? { virtualYConfig: finalVirtualY } : {}),
+    },
+    gridListeners.value,
+    gridEventHandlers
+  );
 });
 
 // ========== 分页（element-plus，抽离到 ./components/Pagination.vue）==========
@@ -1831,18 +1859,6 @@ defineExpose({
       <vxe-grid
         ref="gridRef"
         v-bind="gridProps"
-        @toolbar-button-click="onToolbarButtonClick"
-        @sort-change="onSortChange"
-        @checkbox-change="onCheckboxChange"
-        @checkbox-all="onCheckboxAll"
-        @radio-change="onRadioChange"
-        @cell-click="(e) => emit('cell-click', e)"
-        @cell-dblclick="(e) => emit('cell-dblclick', e)"
-        @row-click="(e) => emit('row-click', e)"
-        @row-dblclick="(e) => emit('row-dblclick', e)"
-        @filter-visible="onFilterVisible"
-        @edit-activated="onEditActivated"
-        @edit-closed="onEditClosed"
       >
         <template #toolbarButtons="scope">
           <slot
