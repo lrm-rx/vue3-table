@@ -16,6 +16,7 @@ const generateUserList = (count = 20) => {
       role: Random.pick(['admin', 'editor', 'viewer', 'developer']),
       status: Random.pick([0, 1]), // 0 禁用, 1 启用
       department: Random.pick(['技术部', '产品部', '设计部', '运营部', '市场部']),
+      remark: Random.csentence(5, 30),
       createTime: Random.datetime('yyyy-MM-dd HH:mm:ss'),
       updateTime: Random.datetime('yyyy-MM-dd HH:mm:ss'),
     })
