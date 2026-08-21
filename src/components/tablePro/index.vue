@@ -1667,9 +1667,8 @@ const gridEventHandlers = {
 };
 
 // ========== 虚拟滚动默认配置 ==========
-// 横向虚拟滚动阈值：数据列数（不含复选/单选/序号/展开/操作列）> 26 时默认启用
-// 纵向虚拟滚动阈值：行数 > 200 时默认启用
-// 两个条件独立判断，同时满足则同时启用纵向与横向虚拟滚动
+// 默认启用规则：表格存在可编辑状态（editable !== false 且至少一列配置了 editRender）时即启用虚拟滚动
+// 非可编辑表格回退到阈值规则：横向数据列数 > 26 或纵向行数 > 200 时启用
 // 用户可通过 :virtual-x-config / :virtual-y-config 显式传入覆盖默认（优先级最高）
 const VIRTUAL_SCROLL_X_THRESHOLD = 26;
 const VIRTUAL_SCROLL_Y_THRESHOLD = 200;
@@ -1697,19 +1696,40 @@ const dataColumnCount = computed(() => {
   return count;
 });
 
-// 自动横向虚拟滚动配置：仅当数据列数 > 阈值时启用
-const autoVirtualXConfig = computed(() =>
-  dataColumnCount.value > VIRTUAL_SCROLL_X_THRESHOLD
-    ? { enabled: true, gt: VIRTUAL_SCROLL_X_THRESHOLD }
-    : null,
-);
+// 表格是否存在可编辑状态：editable !== false 且至少一列配置了 editRender
+const hasEditableState = computed(() => {
+  if (props.editable === false) return false;
+  let has = false;
+  const visit = (cols) => {
+    if (has) return;
+    (cols || []).forEach((col) => {
+      if (!col || typeof col !== "object") return;
+      if (col.editRender) {
+        has = true;
+        return;
+      }
+      if (Array.isArray(col.children) && col.children.length) visit(col.children);
+    });
+  };
+  visit(props.columns || []);
+  return has;
+});
 
-// 自动纵向虚拟滚动配置：仅当行数 > 阈值时启用
-const autoVirtualYConfig = computed(() =>
-  (renderData.value || []).length > VIRTUAL_SCROLL_Y_THRESHOLD
-    ? { enabled: true, gt: VIRTUAL_SCROLL_Y_THRESHOLD }
-    : null,
-);
+// 自动横向虚拟滚动配置：存在可编辑状态 或 数据列数 > 阈值 时启用
+const autoVirtualXConfig = computed(() => {
+  if (hasEditableState.value) return { enabled: true, gt: 0 };
+  if (dataColumnCount.value > VIRTUAL_SCROLL_X_THRESHOLD)
+    return { enabled: true, gt: VIRTUAL_SCROLL_X_THRESHOLD };
+  return null;
+});
+
+// 自动纵向虚拟滚动配置：存在可编辑状态 或 行数 > 阈值 时启用
+const autoVirtualYConfig = computed(() => {
+  if (hasEditableState.value) return { enabled: true, gt: 0 };
+  if ((renderData.value || []).length > VIRTUAL_SCROLL_Y_THRESHOLD)
+    return { enabled: true, gt: VIRTUAL_SCROLL_Y_THRESHOLD };
+  return null;
+});
 
 // ========== vxe-grid 属性 ==========
 // 展开 attrs 实现 vxe-grid 原生属性透传（class/style 排除，绑定到根元素 .table-pro）
