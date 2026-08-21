@@ -228,54 +228,6 @@ const columns = ref([
       );
     },
   },
-
-  // 演示 7：editRender ElInputNumber 年龄编辑
-  // filterRender.props.paramMode 控制参数呈现方式（可选 'array' / 'split' / 'both'，默认 'array'）：
-  //   'array' → age: [min, max]（与 FilterCheckbox 风格一致，单个数组）
-  //   'split' → ageMin: min, ageMax: max（原始分开传递）
-  //   'both'  → 以上两种都传递
-  {
-    field: "age",
-    title: "年龄",
-    width: 120,
-    sortable: true,
-    filterType: "FilterNumberRange",
-    filterRender: { name: "FilterNumberRange", suffix: "岁" },
-    editRender: { name: "ElInputNumber" },
-  },
-
-  // 演示：editRender ElInput 文本域编辑备注（type: 'textarea'）
-  {
-    field: "remark",
-    title: "备注",
-    minWidth: 200,
-    editRender: {
-      name: "ElInput",
-      props: {
-        type: "textarea",
-        rows: 2,
-        placeholder: "请输入备注",
-      },
-    },
-  },
-
-  // 演示 8：editRender ElDatePicker 编辑入职日期
-  //         + filterType FilterDateRange 简化配置
-  {
-    field: "createTime",
-    title: "创建时间",
-    sortable: true,
-    filterType: "FilterDateRange",
-    editRender: {
-      name: "ElDatePicker",
-      props: {
-        type: "date",
-        valueFormat: "YYYY-MM-DD HH:mm:ss",
-        placeholder: "选择日期",
-      },
-    },
-  },
-
   // 演示 9：操作列专用插槽 —— 列里写 render: 'operation' 引用 #operation 具名插槽
   //         （tablePro 会自动把 #operation 透传给 vxe-grid 对应列的 default 插槽）
   {
@@ -312,6 +264,48 @@ const columns = ref([
     },
     // render: "operation",
   },
+
+  // 演示 7：editRender ElInputNumber 年龄编辑
+  // filterRender.props.paramMode 控制参数呈现方式（可选 'array' / 'split' / 'both'，默认 'array'）：
+  //   'array' → age: [min, max]（与 FilterCheckbox 风格一致，单个数组）
+  //   'split' → ageMin: min, ageMax: max（原始分开传递）
+  //   'both'  → 以上两种都传递
+  {
+    field: "age",
+    title: "年龄",
+    width: 120,
+    sortable: true,
+    filterType: "FilterNumberRange",
+    filterRender: { name: "FilterNumberRange", suffix: "岁" },
+    editRender: { name: "ElInputNumber" },
+  },
+
+  // 演示：自定义 TextareaPopoverEdit 组件 —— 点击单元格以 popover 弹出文本域
+  //   · popover 自动避让边界（右放不下显示在左、下放不下显示在上）
+  //   · 文本域支持自由拖拽宽高（resize: both）
+  //   · 右上角「取消 / 确定」按钮控制是否写回
+  {
+    field: "remark",
+    title: "备注",
+    minWidth: 200,
+    editRender: { name: "TextareaPopoverEdit" },
+  },
+  // 演示 8：editRender ElDatePicker 编辑入职日期
+  //         + filterType FilterDateRange 简化配置
+  {
+    field: "createTime",
+    title: "创建时间",
+    sortable: true,
+    filterType: "FilterDateRange",
+    editRender: {
+      name: "ElDatePicker",
+      props: {
+        type: "date",
+        valueFormat: "YYYY-MM-DD HH:mm:ss",
+        placeholder: "选择日期",
+      },
+    },
+  },
 ]);
 
 // ========== 远程模式：requestApi ==========
@@ -342,6 +336,9 @@ const initParam = ref({
     role: ["admin", "developer"],
   },
 });
+
+// 分页大小选项（10 万条数据演示，包含更大档位）
+const pageSizes = [10, 20, 50, 100, 200, 500, 1000];
 
 // 数据回调：对返回的数据进行二次处理
 const onDataCallback = (data) => {
@@ -408,7 +405,7 @@ const onCheckboxChange = () => {
 
 <template>
   <div style="padding: 20px; height: 100vh; box-sizing: border-box">
-    <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
+    <!-- <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
       <el-tag type="success">
         演示：<b>filterType</b> 简化过滤配置 + 组件内置公共列配置
       </el-tag>
@@ -461,7 +458,7 @@ const onCheckboxChange = () => {
       ·
       <b>cell-edit-change 事件</b
       >：任意单元格编辑完成后弹出消息提示并在控制台打印完整参数
-    </div>
+    </div> -->
 
     <TablePro
       ref="tableProRef"
@@ -479,6 +476,7 @@ const onCheckboxChange = () => {
           : { label: 'label', value: 'value' }
       "
       :pagination="paginationEnabled"
+      :pager-config="{ pageSizes }"
       :editable="editableEnabled"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"

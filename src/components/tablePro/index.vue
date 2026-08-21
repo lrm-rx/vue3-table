@@ -38,6 +38,8 @@ import {
 } from "element-plus";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers.js";
+// 自定义编辑控件（在 EL_EDIT_MAP 中注册后即可通过 editRender: { name: 'XxxEdit' } 使用）
+import TextareaPopoverEdit from "./TextareaPopoverEdit.vue";
 import { FILTER_DEFAULTS, isFilterActive } from "./filter-config.js";
 // 事件清单（vxe-grid 透传事件 + TablePro 自身事件），用于 defineEmits 与原生事件转发
 import { FORWARD_GRID_EVENTS, TABLE_PRO_EVENTS } from "./events.js";
@@ -414,6 +416,8 @@ const EL_EDIT_MAP = {
   ElRadioButton:  { comp: ElRadioGroup,   wrap: 'ElRadioButton' },
   ElCheckbox:     { comp: ElCheckboxGroup,wrap: 'ElCheckbox' },
   ElCheckboxButton:{ comp: ElCheckboxGroup,wrap:'ElCheckboxButton' },
+  // 自定义编辑控件（非 Element Plus 原生）
+  TextareaPopoverEdit: { comp: TextareaPopoverEdit },
 }
 const WRAP_COMPONENTS = { ElOption, ElRadio, ElRadioButton, ElCheckbox, ElCheckboxButton }
 
@@ -645,6 +649,10 @@ const mergedColumns = computed(() => {
               const bindProps = mergeEditCompProps(field, col.editRender, undefined, {
                 modelValue: editLocalState[stateKey],
                 'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
+                // 透传列标题，供自定义编辑组件（如 TextareaPopoverEdit）在头部显示
+                title: col.title,
+                // 透传 vxe 表格实例（scope.$table），供自定义编辑组件调用 clearActive 等方法退出编辑态
+                table: markRaw(scope.$table),
               })
               // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
 

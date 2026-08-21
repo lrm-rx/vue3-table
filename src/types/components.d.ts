@@ -27,6 +27,7 @@ declare module 'vue' {
     FilterPanel: typeof import('./../components/tablePro/components/FilterPanel.vue')['default']
     Pagination: typeof import('./../components/tablePro/components/Pagination.vue')['default']
     TablePro: typeof import('./../components/tablePro/index.vue')['default']
+    TextareaPopoverEdit: typeof import('./../components/tablePro/TextareaPopoverEdit.vue')['default']
   }
 }
 
@@ -47,4 +48,5 @@ declare global {
   const FilterPanel: typeof import('./../components/tablePro/components/FilterPanel.vue')['default']
   const Pagination: typeof import('./../components/tablePro/components/Pagination.vue')['default']
   const TablePro: typeof import('./../components/tablePro/index.vue')['default']
+  const TextareaPopoverEdit: typeof import('./../components/tablePro/TextareaPopoverEdit.vue')['default']
 }
