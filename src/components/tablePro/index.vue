@@ -98,7 +98,7 @@ const props = defineProps({
   //   - 不设置 col.editable → 表头不显示编辑图标
   //   - 不传 editConfig → 点击单元格不会进入编辑态（即使组件配置了 editRender）
   //   - 对象式 editRender 的 slots.default label 回退仍生效（仅显示，不可编辑）
-  editable: { type: Boolean, default: true },
+  editable: { type: Boolean, default: false },
   // 工具栏开关
   showToolbar: { type: Boolean, default: true },
   // 内置刷新按钮（vxe-grid 工具栏）

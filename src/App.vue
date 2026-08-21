@@ -244,6 +244,21 @@ const columns = ref([
     editRender: { name: "ElInputNumber" },
   },
 
+  // 演示：editRender ElInput 文本域编辑备注（type: 'textarea'）
+  {
+    field: "remark",
+    title: "备注",
+    minWidth: 200,
+    editRender: {
+      name: "ElInput",
+      props: {
+        type: "textarea",
+        rows: 2,
+        placeholder: "请输入备注",
+      },
+    },
+  },
+
   // 演示 8：editRender ElDatePicker 编辑入职日期
   //         + filterType FilterDateRange 简化配置
   {
