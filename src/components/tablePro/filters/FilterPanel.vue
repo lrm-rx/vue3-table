@@ -8,7 +8,7 @@
  *     重置 -> 清空当前列过滤条件（输入框等内容随之清空），并同步抛出最新的组合参数
  */
 import { computed, inject, watchEffect } from 'vue'
-import { FILTER_DEFAULTS, isFilterActive } from '../filter-config.js'
+import { FILTER_DEFAULTS, isFilterActive } from './filter-config.js'
 import FilterInput from './FilterInput.vue'
 import FilterCheckbox from './FilterCheckbox.vue'
 import FilterDateRange from './FilterDateRange.vue'

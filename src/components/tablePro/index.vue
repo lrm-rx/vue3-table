@@ -37,16 +37,16 @@ import {
   ElRate,
 } from "element-plus";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
-import "./renderers.js";
+import "./renderers/renderers.js";
 // 自定义编辑控件（在 EL_EDIT_MAP 中注册后即可通过 editRender: { name: 'XxxEdit' } 使用）
-import TextareaPopoverEdit from "./TextareaPopoverEdit.vue";
-import { FILTER_DEFAULTS, isFilterActive } from "./filter-config.js";
+import TextareaPopoverEdit from "./editors/TextareaPopoverEdit.vue";
+import { FILTER_DEFAULTS, isFilterActive } from "./filters/filter-config.js";
 // 事件清单（vxe-grid 透传事件 + TablePro 自身事件），用于 defineEmits 与原生事件转发
-import { FORWARD_GRID_EVENTS, TABLE_PRO_EVENTS } from "./events.js";
+import { FORWARD_GRID_EVENTS, TABLE_PRO_EVENTS } from "./utils/events.js";
 import { useTable } from "@/hooks/useTable";
 import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
-import Pagination from "./components/Pagination.vue";
+import Pagination from "./pagination/Pagination.vue";
 
 // 关闭自动 inheritAttrs（避免父组件传入的未声明属性落到根 div），
 // 改由下方 gridProps 显式将这些属性透传到 <vxe-grid>；class / style 仍绑定到根元素 .table-pro
@@ -1674,78 +1674,13 @@ const gridEventHandlers = {
   onEditClosed,
 };
 
-// ========== 虚拟滚动默认配置 ==========
-// 默认启用规则：表格存在可编辑状态（editable !== false 且至少一列配置了 editRender）时即启用虚拟滚动
-// 非可编辑表格回退到阈值规则：横向数据列数 > 26 或纵向行数 > 200 时启用
-// 用户可通过 :virtual-x-config / :virtual-y-config 显式传入覆盖默认（优先级最高）
-const VIRTUAL_SCROLL_X_THRESHOLD = 26;
-const VIRTUAL_SCROLL_Y_THRESHOLD = 200;
-
-// 操作列识别：field 为 action/operation 或 title 为「操作」的列视为操作列
-// 不计入横向虚拟滚动阈值（这类列通常 fixed:'right'，不参与横向虚拟渲染）
-const isOperationColumn = (col) => {
-  if (!col) return false;
-  const f = col.field;
-  if (f === "action" || f === "operation") return true;
-  if (col.title === "操作") return true;
-  return false;
-};
-
-// 统计实际渲染的数据列数（叶子列，排除复选/单选/序号/展开/操作列）
-const dataColumnCount = computed(() => {
-  let count = 0;
-  forEachLeafColumn(props.columns, (col) => {
-    if (!col) return;
-    const t = col.type;
-    if (t && /^(checkbox|seq|radio|expand)$/.test(t)) return;
-    if (isOperationColumn(col)) return;
-    count++;
-  });
-  return count;
-});
-
-// 表格是否存在可编辑状态：editable !== false 且至少一列配置了 editRender
-const hasEditableState = computed(() => {
-  if (props.editable === false) return false;
-  let has = false;
-  const visit = (cols) => {
-    if (has) return;
-    (cols || []).forEach((col) => {
-      if (!col || typeof col !== "object") return;
-      if (col.editRender) {
-        has = true;
-        return;
-      }
-      if (Array.isArray(col.children) && col.children.length) visit(col.children);
-    });
-  };
-  visit(props.columns || []);
-  return has;
-});
-
-// 自动横向虚拟滚动配置：存在可编辑状态 或 数据列数 > 阈值 时启用
-const autoVirtualXConfig = computed(() => {
-  if (hasEditableState.value) return { enabled: true, gt: 0 };
-  if (dataColumnCount.value > VIRTUAL_SCROLL_X_THRESHOLD)
-    return { enabled: true, gt: VIRTUAL_SCROLL_X_THRESHOLD };
-  return null;
-});
-
-// 自动纵向虚拟滚动配置：存在可编辑状态 或 行数 > 阈值 时启用
-const autoVirtualYConfig = computed(() => {
-  if (hasEditableState.value) return { enabled: true, gt: 0 };
-  if ((renderData.value || []).length > VIRTUAL_SCROLL_Y_THRESHOLD)
-    return { enabled: true, gt: VIRTUAL_SCROLL_Y_THRESHOLD };
-  return null;
-});
-
 // ========== vxe-grid 属性 ==========
 // 展开 attrs 实现 vxe-grid 原生属性透传（class/style 排除，绑定到根元素 .table-pro）
 // 合并 gridListeners（事件透传），显式声明的 props 写在后面优先级更高
 const gridProps = computed(() => {
   // 剥离 class/style（绑定到根元素 .table-pro）
   // 剥离 virtualXConfig/virtualYConfig（camelCase + kebab-case）及已废弃的 scrollX/scrollY，
-  // 统一由下方默认虚拟滚动逻辑接管，避免 restAttrs 残留导致重复传参
+  // 统一由下方逻辑接管，避免 restAttrs 残留导致重复传参
   const {
     class: _class,
     style: _style,
@@ -1760,11 +1695,10 @@ const gridProps = computed(() => {
     ...restAttrs
   } = attrs;
   // 用户显式传入的虚拟滚动配置优先级最高（同时兼容新版 virtualXConfig 与已废弃 scrollX）
-  // 未传则按列/行数阈值自动启用
   const finalVirtualX =
-    userVirtualXCamel ?? userVirtualXKebab ?? userScrollXC ?? userScrollXK ?? autoVirtualXConfig.value;
+    userVirtualXCamel ?? userVirtualXKebab ?? userScrollXC ?? userScrollXK;
   const finalVirtualY =
-    userVirtualYCamel ?? userVirtualYKebab ?? userScrollYC ?? userScrollYK ?? autoVirtualYConfig.value;
+    userVirtualYCamel ?? userVirtualYKebab ?? userScrollYC ?? userScrollYK;
   return mergeProps(
     {
       ...restAttrs,
@@ -1800,7 +1734,7 @@ const gridProps = computed(() => {
       data: renderData.value,
       toolbarConfig: toolbarConfig.value,
       customConfig: customConfig.value,
-      // 虚拟滚动：用户显式配置优先，否则按列/行数阈值自动启用
+      // 虚拟滚动：仅使用用户显式传入的配置
       ...(finalVirtualX ? { virtualXConfig: finalVirtualX } : {}),
       ...(finalVirtualY ? { virtualYConfig: finalVirtualY } : {}),
     },
@@ -1809,7 +1743,7 @@ const gridProps = computed(() => {
   );
 });
 
-// ========== 分页（element-plus，抽离到 ./components/Pagination.vue）==========
+// ========== 分页（element-plus，抽离到 ./pagination/Pagination.vue）==========
 // 子 Pagination 组件 change 事件统一入口（已 emit 最新 pagerConfig）
 // 远程模式 → useTable；静态+分页 → 更新 localPager；始终透传 update:pagerConfig + page-change
 const onPagerChange = (newPager) => {

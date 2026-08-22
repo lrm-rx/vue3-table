@@ -12,7 +12,7 @@
  */
 import { h } from 'vue'
 import { VxeUI } from 'vxe-pc-ui'
-import FilterPanel from './components/FilterPanel.vue'
+import FilterPanel from '../filters/FilterPanel.vue'
 
 const FILTER_NAMES = [
   'FilterInput',
