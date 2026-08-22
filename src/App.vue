@@ -289,6 +289,9 @@ const columns = ref([
     title: "备注",
     minWidth: 200,
     editRender: { name: "TextareaPopoverEdit" },
+    params: {
+      hideColumn: false,
+    },
   },
   // 演示 8：editRender ElDatePicker 编辑入职日期
   //         + filterType FilterDateRange 简化配置

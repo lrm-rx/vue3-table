@@ -786,12 +786,17 @@ const mergedColumns = computed(() => {
   }
 
   // 父分组列：只递归子列 + 应用 headerRender，跳过数据列专属逻辑避免错误注入
+  // params.hideColumn === true 的列完全不渲染（区别于 visible:false 可在个性化配置中开启）
   const transformColumn = (rawCol) => {
     if (!rawCol || typeof rawCol !== 'object') return rawCol
+    // hideColumn=true：直接过滤，不进入 vxe-grid columns，个性化配置也无法开启
+    if (rawCol.params && rawCol.params.hideColumn === true) return null
     if (Array.isArray(rawCol.children) && rawCol.children.length) {
       const col = { ...rawCol }
       col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      col.children = rawCol.children.map(transformColumn)
+      col.children = rawCol.children.map(transformColumn).filter(Boolean)
+      // 父分组列：所有子列都被 hideColumn 隐藏时，父列也不渲染
+      if (col.children.length === 0) return null
       // 父分组列也支持 headerRender（自定义表头渲染）
       applyHeaderRender(col, col.field || '')
       return col
@@ -799,7 +804,7 @@ const mergedColumns = computed(() => {
     return transformLeafColumn(rawCol)
   }
 
-  return (props.columns || []).map(transformColumn)
+  return (props.columns || []).map(transformColumn).filter(Boolean)
 })
 
 // ========== 函数式/字符串式 editRender 标记 ==========
