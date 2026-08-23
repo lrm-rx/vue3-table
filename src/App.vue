@@ -148,7 +148,9 @@ const columns = ref([
     field: "role",
     title: "角色",
     sortable: true,
-    defParamKey: "roleList",
+    params: {
+      defParamKey: "roleList",
+    },
     filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
@@ -180,7 +182,10 @@ const columns = ref([
     field: "department",
     title: "部门",
     sortable: true,
-    defParamKey: "departmentList",
+    params: {
+      hideColumn: false,
+      defParamKey: "departmentList",
+    },
     filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
