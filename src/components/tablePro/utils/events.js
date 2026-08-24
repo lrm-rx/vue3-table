@@ -76,4 +76,6 @@ export const TABLE_PRO_EVENTS = [
   "cell-click", "cell-dblclick", "row-click", "row-dblclick",
   "filter-confirm", "filter-reset", "filter-reset-all", "reset-filter",
   "cell-edit-change",
+  // TextareaPopoverEdit 三按钮事件（携带 { row, column, field, value }）
+  "textarea-clear", "textarea-cancel", "textarea-confirm",
 ];

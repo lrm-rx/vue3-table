@@ -390,6 +390,22 @@ const onCellEditChange = (params) => {
   console.log("[cell-edit-change]", params);
 };
 
+// TextareaPopoverEdit 三按钮事件演示
+const onTextareaClear = (params) => {
+  ElMessage.info("已清空备注");
+  console.log("[textarea-clear]", params);
+};
+const onTextareaCancel = (params) => {
+  const { row, field, value } = params || {};
+  ElMessage.info(`已取消编辑：${field}（行：${row?.username || row?.account}），未保存值=${JSON.stringify(value)}`);
+  console.log("[textarea-cancel]", params);
+};
+const onTextareaConfirm = (params) => {
+  const { row, field, value } = params || {};
+  ElMessage.success(`已确认编辑：${field} = ${JSON.stringify(value)}（行：${row?.username || row?.account}）`);
+  console.log("[textarea-confirm]", params);
+};
+
 const onRefresh = (payload) => {
   const activeFilters = (payload?.filters || []).filter((f) => f.active).length;
   const activeSorts = (payload?.sorts || []).filter((s) => s.order).length;
@@ -496,6 +512,9 @@ const onCheckboxChange = () => {
       @refresh="onRefresh"
       @reset-filter="onResetFilter"
       @cell-edit-change="onCellEditChange"
+      @textarea-clear="onTextareaClear"
+      @textarea-cancel="onTextareaCancel"
+      @textarea-confirm="onTextareaConfirm"
     >
       <template #toolbarButtons>
         <el-button type="primary">按钮1</el-button>

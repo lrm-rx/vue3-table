@@ -780,6 +780,13 @@ const mergedColumns = computed(() => {
     // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
     const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
     if (popperCls != null) extra.popperClass = popperCls
+    // TextareaPopoverEdit 三按钮事件透传：携带 { row, column, field, value } 抛给 tablePro
+    if (erName === 'TextareaPopoverEdit') {
+      const buildPayload = (val) => ({ row, column: scope.column, field, value: val })
+      extra.onClear = (e) => emit('textarea-clear', buildPayload(e?.value ?? editLocalState[stateKey]))
+      extra.onCancel = (e) => emit('textarea-cancel', buildPayload(e?.value ?? editLocalState[stateKey]))
+      extra.onConfirm = (e) => emit('textarea-confirm', buildPayload(e?.value ?? editLocalState[stateKey]))
+    }
     const bindProps = mergeEditCompProps(field, col.editRender, extra)
     // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
 

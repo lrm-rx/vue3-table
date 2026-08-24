@@ -7,17 +7,25 @@
  *   - tablePro 对象式 editRender 会注入 v-model（modelValue/onUpdate:modelValue）绑定到 editLocalState
  *   - 组件挂载后自动打开 popover；textarea 本地维护副本，仅在点「确定」时 emit('update:modelValue', text)
  *   - 点「取消」不 emit → editLocalState 保持原值 → onEditClosed 写回原值（不触发 cell-edit-change）
- *   - 点「确定」emit → editLocalState 更新 → 调用 $table.clearActive() → onEditClosed 写回 row（触发 cell-edit-change）
- *   - 通过 inject 拿到 vxe-grid 实例 ref，调用 clearActive 关闭编辑态
+ *   - 点「确定」emit → editLocalState 更新 → 调用 $table.clearEdit() → onEditClosed 写回 row（触发 cell-edit-change）
+ *   - 通过 inject 拿到 vxe-grid 实例 ref，调用 clearEdit 退出编辑态
  *
  * popover 自适应位置：ElPopover 内置 flip + preventOverflow 修饰符
  *   - 单元格在右边界时，popover 自动翻到左边
  *   - 单元格在底边界时，popover 自动翻到上边
  *
- * 事件冒泡处理：
- *   vxe editConfig.trigger='click' 会监听 document click，点击编辑单元格外部即关闭编辑态。
- *   popover 渲染在 body 下（teleport），属于"编辑单元格外部"，需阻止 popper 内 mousedown/click 冒泡到 document。
- *   通过 watch(visible) 在 popper 渲染后给 popper 元素绑定 stopPropagation，确保只有点「取消/确定」才关闭。
+ * 蒙版机制（确保只有点「取消/确定」才关闭）：
+ *   1. 透明蒙版：覆盖全屏（z-index 低于 popover），视觉上隔离外部区域；
+ *      蒙版带 `vxe-table--ignore-clear` 类 —— vxe 全局 mousedown 处理器检测到该类会跳过
+ *      handleClearEdit（vxe 原生机制，与 vxe 自带的筛选面板/自定义抽屉一致）；
+ *      同时在蒙版上 stopPropagation(mousedown/click) 作为双保险，阻止事件冒泡到 window
+ *      （vxe 的 mousedown 监听挂在 window 冒泡阶段）。
+ *   2. popper 同样带 `vxe-table--ignore-clear` 类 —— 点击 popover 内部也不触发 vxe 清除。
+ *   3. visible 拦截：使用 :visible + @update:visible 替代 v-model:visible，
+ *      ElPopover 尝试关闭时（outside-click）被 handleVisibleUpdate 拦截，仅在 allowClose=true 时放行。
+ *   4. clearEdit 拦截：monkey-patch $table.clearEdit（公共 API），仅在 closeEdit() 中放行；
+ *      注：vxe 外部点击走 handleClearEdit 内部方法，不经过 clearEdit，故该拦截仅为辅助。
+ *      外部点击的真正拦截由第 1 步的 vxe-table--ignore-clear 类完成。
  */
 import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { ElPopover, ElInput, ElButton } from "element-plus";
@@ -27,10 +35,10 @@ const props = defineProps({
   modelValue: { type: [String, Number], default: "" },
   // 列标题（由 tablePro 透传，显示在 popover 顶部）
   title: { type: String, default: "" },
-  // vxe 表格实例（由 tablePro 透传 scope.$table），用于调用 clearActive 退出编辑态
+  // vxe 表格实例（由 tablePro 透传 scope.$table），用于调用 clearEdit 退出编辑态
   table: { type: Object, default: null },
 });
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "clear", "cancel", "confirm"]);
 
 // 本地副本：进入编辑时初始化为 modelValue（原值）
 const text = ref(props.modelValue ?? "");
@@ -41,27 +49,63 @@ const inputRef = ref();
 const popoverWidth = 360;
 const textareaRows = 6;
 
-// 关闭 vxe 编辑态（统一出口）：触发 vxe 的 edit-closed → tablePro 的 onEditClosed 写回 row
-// vxe 4.x 退出编辑态用 clearEdit()；clearActive 是清除选中，不退出编辑
+// ========== 关闭控制：只有点「取消/确定」时才允许关闭 ==========
+// allowClose=true 时，ElPopover 和 vxe 的关闭请求才会被接受
+// onConfirm/onCancel 中先设为 true，再关闭；外部触发（outside-click）时为 false，被拦截
+const allowClose = ref(false);
+
+// 拦截 ElPopover 的 update:visible：仅在 allowClose=true 时接受 false
+const handleVisibleUpdate = (val) => {
+  if (!val && !allowClose.value) return;
+  visible.value = val;
+};
+
+// monkey-patch $table.clearEdit：vxe 调用 clearEdit 时仅在 allowClose=true 时放行
+let originalClearEdit = null;
+const patchClearEdit = () => {
+  const $table = props.table;
+  if (!$table || typeof $table.clearEdit !== "function") return;
+  originalClearEdit = $table.clearEdit.bind($table);
+  $table.clearEdit = () => {
+    if (allowClose.value) originalClearEdit();
+  };
+};
+const restoreClearEdit = () => {
+  const $table = props.table;
+  if ($table && originalClearEdit) {
+    $table.clearEdit = originalClearEdit;
+    originalClearEdit = null;
+  }
+};
+
+// 关闭 vxe 编辑态（统一出口）：设置 allowClose=true → 调用 clearEdit → 触发 edit-closed 写回 row
 const closeEdit = () => {
+  allowClose.value = true;
   const $table = props.table;
   if (!$table) return;
   if (typeof $table.clearEdit === "function") $table.clearEdit();
   else if (typeof $table.clearActive === "function") $table.clearActive();
 };
 
-// 确定：emit 新值（同步更新 editLocalState）→ 关闭 popover → 退出编辑态
-// emit 是同步的，editLocalState 已更新，无需 setTimeout；直接 clearEdit 让 vxe 触发 edit-closed 写回 row
+// 清除：清空 textarea 内容（不关闭 popover，用户可继续输入）
+const onClear = () => {
+  text.value = "";
+  emit("clear", { value: "" });
+};
+
+// 确定：emit 新值（同步更新 editLocalState）→ emit confirm → 关闭 popover → 退出编辑态
 const onConfirm = () => {
   if (text.value !== original.value) {
     emit("update:modelValue", text.value);
   }
+  emit("confirm", { value: text.value });
   visible.value = false;
   closeEdit();
 };
 
-// 取消：不 emit → editLocalState 保持原值 → 关闭编辑态（onEditClosed 写回原值，不触发 cell-edit-change）
+// 取消：不 emit update:modelValue → editLocalState 保持原值 → emit cancel → 关闭编辑态
 const onCancel = () => {
+  emit("cancel", { value: text.value });
   visible.value = false;
   closeEdit();
 };
@@ -74,33 +118,89 @@ const focusTextarea = () => {
   });
 };
 
-// 给 popper 元素绑定事件阻止冒泡：vxe 监听 document click 关闭编辑态，
-// popper 在 body 下属于"编辑单元格外部"，必须阻止 mousedown/click 冒泡到 document。
-// 每次 popper 渲染都是新 DOM（ElPopover 关闭时销毁 popper），需每次 visible=true 时重新绑定。
+// 给 popper 元素绑定事件阻止冒泡：双保险，防止事件冒泡到 document
 const bindPopperStop = () => {
-  // ElPopover 的 popper-class 会挂到 popper 容器上
   const popperEl = document.querySelector(".textarea-popover-edit");
   if (!popperEl || popperEl.__stopBound) return;
   const stop = (e) => e.stopPropagation();
-  // mousedown：阻止 vxe 在 mousedown 阶段判定"点击外部"关闭编辑态
   popperEl.addEventListener("mousedown", stop);
-  // click：双保险，阻止 click 冒泡到 document
   popperEl.addEventListener("click", stop);
   popperEl.__stopBound = true;
 };
 
-// 监听 visible：打开后 nextTick 绑定 stop + 聚焦
+// ========== ESC 取消编辑：window 捕获阶段监听 keydown ==========
+// vxe 全局 keydown 监听在 document 冒泡阶段，检测到 ESC 会调用 handleClearEdit 关闭编辑态。
+// 这里在 window 上用捕获阶段（capture=true）监听，先于 vxe 接收 ESC：
+//   - visible 打开时按下 ESC → 调用 onCancel 取消编辑 + stopPropagation 阻止冒泡到 vxe
+// 模板上的 @keydown.esc.stop 依赖事件从 textarea 冒泡到 body div，但 ElInput/ElPopover
+// 内部可能拦截 keydown 导致事件链中断，故改用 window 捕获阶段监听，更可靠。
+let escHandler = null;
+const bindEsc = () => {
+  if (escHandler) return;
+  escHandler = (e) => {
+    if (!visible.value) return;
+    if (e.key === 'Escape' || e.keyCode === 27) {
+      e.stopPropagation();
+      e.preventDefault();
+      onCancel();
+    }
+  };
+  window.addEventListener('keydown', escHandler, true);
+};
+const unbindEsc = () => {
+  if (escHandler) {
+    window.removeEventListener('keydown', escHandler, true);
+    escHandler = null;
+  }
+};
+
+// ========== 透明蒙版：vxe-table--ignore-clear 类 + stopPropagation ==========
+// vxe 全局 mousedown 处理器（挂在 window 冒泡阶段）会调用 handleClearEdit 清除编辑态，
+// 除非点击目标（或其祖先）带 `vxe-table--ignore-clear` 类（vxe 原生机制）。
+// 蒙版覆盖全屏，带该类后点击任意外部区域都会被 vxe 跳过清除；
+// 同时 stopPropagation 阻止事件冒泡到 window 作为双保险。
+let maskEl = null;
+let maskStop = null;
+const mountMask = () => {
+  if (maskEl) return;
+  const el = document.createElement("div");
+  el.className = "textarea-popover-edit__mask vxe-table--ignore-clear";
+  const stop = (e) => { e.stopPropagation(); };
+  el.addEventListener("mousedown", stop);
+  el.addEventListener("click", stop);
+  document.body.appendChild(el);
+  maskEl = el;
+  maskStop = stop;
+};
+const unmountMask = () => {
+  if (maskEl) {
+    if (maskStop) {
+      maskEl.removeEventListener("mousedown", maskStop);
+      maskEl.removeEventListener("click", maskStop);
+    }
+    maskEl.remove();
+    maskEl = null;
+    maskStop = null;
+  }
+};
+
+// 监听 visible：打开后 nextTick 绑定 stop + ESC + 聚焦 + 挂载蒙版 + patch clearEdit
 watch(visible, (val) => {
   if (val) {
     nextTick(() => {
       bindPopperStop();
+      bindEsc();
       focusTextarea();
+      mountMask();
+      patchClearEdit();
     });
+  } else {
+    unmountMask();
+    unbindEsc();
   }
 });
 
 onMounted(() => {
-  // nextTick 确保 reference 已渲染、DOM 尺寸稳定后再打开 popover
   nextTick(() => {
     visible.value = true;
   });
@@ -108,12 +208,16 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   visible.value = false;
+  unmountMask();
+  unbindEsc();
+  restoreClearEdit();
 });
 </script>
 
 <template>
   <ElPopover
-    v-model:visible="visible"
+    :visible="visible"
+    @update:visible="handleVisibleUpdate"
     placement="bottom"
     trigger="manual"
     :width="popoverWidth"
@@ -124,13 +228,14 @@ onBeforeUnmount(() => {
         { name: 'preventOverflow', enabled: true, padding: 8 },
       ],
     }"
-    popper-class="textarea-popover-edit"
+    popper-class="textarea-popover-edit vxe-table--ignore-clear"
   >
     <!-- reference：占位锚点，0x0 不可见，跟随 vxe 编辑层定位在单元格上 -->
     <template #reference>
       <span class="textarea-popover-edit__anchor" aria-hidden="true"></span>
     </template>
-    <!-- 内容容器：@mousedown.stop @click.stop 双保险阻止冒泡 -->
+    <!-- 内容容器：@mousedown.stop @click.stop 阻止冒泡。
+         ESC 改用 window 捕获阶段监听（见 bindEsc），不依赖事件从 textarea 冒泡到此处 -->
     <div
       class="textarea-popover-edit__body"
       @mousedown.stop
@@ -139,8 +244,9 @@ onBeforeUnmount(() => {
       <div class="textarea-popover-edit__header">
         <span class="textarea-popover-edit__title">{{ title }}</span>
         <div class="textarea-popover-edit__actions">
-          <ElButton size="small" @click="onCancel">取消</ElButton>
-          <ElButton size="small" type="primary" @click="onConfirm">确定</ElButton>
+          <ElButton size="small" link @click="onClear">清除</ElButton>
+          <ElButton size="small" link @click="onCancel">取消</ElButton>
+          <ElButton size="small" link type="primary" @click="onConfirm">确定</ElButton>
         </div>
       </div>
       <ElInput
@@ -215,5 +321,17 @@ onBeforeUnmount(() => {
     background: var(--el-color-primary, #409eff);
     border-color: var(--el-color-primary, #409eff);
   }
+
+  // popper 在蒙版之上，确保可交互
+  z-index: 3000;
+}
+
+// 透明蒙版：覆盖全屏，拦截外部点击事件阻止 vxe 关闭编辑态
+// z-index 低于 popover（popover 3000 > 蒙版 2000），点击 popover 内部按钮不受蒙版影响
+.textarea-popover-edit__mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: transparent;
 }
 </style>
