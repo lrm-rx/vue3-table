@@ -15,20 +15,25 @@
 src/
 ├─ components/tablePro/
 │  ├─ index.vue              # TablePro 主组件
-│  ├─ renderers.js           # 表头过滤渲染器（FilterInput / FilterCheckbox / FilterDateRange / FilterNumberRange）
-│  ├─ filter-config.js       # 过滤默认值与激活判断
-│  ├─ cell-renderers.js       # 单元格编辑渲染器（ElInput / ElSelect / ElRadio / ... ）
-│  └─ components/
-│     ├─ FilterPanel.vue      # 过滤面板（共用，4 种过滤器仅 name 不同）
-│     ├─ FilterInput.vue
-│     ├─ FilterCheckbox.vue
-│     ├─ FilterDateRange.vue
-│     ├─ FilterNumberRange.vue
-│     └─ Pagination.vue
+│  ├─ editors/               # 自定义编辑控件
+│  │  └─ TextareaPopoverEdit.vue   # 文本域 Popover 编辑（含清除/取消/确定 + ESC 取消 + 蒙版拦截）
+│  ├─ filters/               # 表头过滤
+│  │  ├─ FilterPanel.vue           # 过滤面板（共用，4 种过滤器仅 name 不同）
+│  │  ├─ FilterInput.vue
+│  │  ├─ FilterCheckbox.vue
+│  │  ├─ FilterDateRange.vue
+│  │  ├─ FilterNumberRange.vue
+│  │  └─ filter-config.js          # 过滤默认值与激活判断
+│  ├─ pagination/
+│  │  └─ Pagination.vue            # 分页组件
+│  ├─ renderers/
+│  │  └─ renderers.js              # 表头过滤渲染器注册
+│  └─ utils/
+│     └─ events.js                 # 事件清单（透传 + 自身事件）
 ├─ hooks/
-│  ├─ useTable.js             # 远程数据请求封装
-│  └─ useSelection.js         # 单选/多选收集
-└─ api/                       # 示例接口
+│  ├─ useTable.js            # 远程数据请求封装
+│  └─ useSelection.js        # 单选/多选收集（支持响应式 keyField）
+└─ api/                      # 示例接口
 ```
 
 ## 核心特性
@@ -41,6 +46,8 @@ src/
 - **远程排序参数可定制**：`sortParamConfig` 控制排序参数 key 名与格式（含合并模式 `orderBy=field desc`）
 - **vxe-grid 原生能力透传**：列拖拽排序、固定左/右、显示隐藏、缩放、查找替换、右键菜单等
 - **虚拟滚动默认启用**：数据列（不含复选/单选/序号/展开/操作列）> 26 列时自动启用横向虚拟滚动；行数 > 200 时自动启用纵向虚拟滚动；两个条件独立判断，同时满足则同时启用。可通过 `:virtual-x-config` / `:virtual-y-config` 显式覆盖
+- **自定义编辑控件 TextareaPopoverEdit**：内置文本域 Popover 编辑器，点击单元格弹出多行输入面板，支持清除/取消/确定三按钮（link 样式）、ESC 取消、外部点击不关闭（蒙版拦截）
+- **选择 key 可定制**：`selectionKey` prop 控制多选/单选收集数据时使用的字段名，未传时回退到 `rowConfig.keyField`
 
 ---
 
@@ -185,6 +192,7 @@ const onRequestError = (err) => console.error(err);
 | `ElCheckbox` / `ElCheckboxButton` | 多选 / 按钮多选 | 是 |
 | `ElDatePicker` / `ElTimePicker` | 日期 / 时间选择 | 否 |
 | `ElSwitch` / `ElRate` | 开关 / 评分 | 否 |
+| `TextareaPopoverEdit` | 文本域 Popover 编辑（内置自定义） | 否 |
 
 ### 2. 函数式 JSX（完全自定义）
 
@@ -254,6 +262,46 @@ const onCellEditChange = ({ row, column, field, value, cellValue }) => {
 - **对象式 `editRender` 的 label 回退仍生效**：`slots.default` 仍按 `editOptions` 显示 label 文本（仅显示，不可编辑）
 - **函数式 / 字符串式 `editRender`**：完全不构建 `slots.edit`，`editRender` 仍会被删除以避免 vxe 校验警告
 - **`editOptions` / `cellEditProps`**：可正常传递（用于 label 回退显示），不会触发编辑
+
+### 内置自定义编辑器：TextareaPopoverEdit
+
+点击单元格弹出 Popover 文本域面板，适合长文本编辑（备注、描述等）。内置三按钮 + ESC + 蒙版机制：
+
+```js
+{
+  field: "remark",
+  title: "备注",
+  minWidth: 200,
+  editRender: { name: "TextareaPopoverEdit" },
+}
+```
+
+**交互行为**：
+
+- 点击单元格 → 弹出 Popover（含列标题 + 文本域 + 三按钮）
+- **清除**（link）：清空文本域内容，**不关闭** Popover（可继续输入）
+- **取消**（link）：关闭 Popover，不保存修改（不触发 `cell-edit-change`）
+- **确定**（link）：关闭 Popover 并保存修改（触发 `cell-edit-change`）
+- **ESC 键**：等同「取消」
+- **点击外部（蒙版区域）**：不关闭 Popover（透明蒙版带 `vxe-table--ignore-clear` 类拦截 vxe 清除编辑态，仅可通过三按钮或 ESC 关闭）
+- 三个按钮均为 link 样式（无边框），顺序：清除 | 取消 | 确定
+- Popover 自动避让边界（右放不下显示在左、下放不下显示在上）
+
+**三按钮事件**（携带 `{ row, column, field, value }`）：
+
+```vue
+<TablePro
+  @textarea-clear="onClear"
+  @textarea-cancel="onCancel"
+  @textarea-confirm="onConfirm"
+/>
+```
+
+```js
+const onClear = ({ row, field, value }) => { /* 清除按钮：value 为清空后的值（""）*/ };
+const onCancel = ({ row, field, value }) => { /* 取消按钮：value 为未保存的当前输入值 */ };
+const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保存的新值 */ };
+```
 
 ---
 
@@ -342,6 +390,20 @@ const initParam = ref({
 
 列配置 `{ type: 'checkbox' }` 或 `{ type: 'radio' }` 即可启用。`rowConfig.keyField` 默认为 `'id'`，用于行唯一标识。
 
+### 选择 key 定制（selectionKey）
+
+`selectedListIds` / `selectedId` 默认按 `rowConfig.keyField` 提取。若需按其他字段收集（如业务主键是 `account` 而非 `id`），通过 `selectionKey` 覆盖：
+
+```vue
+<!-- 默认：按 rowConfig.keyField（"id"）收集 -->
+<TablePro :columns="columns" />
+
+<!-- 自定义：按 account 字段收集 -->
+<TablePro :columns="columns" selection-key="account" />
+```
+
+优先级：`selectionKey` > `rowConfig.keyField` > `'id'`。响应式：prop 变化后 `selectedListIds` / `selectedId` 自动重新计算。
+
 通过 `ref` 暴露的 `useSelection` 收集结果：
 
 ```js
@@ -349,8 +411,8 @@ const tableProRef = ref();
 
 // 多选
 tableProRef.value.selectedList;        // 选中行数组
-tableProRef.value.selectedListIds;    // 选中 id 数组
-tableProRef.value.isSelected(row);    // 某行是否选中
+tableProRef.value.selectedListIds;    // 选中 id 数组（按 selectionKey 或 rowConfig.keyField 提取）
+tableProRef.value.isSelected;         // 当前是否有选中行（boolean）
 tableProRef.value.clearSelection();   // 清空选择
 
 // 单选
@@ -460,6 +522,7 @@ tableProRef.value.selectedId;         // 选中 id
 | `tableId` | String | `''` | 列状态记忆隔离（开启 customStorage 必填） |
 | `rowConfig` | Object | `{ keyField: 'id' }` | 行配置 |
 | `checkboxConfig` / `radioConfig` | Object | `{}` | 多选 / 单选配置 |
+| `selectionKey` | String | `''` | 收集复选数据所使用的 key；未传时回退到 `rowConfig.keyField`（响应式） |
 | `sortConfig` | Object | `{ remote: true, multiple: false, trigger: 'button' }` | 排序配置 |
 | `sortParamConfig` | Object | `{}` | 排序参数 key 定制 |
 | `filterConfig` | Object | `{ remote: true, transfer: true }` | 过滤配置 |
@@ -504,6 +567,7 @@ tableProRef.value.selectedId;         // 选中 id
 | `cell-click` / `cell-dblclick` / `row-click` / `row-dblclick` | `{ row, column, ... }` | 单元格 / 行交互 |
 | `filter-confirm` / `filter-reset` / `filter-reset-all` / `reset-filter` | payload | 过滤确认 / 重置 |
 | `cell-edit-change` | `{ row, column, field, value, cellValue }` | 单元格编辑完成 |
+| `textarea-clear` / `textarea-cancel` / `textarea-confirm` | `{ row, column, field, value }` | TextareaPopoverEdit 三按钮事件（详见上文） |
 
 ### vxe-grid 透传事件
 
@@ -513,4 +577,4 @@ tableProRef.value.selectedId;         // 选中 id
 
 ## 完整示例
 
-参见 [src/App.vue](src/App.vue)，演示了 filterType 简化、render JSX 渲染、editRender 三种形式、editOptions/cellEditProps、远程模式、远程过滤选项、initParam 默认参数、cell-edit-change 事件等全部能力。
+参见 [src/App.vue](src/App.vue)，演示了 filterType 简化、render JSX 渲染、editRender 三种形式（含 TextareaPopoverEdit 自定义编辑器）、editOptions/cellEditProps、远程模式、远程过滤选项、initParam 默认参数、cell-edit-change 事件、textarea-clear/cancel/confirm 三按钮事件等全部能力。
