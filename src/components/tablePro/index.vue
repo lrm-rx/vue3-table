@@ -72,6 +72,8 @@ const props = defineProps({
   rowConfig: { type: Object, default: () => ({ keyField: "id" }) },
   checkboxConfig: { type: Object, default: () => ({}) },
   radioConfig: { type: Object, default: () => ({}) },
+  // 收集复选数据所使用的 key：未传时回退到 rowConfig.keyField（与 vxe-grid 行主键一致）
+  selectionKey: { type: String, default: "" },
   sortConfig: {
     type: Object,
     default: () => ({ remote: true, multiple: false, trigger: "button" }),
@@ -177,7 +179,11 @@ const attrs = useAttrs();
 const gridRef = ref();
 
 // ========== 单选/多选数据收集（useSelection）==========
-// 收集 checkbox-change / radio-change 事件抛出的选中行，按 rowConfig.keyField 提取 id
+// 收集 checkbox-change / radio-change 事件抛出的选中行，按 selectionKey 提取 id
+// selectionKey 未传时回退到 rowConfig.keyField（响应式：随 prop 变化更新）
+const effectiveSelectionKey = computed(
+  () => props.selectionKey || props.rowConfig?.keyField || "id",
+);
 const {
   // 多选
   isSelected,
@@ -191,7 +197,7 @@ const {
   radioChange,
   // 通用
   clearSelection,
-} = useSelection(props.rowConfig.keyField);
+} = useSelection(effectiveSelectionKey);
 
 // ========== 单元格编辑上下文 ==========
 // 给 mergedColumns 内部使用，同时 provide 供 inject 扩展
