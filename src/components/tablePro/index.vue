@@ -747,6 +747,18 @@ const mergedColumns = computed(() => {
     })
   }
 
+  // 弹出面板类编辑控件（下拉/日期/时间面板 teleport 到 body，点击面板时 vxe 会判定为"编辑单元格外部"而退出编辑态）
+  // 给 popper 加上 vxe-table--ignore-clear 类，vxe 全局 mousedown 处理器检测到该类会跳过清除编辑态
+  const POPUP_EDIT_NAMES = new Set(['ElSelect', 'ElDatePicker', 'ElTimePicker'])
+  const IGNORE_CLEAR_CLASS = 'vxe-table--ignore-clear'
+  // 合并 popperClass：用户自定义 + ignore-clear（确保点击下拉/日期面板选项时编辑态不被清除）
+  const resolvePopperClass = (erName, existing) => {
+    if (!POPUP_EDIT_NAMES.has(erName)) return existing
+    const parts = [IGNORE_CLEAR_CLASS]
+    if (existing) parts.push(existing)
+    return parts.join(' ')
+  }
+
   // 4c-2) 对象配置式 editRender：构建 slots.edit 渲染函数（Input 类无子项 / Select·Radio·Checkbox 渲染 options）
   const buildObjectEditSlotFn = (col, field, Comp, wrapName) => markRaw((scope) => {
     const row = scope.row
@@ -755,18 +767,22 @@ const mergedColumns = computed(() => {
     // 从全局编辑态取本地值（edit-actived 初始化），避免在 slots 函数里新建 ref/watch
     const stateKey = resolveEditStateKey(row, field)
     if (!(stateKey in editLocalState)) editLocalState[stateKey] = currentVal
-    const bindProps = mergeEditCompProps(field, col.editRender, undefined, {
+    const erName = col.editRender && col.editRender.name
+    const extra = {
       modelValue: editLocalState[stateKey],
       'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
       // 透传列标题，供自定义编辑组件（如 TextareaPopoverEdit）在头部显示
       title: col.title,
       // 透传 vxe 表格实例（scope.$table），供自定义编辑组件调用 clearActive 等方法退出编辑态
       table: markRaw(scope.$table),
-    })
+    }
+    // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
+    const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
+    if (popperCls != null) extra.popperClass = popperCls
+    const bindProps = mergeEditCompProps(field, col.editRender, undefined, extra)
     // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
 
     // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
-    const erName = col.editRender && col.editRender.name
     const onMountedHook = autoOpenOnMounted(erName)
     if (onMountedHook) bindProps.onVnodeMounted = onMountedHook
 

@@ -15,8 +15,11 @@
  *   - 未传入 requestFilterAPI 时，回退到列配置 filterRender.props.options。
  *
  * 选项顺序：始终保持选项的原始顺序（不再将已选值置顶），避免勾选/取消时出现跳动
+ *
+ * 布局：搜索框固定在顶部（flex-shrink:0），选项列表在剩余空间内滚动；
+ *       checkbox 标签超长时省略号显示，hover 时通过 title 提示完整文本。
  */
-import { computed, ref, inject, watch, nextTick } from 'vue'
+import { computed, ref, inject, watch } from 'vue'
 
 const props = defineProps({
   option: { type: Object, required: true },
@@ -151,6 +154,7 @@ watch(
             v-for="o in filteredOptions"
             :key="o.value"
             :value="o.value"
+            :title="String(o.label ?? o.value)"
           >
             {{ o.label }}
           </el-checkbox>
@@ -164,11 +168,21 @@ watch(
 
 <style scoped lang="scss">
 .filter-checkbox {
+  // 撑满 FilterPanel body 的剩余高度，搜索框固定 + 列表滚动
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+
   &__search {
+    flex-shrink: 0;
     margin-bottom: 6px;
   }
 
   &__list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
   }
@@ -183,10 +197,17 @@ watch(
       margin-right: 0;
       margin-bottom: 0;
       height: 22px;
+      // 标签超长省略，hover 时通过 title 提示完整文本
+      .el-checkbox__label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     }
   }
 
   &__all {
+    flex-shrink: 0;
     margin-bottom: 2px;
   }
 
@@ -197,6 +218,7 @@ watch(
   }
 
   &__empty {
+    flex-shrink: 0;
     color: var(--el-text-color-secondary, #909399);
     font-size: 12px;
     text-align: center;

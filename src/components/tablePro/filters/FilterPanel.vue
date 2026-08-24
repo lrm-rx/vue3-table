@@ -6,8 +6,14 @@
  * - 通过 inject('tableProFilterContext') 与 tablePro 通信：
  *     确定 -> 收集「所有列过滤 + 排序」的组合参数，由 tablePro 以 filter-confirm 事件抛出
  *     重置 -> 清空当前列过滤条件（输入框等内容随之清空），并同步抛出最新的组合参数
+ *
+ * 宽度：min-width 220px / max-width min(92vw, 420px)；子组件内长文本省略 + title 提示
+ * 高度：面板 body 最大高度 = 表格 body 高度 - footer 高度，确保面板不超出表格可视区域；
+ *       面板使用 flex 布局，body 可滚动，footer 固定；
+ *       FilterCheckbox 的搜索框 sticky 固定，仅选项列表滚动。
  */
-import { computed, inject, watchEffect } from 'vue'
+import { computed, inject, watchEffect, ref, onMounted } from 'vue'
+import { useElementSize, useEventListener } from '@vueuse/core'
 import { FILTER_DEFAULTS, isFilterActive } from './filter-config.js'
 import FilterInput from './FilterInput.vue'
 import FilterCheckbox from './FilterCheckbox.vue'
@@ -46,7 +52,30 @@ watchEffect(() => {
   if (opt && opt.data == null && fac) opt.data = fac()
 })
 
-// 确定：收集组合参数 -> 抛出 filter-confirm -> 关闭面板
+// ========== 面板高度限制 ==========
+// 测量表格 body wrapper 的高度，确保过滤面板不超过表格可视区域
+const footerRef = ref(null)
+const bodyWrapperEl = computed(() => {
+  const $table = props.params?.$table
+  const el = $table?.$el
+  if (!el || !el.querySelector) return null
+  // 优先取主 body wrapper（含固定列时有多个，取第一个主区域）
+  return el.querySelector('.vxe-table--body-wrapper') || el.querySelector('.vxe-table--body') || null
+})
+const { height: tableBodyHeight } = useElementSize(bodyWrapperEl)
+
+// 面板 body 最大高度：表格 body 高度 - footer 高度 - 安全间距
+// 确保 FilterCheckbox 的搜索框始终可见，选项列表在剩余空间内滚动
+const maxBodyHeight = computed(() => {
+  const bodyH = tableBodyHeight.value
+  if (!bodyH) return ''
+  const footerH = footerRef.value?.offsetHeight || 44
+  // 减去 footer 高度 + 面板 padding + 安全间距
+  const max = bodyH - footerH - 12
+  return `${Math.max(100, max)}px`
+})
+
+// ========== 确定：收集组合参数 -> 抛出 filter-confirm -> 关闭面板 ==========
 const onConfirm = () => {
   const opt = option.value
   // 标记当前列过滤是否激活（用于表头图标高亮）
@@ -63,11 +92,36 @@ const onReset = () => {
   ctx?.clearCurrent?.(props.params)
   ctx?.emitReset?.(props.params)
 }
+
+// ========== 滚动时关闭面板（修复表格内外滚动条导致面板上下偏移）==========
+// vxe transfer=true 下面板为 position:absolute，仅打开时定位一次；
+// 当表格 body 内部滚动或页面外层滚动时，面板不会跟随重定位，造成视觉偏移。
+// 监听滚动事件，关闭面板消除偏移。
+// 注：挂载后短暂忽略滚动事件，避免面板打开过程中的定位/重排触发的滚动导致面板立即关闭
+let scrollGuard = true
+onMounted(() => {
+  setTimeout(() => { scrollGuard = false }, 300)
+})
+const closePanelOnScroll = () => {
+  if (scrollGuard) return
+  const $table = props.params?.$table
+  if ($table && typeof $table.closeFilter === 'function') {
+    $table.closeFilter()
+  } else {
+    ctx?.closePanel?.(props.params)
+  }
+}
+
+// 1) window capture 阶段捕获页面外层滚动 + 所有嵌套滚动容器的 scroll 事件
+//    （scroll 事件不冒泡，需 capture 才能在 window 层捕获嵌套元素的滚动）
+useEventListener(window, 'scroll', closePanelOnScroll, { capture: true })
+// 2) 直接监听表格 body wrapper 的 scroll 事件（内层滚动，双保险）
+useEventListener(bodyWrapperEl, 'scroll', closePanelOnScroll)
 </script>
 
 <template>
   <div class="filter-panel">
-    <div class="filter-panel__body">
+    <div class="filter-panel__body" :style="{ maxHeight: maxBodyHeight }">
       <component
         :is="currentComp"
         :option="option"
@@ -76,7 +130,7 @@ const onReset = () => {
         @confirm="onConfirm"
       />
     </div>
-    <div class="filter-panel__footer">
+    <div ref="footerRef" class="filter-panel__footer">
       <el-button size="small" @click="onReset">重置</el-button>
       <el-button size="small" type="primary" @click="onConfirm">确定</el-button>
     </div>
@@ -85,16 +139,24 @@ const onReset = () => {
 
 <style scoped lang="scss">
 .filter-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 220px;
   max-width: min(92vw, 420px);
   box-sizing: border-box;
   padding: 4px 0;
-  overflow-x: hidden;
+  overflow: hidden;
 
   &__body {
+    flex: 1 1 auto;
+    min-height: 0;
     padding: 0 4px;
     width: 100%;
     box-sizing: border-box;
+    overflow-x: hidden;
+    // 子组件需撑满 body 高度（FilterCheckbox 的 flex 布局依赖）
+    display: flex;
+    flex-direction: column;
 
     // 所有直接子组件必须在面板宽度内，避免 el-date-range 等控件测量时把弹窗撑爆
     :deep(.el-date-editor),
@@ -128,6 +190,7 @@ const onReset = () => {
   }
 
   &__footer {
+    flex-shrink: 0;
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
