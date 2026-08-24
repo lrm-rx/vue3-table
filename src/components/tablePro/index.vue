@@ -19,6 +19,7 @@ import {
   camelize,
   mergeProps,
 } from "vue";
+import { useEventListener } from "@vueuse/core";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
   ElInput,
@@ -515,7 +516,7 @@ const resolveEditOptions = (field, editRenderProps) => {
   return Array.isArray(eo[field]) ? eo[field] : []
 }
 // 合并编辑控件 props：editRender.props + editRender.props.props + cellEditProps[field] + v-model
-const mergeEditCompProps = (field, editRender, editValue, extra = {}) => {
+const mergeEditCompProps = (field, editRender, extra = {}) => {
   const erProps = (editRender && editRender.props) || {}
   const innerProps = erProps.props || {}
   const cep = props.cellEditProps || {}
@@ -779,7 +780,7 @@ const mergedColumns = computed(() => {
     // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
     const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
     if (popperCls != null) extra.popperClass = popperCls
-    const bindProps = mergeEditCompProps(field, col.editRender, undefined, extra)
+    const bindProps = mergeEditCompProps(field, col.editRender, extra)
     // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
 
     // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
@@ -1219,43 +1220,121 @@ const setFilterArrowOffset = (panel, triggerCenterX, left, pw, arrowSize) => {
   panel.style.setProperty("--vxe-filter-arrow-left", `${arrowLeft}px`);
 };
 
+// 同步执行面板定位的核心逻辑（供 clampFilterPanelToViewport 与滚动重定位复用）
+// recalcFromTrigger=true 时基于触发元素当前位置重新计算 top（滚动场景），
+// false 时仅基于面板已有 top 进行 clamp（初次打开场景，vxe 已定位过）
+const doClampFilterPanel = (column, recalcFromTrigger = false) => {
+  const panel = document.querySelector(
+    ".vxe-table--filter-wrapper.is--active",
+  );
+  if (!panel) return;
+  const margin = 16;
+  // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
+  const ARROW_SIZE = 8;
+  const ARROW_GAP = 2;
+  const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
+
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
+  const pw = panel.offsetWidth;
+  const ph = panel.offsetHeight;
+  let left = parseFloat(panel.style.left) || 0;
+  let top = parseFloat(panel.style.top) || 0;
+
+  if (recalcFromTrigger) {
+    // 滚动重定位：基于触发元素当前 viewport 位置重新计算 top（document 坐标系）
+    // 确保面板始终紧跟触发元素，不会因外层滚动容器滚动而偏移
+    const colEl =
+      column && column.id
+        ? document.querySelector(`.vxe-header--column.${column.id}`)
+        : null;
+    const filterBtnEl = colEl?.querySelector(".vxe-filter--btn");
+    const triggerEl = filterBtnEl || colEl;
+    if (triggerEl) {
+      const rect = triggerEl.getBoundingClientRect();
+      const docScrollTop =
+        document.documentElement.scrollTop || document.body.scrollTop || 0;
+      const docScrollLeft =
+        document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+      // 面板顶部 = 触发元素底部 + 箭头空间（document 坐标）
+      top = docScrollTop + rect.bottom + ARROW_EXTRA;
+      // 面板左对齐触发元素中心
+      const triggerCenterX = docScrollLeft + rect.left + rect.width / 2;
+      left = triggerCenterX - pw / 2;
+      // 水平边界
+      left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
+      // 垂直边界
+      top = clampFilterPanelVertical(top, vh, ph, margin);
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+      // 箭头水平偏移
+      setFilterArrowOffset(
+        panel,
+        triggerCenterX,
+        left,
+        pw,
+        ARROW_SIZE,
+      );
+      return;
+    }
+    // 触发元素找不到则回退到 clamp 逻辑
+  }
+
+  // 初次打开 clamp 逻辑：基于 vxe 已设置的 top/left 进行边界修正
+  // 1. 获取触发元素中心 X
+  const triggerCenterX = getFilterTriggerCenterX(column, left + pw / 2);
+  // 2. 面板整体向下挪 ARROW_EXTRA，给箭头留出表头下方到面板上方的可见空间
+  //    否则伪元素 translate(-100%) 会被表头白色背景挡住
+  top += ARROW_EXTRA;
+  // 3. 水平边界
+  left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
+  // 4. 垂直边界
+  top = clampFilterPanelVertical(top, vh, ph, margin);
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  // 5. 箭头水平偏移
+  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+};
+
 // clampFilterPanelToViewport 总入口：nextTick + setTimeout 内按步骤执行
 const clampFilterPanelToViewport = async (column) => {
   await nextTick();
   // setTimeout 让 vxe 内部完成 filterStore.style 写入后再覆盖
-  setTimeout(() => {
-    const panel = document.querySelector(
-      ".vxe-table--filter-wrapper.is--active",
-    );
-    if (!panel) return;
-    const margin = 16;
-    // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
-    const ARROW_SIZE = 8;
-    const ARROW_GAP = 2;
-    const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
-
-    const vw = document.documentElement.clientWidth || window.innerWidth;
-    const vh = document.documentElement.clientHeight || window.innerHeight;
-    const pw = panel.offsetWidth;
-    const ph = panel.offsetHeight;
-    let left = parseFloat(panel.style.left) || 0;
-    let top = parseFloat(panel.style.top) || 0;
-
-    // 1. 获取触发元素中心 X
-    const triggerCenterX = getFilterTriggerCenterX(column, left + pw / 2);
-    // 2. 面板整体向下挪 ARROW_EXTRA，给箭头留出表头下方到面板上方的可见空间
-    //    否则伪元素 translate(-100%) 会被表头白色背景挡住
-    top += ARROW_EXTRA;
-    // 3. 水平边界
-    left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-    // 4. 垂直边界
-    top = clampFilterPanelVertical(top, vh, ph, margin);
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
-    // 5. 箭头水平偏移
-    setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
-  }, 0);
+  setTimeout(() => doClampFilterPanel(column, false), 0);
 };
+
+// ========== 滚动时重新定位过滤面板（不关闭面板）==========
+// vxe transfer=true 下面板为 position:absolute 定位到 body；
+// 当表格位于外层可滚动容器中、或页面发生滚动时，面板不会跟随触发元素，
+// 造成视觉偏移。此处监听所有滚动事件，基于触发元素当前位置重新计算面板位置。
+let activeFilterColumn = null;
+let repositionRafId = null;
+const repositionActiveFilterPanel = () => {
+  if (!activeFilterColumn) return;
+  if (repositionRafId != null) return;
+  repositionRafId = requestAnimationFrame(() => {
+    repositionRafId = null;
+    doClampFilterPanel(activeFilterColumn, true);
+  });
+};
+
+// 1) window capture 阶段捕获页面外层滚动 + 所有嵌套滚动容器的 scroll 事件
+//    （scroll 事件不冒泡，需 capture 才能在 window 层捕获嵌套元素的滚动）
+useEventListener(window, "scroll", repositionActiveFilterPanel, {
+  capture: true,
+});
+// 2) 直接监听表格 body wrapper 的 scroll 事件（内层滚动，双保险）
+//    bodyWrapperEl 在 gridRef 挂载后动态计算
+const filterBodyWrapperEl = computed(() => {
+  const el = gridRef.value?.$el;
+  if (!el || !el.querySelector) return null;
+  return (
+    el.querySelector(".vxe-table--body-wrapper") ||
+    el.querySelector(".vxe-table--body") ||
+    null
+  );
+});
+useEventListener(filterBodyWrapperEl, "scroll", repositionActiveFilterPanel);
 
 // ========== 过滤面板 visible 处理 ==========
 // 面板打开：恢复其他列草稿 + 保存当前列快照 + bump 计数器 + clamp 面板位置
@@ -1274,11 +1353,19 @@ const handleFilterPanelOpen = (column) => {
   // 2) bump 计数器强制 FilterCheckbox 重新拉取（避免复用串列 / 级联数据陈旧）
   const field = column.field;
   if (field) bumpFilterRefetchCounter(field);
+  // 3) 记录当前打开的列，供滚动重定位使用
+  activeFilterColumn = column;
   clampFilterPanelToViewport(column);
 };
 
 // 面板关闭：若快照仍存在（未点击确定），恢复到打开前状态
 const handleFilterPanelClose = (column) => {
+  // 清除当前打开列记录（面板已关闭，不再需要滚动重定位）
+  activeFilterColumn = null;
+  if (repositionRafId != null) {
+    cancelAnimationFrame(repositionRafId);
+    repositionRafId = null;
+  }
   if (!pendingFilterSnapshots[column.id]) return;
   // nextTick + setTimeout 确保 vxe 内部设置 opt.checked 之后再恢复（优先级最后）
   nextTick(() => {
@@ -2075,23 +2162,58 @@ $table-toolbar-gap: 12px;
       height: 100%;
     }
 
-    // ========== 列头布局：按 headerAlign 差异化处理 ==========
-    // col--left：title 占剩余空间 + 图标靠右（两端对齐）
-    // col--center/right：保持默认 block，跟随列头 text-align 整体居中/右
-    :deep(.vxe-header--column.col--left) {
+    // ========== 列头布局：统一 flex 布局，防止图标换行 ==========
+    // 所有列（left/center/right）均使用 flex 布局，确保过滤图标和排序图标始终在一起，
+    // 文字可被挤压省略，但图标不会被压缩或换行。
+    :deep(.vxe-header--column) {
       .vxe-cell--wrapper.vxe-header-cell--wrapper {
         display: flex;
         align-items: center;
         width: 100%;
+        // 默认不允许换行：图标和文字必须在同一行
+        flex-wrap: nowrap;
 
+        // 标题文字：可被挤压省略，但保留最小宽度避免完全消失
         .vxe-cell--title {
-          margin-right: auto;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          flex: 0 1 auto;
+        }
+
+        // 排序、过滤、编辑图标：不可压缩，始终完整显示
+        .vxe-cell--sort,
+        .vxe-cell--filter,
+        .vxe-cell--edit-icon {
+          flex-shrink: 0;
         }
       }
-    }
 
-    // ========== 列过滤/排序图标高亮 ==========
-    :deep(.vxe-header--column) {
+      // 按 headerAlign 差异化对齐
+      // col--left：title 占剩余空间 + 图标靠右（两端对齐）
+      &.col--left {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          .vxe-cell--title {
+            margin-right: auto;
+          }
+        }
+      }
+      // col--center：title + 图标作为整体居中
+      &.col--center {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          justify-content: center;
+        }
+      }
+      // col--right：title 靠右 + 图标在左
+      &.col--right {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          .vxe-cell--title {
+            margin-left: auto;
+          }
+        }
+      }
+
       .vxe-filter--btn {
         position: relative;
       }

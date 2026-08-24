@@ -8,12 +8,13 @@
  *     重置 -> 清空当前列过滤条件（输入框等内容随之清空），并同步抛出最新的组合参数
  *
  * 宽度：min-width 220px / max-width min(92vw, 420px)；子组件内长文本省略 + title 提示
- * 高度：面板 body 最大高度 = 表格 body 高度 - footer 高度，确保面板不超出表格可视区域；
+ * 高度：面板总高度（body + footer）不超过表格 body 高度；
  *       面板使用 flex 布局，body 可滚动，footer 固定；
- *       FilterCheckbox 的搜索框 sticky 固定，仅选项列表滚动。
+ *       FilterCheckbox 的搜索框固定在顶部（flex-shrink:0），仅选项列表滚动。
+ * 滚动：面板不因表格/页面滚动而关闭，由 tablePro 在滚动时重新定位面板（保持视觉跟随）。
  */
-import { computed, inject, watchEffect, ref, onMounted } from 'vue'
-import { useElementSize, useEventListener } from '@vueuse/core'
+import { computed, inject, watchEffect, ref } from 'vue'
+import { useElementSize } from '@vueuse/core'
 import { FILTER_DEFAULTS, isFilterActive } from './filter-config.js'
 import FilterInput from './FilterInput.vue'
 import FilterCheckbox from './FilterCheckbox.vue'
@@ -53,26 +54,25 @@ watchEffect(() => {
 })
 
 // ========== 面板高度限制 ==========
-// 测量表格 body wrapper 的高度，确保过滤面板不超过表格可视区域
+// 测量表格 body wrapper 的高度，确保过滤面板总高度（body + footer）不超过表格可视区域
 const footerRef = ref(null)
 const bodyWrapperEl = computed(() => {
   const $table = props.params?.$table
-  const el = $table?.$el
+  // vxe-table 实例无 $el 属性，需通过 getEl() 方法获取根 DOM 元素
+  const el = $table?.$el || (typeof $table?.getEl === 'function' ? $table.getEl() : null)
   if (!el || !el.querySelector) return null
   // 优先取主 body wrapper（含固定列时有多个，取第一个主区域）
   return el.querySelector('.vxe-table--body-wrapper') || el.querySelector('.vxe-table--body') || null
 })
 const { height: tableBodyHeight } = useElementSize(bodyWrapperEl)
 
-// 面板 body 最大高度：表格 body 高度 - footer 高度 - 安全间距
-// 确保 FilterCheckbox 的搜索框始终可见，选项列表在剩余空间内滚动
-const maxBodyHeight = computed(() => {
+// 面板总最大高度 = 表格 body 高度（确保 body + footer 不超过表格可视区域）
+// 直接约束 .filter-panel 的 maxHeight，内部 flex 布局自动分配 body/footer 高度，
+// 避免 footer 高度跟踪延迟导致总高度超出
+const maxPanelHeight = computed(() => {
   const bodyH = tableBodyHeight.value
   if (!bodyH) return ''
-  const footerH = footerRef.value?.offsetHeight || 44
-  // 减去 footer 高度 + 面板 padding + 安全间距
-  const max = bodyH - footerH - 12
-  return `${Math.max(100, max)}px`
+  return `${Math.max(120, bodyH)}px`
 })
 
 // ========== 确定：收集组合参数 -> 抛出 filter-confirm -> 关闭面板 ==========
@@ -93,35 +93,16 @@ const onReset = () => {
   ctx?.emitReset?.(props.params)
 }
 
-// ========== 滚动时关闭面板（修复表格内外滚动条导致面板上下偏移）==========
-// vxe transfer=true 下面板为 position:absolute，仅打开时定位一次；
-// 当表格 body 内部滚动或页面外层滚动时，面板不会跟随重定位，造成视觉偏移。
-// 监听滚动事件，关闭面板消除偏移。
-// 注：挂载后短暂忽略滚动事件，避免面板打开过程中的定位/重排触发的滚动导致面板立即关闭
-let scrollGuard = true
-onMounted(() => {
-  setTimeout(() => { scrollGuard = false }, 300)
-})
-const closePanelOnScroll = () => {
-  if (scrollGuard) return
-  const $table = props.params?.$table
-  if ($table && typeof $table.closeFilter === 'function') {
-    $table.closeFilter()
-  } else {
-    ctx?.closePanel?.(props.params)
-  }
-}
-
-// 1) window capture 阶段捕获页面外层滚动 + 所有嵌套滚动容器的 scroll 事件
-//    （scroll 事件不冒泡，需 capture 才能在 window 层捕获嵌套元素的滚动）
-useEventListener(window, 'scroll', closePanelOnScroll, { capture: true })
-// 2) 直接监听表格 body wrapper 的 scroll 事件（内层滚动，双保险）
-useEventListener(bodyWrapperEl, 'scroll', closePanelOnScroll)
+// ========== 滚动处理 ==========
+// 面板不因滚动而关闭（用户期望仅点击外部关闭）；
+// 表格/页面滚动时面板的视觉偏移由 tablePro 在滚动时重新定位面板解决。
+// 重新定位逻辑在 index.vue 的 repositionActiveFilterPanel 中实现，
+// 通过 provide/inject 上下文与 FilterPanel 解耦，FilterPanel 无需感知滚动事件。
 </script>
 
 <template>
-  <div class="filter-panel">
-    <div class="filter-panel__body" :style="{ maxHeight: maxBodyHeight }">
+  <div class="filter-panel" :style="{ maxHeight: maxPanelHeight }">
+    <div class="filter-panel__body">
       <component
         :is="currentComp"
         :option="option"
@@ -153,7 +134,8 @@ useEventListener(bodyWrapperEl, 'scroll', closePanelOnScroll)
     padding: 0 4px;
     width: 100%;
     box-sizing: border-box;
-    overflow-x: hidden;
+    // body 自身不滚动，由内部子组件（FilterCheckbox__list）处理滚动
+    overflow: hidden;
     // 子组件需撑满 body 高度（FilterCheckbox 的 flex 布局依赖）
     display: flex;
     flex-direction: column;

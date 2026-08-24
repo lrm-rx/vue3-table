@@ -388,21 +388,24 @@ export default [
           { name: '禁用', code: 0 },
         ]
       } else if (field === 'department') {
-        // 级联过滤演示：已选角色 admin 时，部门只返回 tech / product
-        if (roleValues.includes('admin')) {
-          data = [
-            { name: '技术部', code: 'tech' },
-            { name: '产品部', code: 'product' },
-          ]
-        } else {
-          data = [
-            { name: '技术部', code: 'tech' },
-            { name: '产品部', code: 'product' },
-            { name: '设计部', code: 'design' },
-            { name: '运营部', code: 'operation' },
-            { name: '市场部', code: 'market' },
-          ]
+        // 生成 3000 条部门数据，用于验证 FilterPanel 高度限制、滚动重定位、远程加载不关闭面板
+        // 部门名由「主部门 + 小组/中心」组合，确保 name 唯一；code 唯一
+        const baseDepts = ['技术', '产品', '设计', '运营', '市场', '人事', '财务', '法务', '行政', '客服']
+        const suffixes = ['部', '中心', '组', '一部', '二部', '三部', '事业部', '研究院', '实验室', '委员会']
+        const groupNames = ['前端', '后端', '移动端', '测试', '运维', 'DBA', '算法', '数据', '安全', '架构', 'UE', 'UI', 'UX', '增长', '商业化', '中台', '基础', '应用', '平台', '架构']
+        data = []
+        for (let i = 0; i < 3000; i++) {
+          const base = baseDepts[i % baseDepts.length]
+          const suffix = suffixes[(Math.floor(i / baseDepts.length)) % suffixes.length]
+          const group = groupNames[i % groupNames.length]
+          const idx = Math.floor(i / (baseDepts.length * suffixes.length)) + 1
+          // 组合部门名：确保唯一性（带序号 + 小组名）
+          const name = `${base}${suffix}-${group}组${String(idx).padStart(3, '0')}`
+          const code = `dept_${String(i + 1).padStart(4, '0')}`
+          data.push({ name, code })
         }
+        // 级联过滤演示：已选角色 admin 时，返回前 3000 条（数量不变，便于压测）
+        // 如需真实级联可在此根据 roleValues 过滤 data
       }
       return {
         code: 200,
