@@ -1288,6 +1288,8 @@ const doClampFilterPanel = (column, recalcFromTrigger = false) => {
         pw,
         ARROW_SIZE,
       );
+      // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
+      takeRepositionBaseline(panel);
       return;
     }
     // 触发元素找不到则回退到 clamp 逻辑
@@ -1307,6 +1309,8 @@ const doClampFilterPanel = (column, recalcFromTrigger = false) => {
   panel.style.top = `${top}px`;
   // 5. 箭头水平偏移
   setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+  // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
+  takeRepositionBaseline(panel);
 };
 
 // clampFilterPanelToViewport 总入口：nextTick + setTimeout 内按步骤执行
@@ -1319,14 +1323,65 @@ const clampFilterPanelToViewport = async (column) => {
 // ========== 滚动时重新定位过滤面板（不关闭面板）==========
 // vxe transfer=true 下面板为 position:absolute 定位到 body；
 // 当表格位于外层可滚动容器中、或页面发生滚动时，面板不会跟随触发元素，
-// 造成视觉偏移。此处监听所有滚动事件，基于触发元素当前位置重新计算面板位置。
+// 造成视觉偏移。此处使用「基准快照 + delta 增量」方法：
+//   - 面板打开 / clamp 后，记录当前 left/top 以及页面 scrollTop/scrollLeft。
+//   - 之后的每一次外层滚动，按 scrollTop/Left 的 delta 平移 left/top。
+//   - 这样垂直滚动时只改动 top（delta），不重算 left，避免因 viewport/面板宽度等
+//     微小波动（滚动条 gutter 出现、clamp 边界浮点）造成水平方向的偏移。
+//
+// 内部 scroll 跳过：FilterCheckbox 列表的 scroll 不影响外层位置，直接 return。
 let activeFilterColumn = null;
 let repositionRafId = null;
-const repositionActiveFilterPanel = () => {
+// 基准快照：记录面板首次 clamp 完成 / 重算整量 时的 left/top 与页面滚动坐标
+let filterReposBaseline = null;
+const takeRepositionBaseline = (panel) => {
+  if (!panel) return;
+  filterReposBaseline = {
+    left: parseFloat(panel.style.left) || 0,
+    top: parseFloat(panel.style.top) || 0,
+    docScrollLeft: document.documentElement.scrollLeft || document.body.scrollLeft || 0,
+    docScrollTop: document.documentElement.scrollTop || document.body.scrollTop || 0,
+  };
+};
+const repositionActiveFilterPanel = (evt) => {
   if (!activeFilterColumn) return;
   if (repositionRafId != null) return;
+  // 若 scroll 事件目标在当前激活的 filter panel 内部（例如 FilterCheckbox 选项列表滚动），
+  // 则跳过重定位：面板本身不需要移动。
+  if (evt && evt.target instanceof Node) {
+    const panelEl = document.querySelector(".vxe-table--filter-wrapper.is--active");
+    if (panelEl && panelEl.contains(evt.target)) return;
+  }
   repositionRafId = requestAnimationFrame(() => {
     repositionRafId = null;
+    const panel = document.querySelector(".vxe-table--filter-wrapper.is--active");
+    if (!panel) return;
+    // 优先走「基准快照 + delta 增量」，只改需要改的方向，避免引入不必要的偏移
+    if (filterReposBaseline) {
+      const scrollLeftNow = document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+      const scrollTopNow = document.documentElement.scrollTop || document.body.scrollTop || 0;
+      const dLeft = scrollLeftNow - filterReposBaseline.docScrollLeft;
+      const dTop = scrollTopNow - filterReposBaseline.docScrollTop;
+      if (dLeft === 0 && dTop === 0) return;
+      const margin = 16;
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      const pw = panel.offsetWidth;
+      const ph = panel.offsetHeight;
+      // 只在对应方向有滚动时，才更新该方向坐标
+      let left = filterReposBaseline.left;
+      let top = filterReposBaseline.top;
+      if (dLeft !== 0) {
+        left = clampFilterPanelHorizontal(panel, filterReposBaseline.left + dLeft, vw, pw, margin);
+      }
+      if (dTop !== 0) {
+        top = clampFilterPanelVertical(filterReposBaseline.top + dTop, vh, ph, margin);
+      }
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+      return;
+    }
+    // 无基准快照（极少出现）时回退到按触发元素整量重算
     doClampFilterPanel(activeFilterColumn, true);
   });
 };
@@ -1375,6 +1430,7 @@ const handleFilterPanelOpen = (column) => {
 const handleFilterPanelClose = (column) => {
   // 清除当前打开列记录（面板已关闭，不再需要滚动重定位）
   activeFilterColumn = null;
+  filterReposBaseline = null;
   if (repositionRafId != null) {
     cancelAnimationFrame(repositionRafId);
     repositionRafId = null;
