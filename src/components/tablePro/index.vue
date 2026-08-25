@@ -177,6 +177,8 @@ const emit = defineEmits([...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS]);
 const slots = useSlots();
 const attrs = useAttrs();
 const gridRef = ref();
+// 根元素 .table-pro 的 ref（用于 onMounted 时检测父容器是否有明确高度）
+const rootRef = ref();
 
 // ========== 单选/多选数据收集（useSelection）==========
 // 收集 checkbox-change / radio-change 事件抛出的选中行，按 selectionKey 提取 id
@@ -1165,6 +1167,8 @@ onMounted(() => {
     tableHook.updatedTotalParam();
     tableHook.getTableList();
   }
+  // 检测父容器链是否有明确高度，决定是否向 vxe-grid 透传 height prop（修复 table-height-grow）
+  parentHasDefiniteHeight.value = detectParentDefiniteHeight(rootRef.value);
 });
 
 // requestApi 变化时（外部动态切换数据源）重新拉取数据
@@ -2015,6 +2019,44 @@ const gridEventHandlers = {
   onEditClosed,
 };
 
+// ========== 父容器高度检测（修复 table-height-grow）==========
+// 根因：vxe-grid 在 height="auto"/"100%" 时会 inline style.height=100% 并让内部 vxe-table
+//   通过 ResizeObserver 监听父容器，使用 parentHeight 计算 customHeight。当父容器链无明确高度
+//   （content-driven，如 el-form-item > div[height:100%]）时，parentHeight 会随表格实际渲染高度
+//   变化，形成 ResizeObserver 反馈循环（高度持续增长，每轮 +10~12px）。
+// 修复：检测父容器是否有明确高度。无明确高度时不向 vxe-grid 传 height，让 vxe-table 进入
+//   content-driven 模式（customHeight=0），避免反馈循环。
+//   （参见 node_modules/vxe-table/packages/grid/src/grid.ts computeStyles、
+//    node_modules/vxe-table/packages/table/src/table.ts calcTableHeight）
+const parentHasDefiniteHeight = ref(true);
+
+// 检测某元素的父容器链是否有明确高度（content-driven 检测）
+// 原理：临时将该元素高度置 0，比较父容器 clientHeight 变化：
+//   - 父容器跟随塌缩 → content-driven（无明确高度）→ 返回 false
+//   - 父容器保持不变 → 有明确高度 → 返回 true
+// 同步执行（读 clientHeight 触发 reflow，但 paint 在帧末，故不会产生可见闪烁）。
+// 该检测对整条父链有效：只要链上任一祖先为 content-driven，高度塌缩会逐级传导至直接父级。
+const detectParentDefiniteHeight = (el) => {
+  if (!el || !el.parentElement) return true;
+  const parent = el.parentElement;
+  const savedHeight = el.style.height;
+  el.style.height = "0";
+  const hZero = parent.clientHeight;
+  el.style.height = savedHeight;
+  const hRestore = parent.clientHeight;
+  // 父容器在子元素塌缩后高度变化 < 2px → 有明确高度（容差 2px 防止子像素抖动）
+  return Math.abs(hRestore - hZero) < 2;
+};
+
+// 是否向 vxe-grid 透传 height prop
+const shouldPassHeightToGrid = computed(() => {
+  const h = props.height;
+  // 用户显式指定具体数值（非 auto/100%）→ 不会触发反馈循环，直接透传
+  if (h != null && h !== "auto" && h !== "100%") return true;
+  // height 为 auto/100%（默认值）→ 取决于父容器是否有明确高度
+  return parentHasDefiniteHeight.value;
+});
+
 // ========== vxe-grid 属性 ==========
 // 展开 attrs 实现 vxe-grid 原生属性透传（class/style 排除，绑定到根元素 .table-pro）
 // 合并 gridListeners（事件透传），显式声明的 props 写在后面优先级更高
@@ -2047,7 +2089,9 @@ const gridProps = computed(() => {
       border: props.border,
       stripe: props.stripe,
       round: props.round,
-      height: props.height,
+      // 父容器无明确高度时（content-driven）不传 height，避免 ResizeObserver 反馈循环
+      // （见 shouldPassHeightToGrid 注释）
+      height: shouldPassHeightToGrid.value ? props.height : undefined,
       size: currentDensity.value,
       rowConfig: { isHover: true, ...props.rowConfig },
       checkboxConfig: props.checkboxConfig,
@@ -2157,7 +2201,7 @@ defineExpose({
 </script>
 
 <template>
-  <div class="table-pro" :class="attrs.class" :style="attrs.style">
+  <div ref="rootRef" class="table-pro" :class="attrs.class" :style="attrs.style">
     <div class="table-pro__body">
       <vxe-grid
         ref="gridRef"
