@@ -645,16 +645,19 @@ const mergedColumns = computed(() => {
     }
   }
 
-  // 2) filterType 自动注入过滤配置
+  // 2) 过滤配置自动注入：支持两种等价写法
+  //    · filterType: 'FilterCheckbox'（简写，自动注入 filters + filterRender）
+  //    · filterRender: { name: 'FilterCheckbox' }（已有 name 时可省略 filterType，
+  //      按 name 自动注入 filters，filterRender 保留用户配置）
   const applyFilterTypeConfig = (col) => {
-    if (col.filterType && filterDefaults[col.filterType]) {
-      const autoCfg = filterDefaults[col.filterType] || {}
-      if (col.filters == null && autoCfg.filters) {
-        col.filters = autoCfg.filters.map((o) => ({ ...o, data: o.data ? { ...o.data } : {} }))
-      }
-      if (col.filterRender == null && autoCfg.filterRender) {
-        col.filterRender = { ...autoCfg.filterRender }
-      }
+    const typeKey = col.filterType || (col.filterRender && col.filterRender.name)
+    if (!typeKey || !filterDefaults[typeKey]) return
+    const autoCfg = filterDefaults[typeKey] || {}
+    if (col.filters == null && autoCfg.filters) {
+      col.filters = autoCfg.filters.map((o) => ({ ...o, data: o.data ? { ...o.data } : {} }))
+    }
+    if (col.filterRender == null && autoCfg.filterRender) {
+      col.filterRender = { ...autoCfg.filterRender }
     }
   }
 

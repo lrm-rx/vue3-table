@@ -178,6 +178,7 @@ const columns = ref([
   },
 
   // 演示 5：editRender ElSelect（使用 editOptions.department 预置选项数组）
+  //        filterRender.name 已指定 'FilterCheckbox'，可省略 filterType（组件按 name 自动注入 filters）
   {
     field: "department",
     title: "部门",
@@ -186,7 +187,6 @@ const columns = ref([
       hideColumn: false,
       defParamKey: "departmentList",
     },
-    filterType: "FilterCheckbox",
     filterRender: {
       name: "FilterCheckbox",
       props: { options: [] }, // 远程模式：选项由 requestFilterAPI 提供
