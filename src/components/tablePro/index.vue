@@ -12,6 +12,7 @@ import {
   provide,
   nextTick,
   onMounted,
+  onBeforeUnmount,
   watch,
   h,
   markRaw,
@@ -1167,8 +1168,17 @@ onMounted(() => {
     tableHook.updatedTotalParam();
     tableHook.getTableList();
   }
-  // 检测父容器链是否有明确高度，决定是否向 vxe-grid 透传 height prop（修复 table-height-grow）
+  // 检测父容器链是否有明确高度（快速预判），并启动 ResizeObserver 反馈循环兜底检测
   parentHasDefiniteHeight.value = detectParentDefiniteHeight(rootRef.value);
+  // 仅在预判为"有明确高度"时启动兜底（预判为 content-driven 时已不传 height，无循环风险）
+  if (parentHasDefiniteHeight.value) {
+    startFeedbackDetection(rootRef.value);
+  }
+});
+
+// 组件卸载前清理 ResizeObserver
+onBeforeUnmount(() => {
+  stopFeedbackDetection();
 });
 
 // requestApi 变化时（外部动态切换数据源）重新拉取数据
@@ -2019,37 +2029,94 @@ const gridEventHandlers = {
   onEditClosed,
 };
 
-// ========== 父容器高度检测（修复 table-height-grow）==========
+// ========== 高度反馈循环检测（修复 table-height-grow）==========
 // 根因：vxe-grid 在 height="auto"/"100%" 时会 inline style.height=100% 并让内部 vxe-table
 //   通过 ResizeObserver 监听父容器，使用 parentHeight 计算 customHeight。当父容器链无明确高度
-//   （content-driven，如 el-form-item > div[height:100%]）时，parentHeight 会随表格实际渲染高度
-//   变化，形成 ResizeObserver 反馈循环（高度持续增长，每轮 +10~12px）。
-// 修复：检测父容器是否有明确高度。无明确高度时不向 vxe-grid 传 height，让 vxe-table 进入
-//   content-driven 模式（customHeight=0），避免反馈循环。
+//   （content-driven，如 el-form-item > div[height:100%]、el-dialog > el-tabs）时，parentHeight
+//   会随表格实际渲染高度变化，形成 ResizeObserver 反馈循环（高度持续增长，每轮 +10~12px）。
+// 修复策略（双重防线）：
+//   1) onMounted 时 detectParentDefiniteHeight 同步预判明显的 content-driven 场景（快速路径）。
+//   2) ResizeObserver 持续监听 .vxe-table 高度，若短时间内累计增长超阈值则判定为反馈循环（兜底，
+//      覆盖预判失效的场景，如 el-dialog 打开动画期间 / el-tabs 切换过渡期执行预判不准）。
+//   任一防线判定为 content-driven → 不向 vxe-grid 传 height，让 vxe-table 进入 content-driven
+//   模式（customHeight=0），打破循环。
 //   （参见 node_modules/vxe-table/packages/grid/src/grid.ts computeStyles、
 //    node_modules/vxe-table/packages/table/src/table.ts calcTableHeight）
 const parentHasDefiniteHeight = ref(true);
+const feedbackLoopDetected = ref(false);
+let feedbackObserver = null;
+let lastTableH = 0;
+// 反馈循环检测：持续小幅增长（2-30px/轮）连续 3 次判定为循环。
+// 数据加载的大幅跳变（>30px）不计数，避免误判。
+const SMALL_GROWTH_MIN = 2;
+const SMALL_GROWTH_MAX = 30;
+const CONSECUTIVE_GROWTH_LIMIT = 3;
 
-// 检测某元素的父容器链是否有明确高度（content-driven 检测）
-// 原理：临时将该元素高度置 0，比较父容器 clientHeight 变化：
-//   - 父容器跟随塌缩 → content-driven（无明确高度）→ 返回 false
-//   - 父容器保持不变 → 有明确高度 → 返回 true
-// 同步执行（读 clientHeight 触发 reflow，但 paint 在帧末，故不会产生可见闪烁）。
-// 该检测对整条父链有效：只要链上任一祖先为 content-driven，高度塌缩会逐级传导至直接父级。
+// 检测某元素的父容器链是否有明确高度（content-driven 检测，快速预判）
+// 原理：遍历父链，检查是否有祖先的 computed height 为明确像素值（如 500px、695.2px）。
+//   - 遇到明确像素高度 → 有明确高度 → 返回 true
+//   - 整条链都是 auto/百分比（无法解析为固定值）→ content-driven → 返回 false
+// 相比塌缩测试（临时置 0 高度比较 clientHeight），此方案不依赖布局时序，在 onMounted 时更可靠。
+// ResizeObserver 兜底仍保留，覆盖动画期间父容器高度变化导致预判失效的场景。
 const detectParentDefiniteHeight = (el) => {
   if (!el || !el.parentElement) return true;
-  const parent = el.parentElement;
-  const savedHeight = el.style.height;
-  el.style.height = "0";
-  const hZero = parent.clientHeight;
-  el.style.height = savedHeight;
-  const hRestore = parent.clientHeight;
-  // 父容器在子元素塌缩后高度变化 < 2px → 有明确高度（容差 2px 防止子像素抖动）
-  return Math.abs(hRestore - hZero) < 2;
+  let parent = el.parentElement;
+  while (parent && parent !== document.body) {
+    const computedHeight = getComputedStyle(parent).height;
+    // computed height 为明确像素值（非 "auto"、非百分比、> 0）→ 父链有明确高度
+    if (
+      computedHeight &&
+      computedHeight !== "auto" &&
+      !computedHeight.endsWith("%") &&
+      parseFloat(computedHeight) > 0
+    ) {
+      return true;
+    }
+    parent = parent.parentElement;
+  }
+  return false;
+};
+
+// 启动 ResizeObserver 反馈循环兜底检测（监听 .vxe-table 高度持续小幅增长）
+// 仅在预判为"有明确高度"时启动（预判为 content-driven 时已不传 height，无反馈循环风险）。
+// 检测策略：区分"数据加载的正常跳变"与"反馈循环的持续小幅增长"。
+//   - 数据加载：空表 → 有数据，delta 通常 > 30px（一次性大跳变），重置计数
+//   - 反馈循环：每轮 delta ≈ 2-30px，连续多次，判定为循环
+const startFeedbackDetection = (rootEl) => {
+  const target = rootEl?.querySelector?.(".vxe-table");
+  if (!target || feedbackObserver) return;
+  lastTableH = target.clientHeight;
+  let consecutiveSmallGrowth = 0;
+  feedbackObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    const newH = entry.contentRect.height;
+    const delta = newH - lastTableH;
+    if (delta >= SMALL_GROWTH_MIN && delta <= SMALL_GROWTH_MAX) {
+      consecutiveSmallGrowth++;
+      if (consecutiveSmallGrowth >= CONSECUTIVE_GROWTH_LIMIT) {
+        feedbackLoopDetected.value = true;
+        stopFeedbackDetection();
+      }
+    } else {
+      // 大幅增长（数据加载）或减少/不变 → 重置
+      consecutiveSmallGrowth = 0;
+    }
+    lastTableH = newH;
+  });
+  feedbackObserver.observe(target);
+};
+
+const stopFeedbackDetection = () => {
+  if (feedbackObserver) {
+    feedbackObserver.disconnect();
+    feedbackObserver = null;
+  }
 };
 
 // 是否向 vxe-grid 透传 height prop
 const shouldPassHeightToGrid = computed(() => {
+  // 反馈循环兜底检测命中 → 不传 height
+  if (feedbackLoopDetected.value) return false;
   const h = props.height;
   // 用户显式指定具体数值（非 auto/100%）→ 不会触发反馈循环，直接透传
   if (h != null && h !== "auto" && h !== "100%") return true;
