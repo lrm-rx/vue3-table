@@ -170,6 +170,11 @@ const props = defineProps({
 
   // ========== 单元格编辑：各列编辑控件的额外公共 props（按 field 索引）==========
   cellEditProps: { type: Object, default: () => ({}) },
+
+  // ========== 单元格编辑校验规则（透传 vxe-grid editRules）==========
+  // 形如：{ remark: [{ required: true, message: '请输入备注', trigger: 'change' }] }
+  // 配合暴露的 validate / fullValidate / clearValidate 方法在提交时触发
+  editRules: { type: Object, default: () => ({}) },
 });
 
 // 声明组件 emits：vxe-grid 透传事件 + TablePro 自身事件
@@ -2184,6 +2189,8 @@ const gridProps = computed(() => {
       columnConfig: { resizable: true, ...props.columnConfig },
       columns: mergedColumns.value,
       data: renderData.value,
+      // 校验规则透传到 vxe-grid，配合暴露的 validate / fullValidate 方法
+      editRules: props.editRules,
       toolbarConfig: toolbarConfig.value,
       customConfig: customConfig.value,
       // 虚拟滚动：仅使用用户显式传入的配置
@@ -2264,6 +2271,11 @@ defineExpose({
   tableData: tableHook.tableData,
   pageable: tableHook.pageable,
   searchParam: tableHook.searchParam,
+  // ========== 校验方法（透传 vxe-grid，配合 editRules 使用）==========
+  // validate: 仅校验已编辑的单元格；fullValidate: 校验全表所有规则
+  validate: (...args) => gridRef.value?.validate?.(...args),
+  fullValidate: (...args) => gridRef.value?.fullValidate?.(...args),
+  clearValidate: (...args) => gridRef.value?.clearValidate?.(...args),
 });
 </script>
 

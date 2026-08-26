@@ -316,6 +316,23 @@ const columns = ref([
   },
 ]);
 
+// ========== 单元格编辑校验规则（透传 vxe-grid editRules）==========
+// 提交时调用 tableProRef.fullValidate() 触发全表校验
+const editRules = ref({
+  // 当前列：备注（必填）
+  remark: [{ required: true, message: "请输入备注", trigger: "change" }],
+  // 其他输入类单元格（必填）
+  username: [{ required: true, message: "请输入姓名", trigger: "change" }],
+  account: [{ required: true, message: "请输入账号", trigger: "change" }],
+  email: [{ required: true, message: "请输入邮箱", trigger: "change" }],
+  phone: [{ required: true, message: "请输入手机号", trigger: "change" }],
+  age: [{ required: true, message: "请输入年龄", trigger: "change" }],
+  // 其他选择类单元格（必填）
+  department: [{ required: true, message: "请选择部门", trigger: "change" }],
+  role: [{ required: true, message: "请选择角色", trigger: "change" }],
+  createTime: [{ required: true, message: "请选择创建时间", trigger: "change" }],
+});
+
 // ========== 远程模式：requestApi ==========
 const currentApi = ref(getUserListApi);
 
@@ -425,6 +442,30 @@ const onCheckboxChange = () => {
   const rows = tableProRef.value?.getCheckboxRecords?.() || [];
   if (rows.length) ElMessage.info(`已选中 ${rows.length} 条`);
 };
+
+// ========== 提交校验（触发 vxe-grid fullValidate 全表校验）==========
+const onSubmit = async () => {
+  if (!tableProRef.value?.fullValidate) {
+    ElMessage.warning("tablePro 未暴露 fullValidate 方法");
+    return;
+  }
+  try {
+    // fullValidate 返回错误映射：null 表示校验通过
+    const errMap = await tableProRef.value.fullValidate();
+    if (errMap) {
+      const errCount = Object.keys(errMap).length;
+      ElMessage.error(`校验未通过：${errCount} 个字段存在错误`);
+      console.log("[fullValidate errorMap]", errMap);
+    } else {
+      const data = tableProRef.value?.getData?.() || [];
+      ElMessage.success(`校验通过，提交 ${data.length} 条数据`);
+      console.log("[submit data]", data);
+    }
+  } catch (err) {
+    ElMessage.error(`校验异常：${err?.message || err}`);
+    console.error("[fullValidate error]", err);
+  }
+};
 </script>
 
 <template>
@@ -506,6 +547,7 @@ const onCheckboxChange = () => {
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"
       :edit-options="editOptions"
       :cell-edit-props="cellEditProps"
+      :edit-rules="editRules"
       height="auto"
       @checkbox-change="onCheckboxChange"
       @checkbox-all="onCheckboxChange"
@@ -519,6 +561,7 @@ const onCheckboxChange = () => {
       <template #toolbarButtons>
         <el-button type="primary">按钮1</el-button>
         <el-button type="primary">按钮2</el-button>
+        <el-button type="success" @click="onSubmit">提交校验</el-button>
       </template>
 
       <!-- 插槽式渲染演示：外部具名插槽 #cell_xxx（对应 columns[i].field）-->
