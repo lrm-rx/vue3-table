@@ -518,8 +518,8 @@ const EL_EDIT_MAP = {
 const WRAP_COMPONENTS = { ElOption, ElRadio, ElRadioButton, ElCheckbox, ElCheckboxButton }
 
 // 读取某列的编辑选项数组：editRender.props.options 优先于 props.editOptions[field]
-const resolveEditOptions = (field, editRenderProps) => {
-  if (editRenderProps && Array.isArray(editRenderProps.options)) return editRenderProps.options
+const resolveEditOptions = (field, editRender) => {
+  if (editRender && Array.isArray(editRender.options)) return editRender.options
   const eo = props.editOptions || {}
   return Array.isArray(eo[field]) ? eo[field] : []
 }
@@ -810,8 +810,8 @@ const mergedColumns = computed(() => {
       return h(Comp, bindProps)
     }
     // Select/Radio/Checkbox：渲染 options
-    const erInnerProps = (col.editRender && col.editRender.props) || {}
-    const options = resolveEditOptions(field, erInnerProps)
+    const colEditRender = col.editRender || {}
+    const options = resolveEditOptions(field, colEditRender)
     const children = buildWrapOptionChildren(options, field, wrapName)
     return h(Comp, bindProps, { default: () => children })
   })
@@ -820,8 +820,8 @@ const mergedColumns = computed(() => {
   // 注：editEnabled=false 时也生效，确保不可编辑状态下仍按 options 显示 label
   const buildEditLabelFallback = (col, field) => markRaw((scope) => {
     const raw = field != null && scope.row ? scope.row[field] : undefined
-    const erInnerProps = (col.editRender && col.editRender.props) || {}
-    const options = resolveEditOptions(field, erInnerProps)
+    const colEditRender = col.editRender || {}
+    const options = resolveEditOptions(field, colEditRender)
     if (options.length) {
       const findLabel = (v) => {
         const hit = options.find((o) => o.value === v || String(o.value) === String(v))
