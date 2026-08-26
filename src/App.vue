@@ -451,9 +451,14 @@ const onSubmit = async () => {
   }
   try {
     // fullValidate 返回错误映射：null 表示校验通过
+    // validConfig.autoPos=false → 校验不自动激活编辑态（避免 TextareaPopoverEdit 等弹层遮住错误语）
     const errMap = await tableProRef.value.fullValidate();
     if (errMap) {
       const errCount = Object.keys(errMap).length;
+      // 滚动到首个错误行（autoPos=false 不再自动滚动，需手动定位）
+      const firstField = Object.keys(errMap)[0];
+      const firstErr = errMap[firstField]?.[0];
+      if (firstErr?.row) tableProRef.value?.scrollToRow?.(firstErr.row);
       ElMessage.error(`校验未通过：${errCount} 个字段存在错误`);
       console.log("[fullValidate errorMap]", errMap);
     } else {
@@ -548,6 +553,7 @@ const onSubmit = async () => {
       :edit-options="editOptions"
       :cell-edit-props="cellEditProps"
       :edit-rules="editRules"
+      :valid-config="{ autoPos: false }"
       height="auto"
       @checkbox-change="onCheckboxChange"
       @checkbox-all="onCheckboxChange"

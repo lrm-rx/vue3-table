@@ -2273,9 +2273,12 @@ defineExpose({
   searchParam: tableHook.searchParam,
   // ========== 校验方法（透传 vxe-grid，配合 editRules 使用）==========
   // validate: 仅校验已编辑的单元格；fullValidate: 校验全表所有规则
+  // 配合 validConfig.autoPos=false：校验不自动激活编辑态，避免 TextareaPopoverEdit 等弹层
+  //       遮住校验错误语；提交后调用 scrollToRow 手动滚动到首个错误行
   validate: (...args) => gridRef.value?.validate?.(...args),
   fullValidate: (...args) => gridRef.value?.fullValidate?.(...args),
   clearValidate: (...args) => gridRef.value?.clearValidate?.(...args),
+  scrollToRow: (...args) => gridRef.value?.scrollToRow?.(...args),
 });
 </script>
 
@@ -2377,10 +2380,12 @@ $table-toolbar-gap: 12px;
           flex: 0 1 auto;
         }
 
-        // 排序、过滤、编辑图标：不可压缩，始终完整显示
+        // 排序、过滤、编辑、必填图标：不可压缩，始终完整显示
+        // 必填星号也需 flex-shrink:0，否则长标题列会把星号挤压到与编辑图标堆叠重叠
         .vxe-cell--sort,
         .vxe-cell--filter,
-        .vxe-cell--edit-icon {
+        .vxe-cell--edit-icon,
+        .vxe-cell--required-icon {
           flex-shrink: 0;
         }
       }
