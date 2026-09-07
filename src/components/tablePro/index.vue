@@ -47,6 +47,8 @@ import { useTable } from "@/hooks/useTable";
 import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
 import Pagination from "./pagination/Pagination.vue";
+// 静态模式本地过滤 + 排序（requestApi 未传时对 data 全量数据生效）
+import { applyLocalFilterSort } from "./utils/localFilterSort.js";
 
 // 关闭自动 inheritAttrs（避免父组件传入的未声明属性落到根 div），
 // 改由下方 gridProps 显式将这些属性透传到 <vxe-grid>；class / style 仍绑定到根元素 .table-pro
@@ -963,8 +965,75 @@ const customEditFields = computed(() => {
   return m
 })
 
+// ========== 表头过滤 & 排序状态收集（渲染器高阶复用）==========
+// 关键：active 用 opt.checked（仅「确认」后生效），非 isFilterActive(data)（避免草稿被收集）
+// 注：必须定义在 localProcessedData 之前 —— 静态模式本地过滤/排序的 computed 与
+//     watch getter 会在 setup 阶段立即执行，const 箭头函数声明顺序不能形成 TDZ
+const getFilterSortState = () => {
+  const $table = gridRef.value;
+  if (!$table) return { filters: [], sorts: [] };
+  const cols = $table.getColumns ? $table.getColumns() : [];
+  // vxe-grid getColumns() 不保留自定义 params 扩展属性，
+  // 需从原始 props.columns 按 field 查找。forEachLeafColumn 递归 children
+  const fieldToParamKey = buildFieldToParamKeyMap();
+  const fieldToRenderProps = new Map();
+  forEachLeafColumn(props.columns || [], (col) => {
+    if (col.field && col.filterRender && col.filterRender.props) {
+      fieldToRenderProps.set(col.field, col.filterRender.props);
+    }
+  });
+  const filters = [];
+  cols.forEach((col) => {
+    const fName = col.filterRender && col.filterRender.name;
+    if (!fName || !FILTER_DEFAULTS[fName]) return;
+    const paramKey = fieldToParamKey.get(col.field) || col.field;
+    (col.filters || []).forEach((opt) => {
+      filters.push({
+        field: col.field,
+        paramKey,
+        title: col.title,
+        type: fName,
+        data: opt.data,
+        // 透传 filterRender.props，供 filterStateToParams 读取区间类的 emptyValue 等
+        props: fieldToRenderProps.get(col.field),
+        active: opt.checked,
+      });
+    });
+  });
+  const sorts = ($table.getSortColumns ? $table.getSortColumns() : []).map(
+    (s) => ({ field: s.field, property: s.property, order: s.order }),
+  );
+  return { filters, sorts };
+};
+
+// ========== 静态模式本地过滤 + 排序 ==========
+// requestApi 未传（静态数据模式）时无后端参与：列过滤（filterType）与列排序的确认动作
+// 不产生请求，由组件对 data 全量数据本地过滤 + 排序后再传给 vxe-grid。
+// 多字段排序是否启用由 sortConfig.multiple 决定（vxe 控制单/多列状态，本地按状态透传）；
+// sortConfig.remote=false 时排序交给 vxe 原生处理，本地仅做过滤。
+//
+// 注意：过滤/排序状态必须在「事件上下文」中收集（bumpLocalFilterSort），
+// 不能在 computed/watcher 内直接调用 getFilterSortState() —— vxe 的 getSortColumns
+// 内部读取其 props 派生的 computeSortOpts，而 gridProps 每次重算都会生成新的
+// sortConfig 对象，computed 内读取会形成
+// 「gridProps → vxe computeSortOpts → localProcessedData → renderData → gridProps」
+// 的响应式循环（Maximum recursive updates exceeded）。
+const localFilterSortState = ref({ filters: [], sorts: [] });
+const bumpLocalFilterSort = () => {
+  // 事件上下文（非响应式）中收集最新过滤/排序状态，驱动 localProcessedData 重算
+  localFilterSortState.value = getFilterSortState();
+};
+const localProcessedData = computed(() => {
+  const all = props.data || [];
+  if (isRemoteMode.value) return all;
+  const { filters, sorts } = localFilterSortState.value;
+  const localSorts =
+    props.sortConfig && props.sortConfig.remote === false ? [] : sorts;
+  return applyLocalFilterSort(all, filters, localSorts);
+});
+
 // ========== 静态模式前端分页 ==========
-// 本地分页状态来自 props.pagerConfig；total 由 data.length 自动计算
+// 本地分页状态来自 props.pagerConfig；total 由 localProcessedData.length 自动计算
 const localPager = ref({
   currentPage: props.pagerConfig?.currentPage ?? 1,
   pageSize: props.pagerConfig?.pageSize ?? 10,
@@ -985,9 +1054,9 @@ watch(
   { deep: true },
 );
 
-// 数据长度变化时夹紧 currentPage（避免停留在不存在的页码）
+// 数据长度变化时夹紧 currentPage（避免停留在不存在的页码；含本地过滤后总数变化）
 watch(
-  () => (props.data || []).length,
+  () => localProcessedData.value.length,
   (len) => {
     if (isRemoteMode.value || !props.pagination) return;
     const size = localPager.value.pageSize || 10;
@@ -998,11 +1067,11 @@ watch(
   },
 );
 
-// 实际渲染数据：远程用 useTable；静态+分页切片 data；静态不分页原样返回
+// 实际渲染数据：远程用 useTable；静态先本地过滤+排序，再按分页切片；静态不分页原样返回
 const renderData = computed(() => {
   if (isRemoteMode.value) return tableHook.tableData.value;
-  if (!props.pagination) return props.data;
-  const all = props.data || [];
+  const all = localProcessedData.value;
+  if (!props.pagination) return all;
   const size = localPager.value.pageSize || 10;
   const page = localPager.value.currentPage || 1;
   const start = (page - 1) * size;
@@ -1027,7 +1096,8 @@ const currentPager = computed(() => {
     return {
       currentPage: localPager.value.currentPage,
       pageSize: localPager.value.pageSize,
-      total: (props.data || []).length,
+      // total 基于本地过滤+排序后的数据（过滤后总数随之变化）
+      total: localProcessedData.value.length,
       pageSizes: localPager.value.pageSizes || [10, 20, 50, 100],
     };
   }
@@ -1133,6 +1203,9 @@ const applyInitVxeUIState = (sortFields, sortOrders) => {
       // 4c) UI 同步完成，解除 guard（必须解除，避免后续 sort-change 被永久跳过）
       isApplyingDefaults.value = false;
     }
+    // 4d) 静态模式：默认过滤/排序已同步到 vxe UI 状态，触发本地过滤排序重算
+    // （远程模式数据由后端过滤排序，无需处理）
+    if (!isRemoteMode.value) bumpLocalFilterSort();
   });
 };
 
@@ -1163,6 +1236,9 @@ const isApplyingDefaults = ref(false);
 // 挂载后自动发起首次请求（仅远程模式且 requestAuto=true）
 onMounted(() => {
   applyInitParam();
+  // 静态模式：挂载完成后收集一次过滤/排序状态（覆盖 initParam 默认值与
+  // sortConfig.defaultSort 等 vxe 挂载期应用的状态）
+  if (!isRemoteMode.value) bumpLocalFilterSort();
   if (isRemoteMode.value && props.requestAuto) {
     // 注：updatedTotalParam 把 searchParam（含默认 filter/sort）同步到 totalParam，
     // 否则 getTableList 只发 pageParam 会丢失 filter/sort 默认值
@@ -1463,45 +1539,6 @@ const onFilterVisible = (payload) => {
   }
 };
 
-// ========== 表头过滤 & 排序（渲染器高阶复用）==========
-// 关键：active 用 opt.checked（仅「确认」后生效），非 isFilterActive(data)（避免草稿被收集）
-const getFilterSortState = () => {
-  const $table = gridRef.value;
-  if (!$table) return { filters: [], sorts: [] };
-  const cols = $table.getColumns ? $table.getColumns() : [];
-  // vxe-grid getColumns() 不保留自定义 params 扩展属性，
-  // 需从原始 props.columns 按 field 查找。forEachLeafColumn 递归 children
-  const fieldToParamKey = buildFieldToParamKeyMap();
-  const fieldToRenderProps = new Map();
-  forEachLeafColumn(props.columns || [], (col) => {
-    if (col.field && col.filterRender && col.filterRender.props) {
-      fieldToRenderProps.set(col.field, col.filterRender.props);
-    }
-  });
-  const filters = [];
-  cols.forEach((col) => {
-    const fName = col.filterRender && col.filterRender.name;
-    if (!fName || !FILTER_DEFAULTS[fName]) return;
-    const paramKey = fieldToParamKey.get(col.field) || col.field;
-    (col.filters || []).forEach((opt) => {
-      filters.push({
-        field: col.field,
-        paramKey,
-        title: col.title,
-        type: fName,
-        data: opt.data,
-        // 透传 filterRender.props，供 filterStateToParams 读取区间类的 emptyValue 等
-        props: fieldToRenderProps.get(col.field),
-        active: opt.checked,
-      });
-    });
-  });
-  const sorts = ($table.getSortColumns ? $table.getSortColumns() : []).map(
-    (s) => ({ field: s.field, property: s.property, order: s.order }),
-  );
-  return { filters, sorts };
-};
-
 // 列过滤状态数组 → 扁平请求参数对象 + 涉及的 key 集合
 // key 默认取 field，可通过 params.defParamKey 自定义；区间类支持 paramMode: array/split/both（详见 README）
 const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
@@ -1630,7 +1667,11 @@ const applyFilterStateAndSearch = (filterSortPayload) => {
     filterSortPayload?.filters || [],
   );
 
-  if (!isRemoteMode.value) return;
+  if (!isRemoteMode.value) {
+    // 静态模式：无后端过滤，bump 触发 localProcessedData 重新收集过滤状态并本地过滤
+    bumpLocalFilterSort();
+    return;
+  }
 
   // 1~3) 同步过滤参数到 searchParam（清失效 key + 写本轮 key + 更新 key 集合）
   syncParamsToSearchParam(filterParams, paramKeys, lastFilterParamKeys);
@@ -1687,7 +1728,11 @@ const lastSortParamKeys = new Set();
 // 列排序 → useTable.search() 联动（仅远程模式生效）
 const applySortStateAndSearch = (sorts) => {
   const { params: sortParams, paramKeys } = sortStateToParams(sorts);
-  if (!isRemoteMode.value) return;
+  if (!isRemoteMode.value) {
+    // 静态模式：无后端排序，bump 触发 localProcessedData 重新收集排序状态并本地排序
+    bumpLocalFilterSort();
+    return;
+  }
 
   // 1~3) 同步排序参数到 searchParam（清失效 key + 写本轮 key + 更新 key 集合）
   syncParamsToSearchParam(sortParams, paramKeys, lastSortParamKeys);
@@ -2139,8 +2184,17 @@ defineExpose({
   scrollTo: (x, y) => gridRef.value?.scrollTo?.(x, y),
   scrollToRow: (row) => gridRef.value?.scrollToRow?.(row),
   scrollToColumn: (col) => gridRef.value?.scrollToColumn?.(col),
-  clearSort: () => gridRef.value?.clearSort?.(),
-  clearFilter: () => gridRef.value?.clearFilter?.(),
+  // 静态模式下清空排序/过滤后 bump 触发本地重算（不经过 confirm/reset 流程）
+  clearSort: () => {
+    const r = gridRef.value?.clearSort?.();
+    if (!isRemoteMode.value) bumpLocalFilterSort();
+    return r;
+  },
+  clearFilter: () => {
+    const r = gridRef.value?.clearFilter?.();
+    if (!isRemoteMode.value) bumpLocalFilterSort();
+    return r;
+  },
   exportData: (opts) => gridRef.value?.exportData?.(opts),
   resetAllFilter,
   resetColumnFilter,

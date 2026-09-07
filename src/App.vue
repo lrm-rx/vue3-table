@@ -393,6 +393,87 @@ const onRequestError = (error) => {
   ElMessage.error(`表格请求失败：${error?.message || error}`);
 };
 
+// ========== 静态模式演示：本地过滤 + 排序（未传 requestApi）==========
+// 数据纯前端生成，全部过滤/排序由 tablePro 内部对 data 全量数据本地完成（无后端参与）
+const staticRoles = ["admin", "editor", "viewer", "developer"];
+const genStaticData = () => {
+  const surnames = ["张", "李", "王", "赵", "陈", "刘", "杨", "黄", "周", "吴"];
+  const list = [];
+  for (let i = 1; i <= 32; i++) {
+    list.push({
+      id: i,
+      username: `${surnames[i % surnames.length]}${i}号`,
+      account: `user_${String(i).padStart(3, "0")}`,
+      role: staticRoles[i % staticRoles.length],
+      // i 为 9/18/27 时年龄为空，验证排序空值恒最后 + 区间过滤不含空值行
+      age: i % 9 === 0 ? null : 20 + ((i * 7) % 30),
+      createTime: `2024-${String((i % 12) + 1).padStart(2, "0")}-${String((i % 28) + 1).padStart(2, "0")}`,
+    });
+  }
+  return list;
+};
+const staticData = ref(genStaticData());
+
+// 静态表列配置：覆盖 4 种 filterType + 可排序列
+const staticColumns = ref([
+  { type: "seq", width: 60, title: "序号" },
+  { field: "username", title: "姓名", sortable: true, filterType: "FilterInput" },
+  {
+    field: "role",
+    title: "角色",
+    sortable: true,
+    filterType: "FilterCheckbox",
+    // 静态过滤选项：未传 requestFilterAPI 时直接使用本地 options
+    filterRender: {
+      name: "FilterCheckbox",
+      props: {
+        options: [
+          { label: "管理员", value: "admin" },
+          { label: "编辑", value: "editor" },
+          { label: "访客", value: "viewer" },
+          { label: "开发者", value: "developer" },
+        ],
+      },
+    },
+    render: (params, h) => {
+      const info = roleTextMap[params.cellValue] || {
+        label: params.cellValue || "—",
+        type: "",
+      };
+      return (
+        <ElTag type={info.type || "info"} size="small" effect="light">
+          {info.label}
+        </ElTag>
+      );
+    },
+  },
+  {
+    field: "age",
+    title: "年龄",
+    width: 120,
+    sortable: true,
+    filterType: "FilterNumberRange",
+    filterRender: { name: "FilterNumberRange", suffix: "岁" },
+  },
+  {
+    field: "createTime",
+    title: "创建时间",
+    sortable: true,
+    filterType: "FilterDateRange",
+  },
+]);
+
+// 多字段排序演示：multiple=true，依次点击多列表头排序图标即按点击优先级组合排序
+const staticSortConfig = { remote: true, multiple: true, trigger: "button" };
+// 默认按创建时间倒序：验证静态模式下 initParam 默认排序在本地生效
+const staticInitParam = { sortField: "createTime", sortOrder: "desc" };
+
+const onStaticFilterConfirm = (payload) => {
+  const active = (payload?.filters || []).filter((f) => f.active).length;
+  const sorts = (payload?.sorts || []).filter((s) => s.order).length;
+  ElMessage.success(`本地过滤确认：生效过滤 ${active} 条，排序 ${sorts} 个字段`);
+};
+
 // ========== 测试按钮 / 事件回调 ==========
 const tableProRef = ref();
 const paginationEnabled = ref(true);
@@ -474,7 +555,9 @@ const onSubmit = async () => {
 </script>
 
 <template>
-  <div style="padding: 20px; height: 100vh; box-sizing: border-box">
+  <div
+    style="padding: 20px; height: 100vh; box-sizing: border-box; overflow: auto"
+  >
     <!-- <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
       <el-tag type="success">
         演示：<b>filterType</b> 简化过滤配置 + 组件内置公共列配置
@@ -555,6 +638,7 @@ const onSubmit = async () => {
       :edit-rules="editRules"
       :valid-config="{ autoPos: false }"
       height="auto"
+      style="height: 560px"
       @checkbox-change="onCheckboxChange"
       @checkbox-all="onCheckboxChange"
       @refresh="onRefresh"
@@ -623,6 +707,31 @@ const onSubmit = async () => {
         </div>
       </template>
     </TablePro>
+
+    <!-- ========== 静态模式演示：本地过滤 + 排序（未传 requestApi）========== -->
+    <el-divider content-position="left">
+      静态模式：本地过滤 + 排序（未传 requestApi，data 全量数据由组件本地处理）
+    </el-divider>
+    <div
+      style="margin-bottom: 8px; color: #606266; font-size: 13px; line-height: 1.8"
+    >
+      验证要点：姓名（FilterInput 包含匹配）· 角色（FilterCheckbox
+      命中任一选中值）· 年龄（FilterNumberRange 数值区间）· 创建时间（FilterDateRange
+      日期区间，纯日期端点按整天）；<b>多字段排序</b>：sortConfig.multiple=true
+      依次点击多列排序图标按点击优先级组合；年龄空值恒排最后；过滤后分页 total
+      同步变化；默认 initParam 按 createTime 倒序
+    </div>
+    <TablePro
+      :columns="staticColumns"
+      :data="staticData"
+      :pagination="true"
+      :pager-config="{ pageSizes: [10, 20, 50] }"
+      :sort-config="staticSortConfig"
+      :init-param="staticInitParam"
+      height="auto"
+      style="height: 480px"
+      @filter-confirm="onStaticFilterConfirm"
+    />
   </div>
 </template>
 

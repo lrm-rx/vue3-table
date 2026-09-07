@@ -76,6 +76,8 @@ const data = ref([
 </template>
 ```
 
+> 静态模式下表头过滤与列排序均在本地完成（无后端参与），详见 [表头过滤 → 静态模式本地过滤](#静态模式本地过滤requestapi-未传时) 与 [排序 → 静态模式本地排序](#静态模式本地排序)。
+
 ### 远程数据模式
 
 ```vue
@@ -350,11 +352,49 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 - 暴露方法：`getFilterParams()`、`getFilterSortState()`、`resetAllFilter()`、`resetColumnFilter({ field })`
 - 事件：`@filter-confirm`、`@filter-reset`、`@filter-reset-all`、`@reset-filter`
 
+### 静态模式本地过滤（requestApi 未传时）
+
+未传 `requestApi`（静态数据模式）时无后端参与，组件会对传入 vxe-grid 的 `data` **全量数据**在本地执行过滤后再下发：
+
+- `FilterInput`：字段值包含关键字（忽略大小写）；关键字为空时放行全部
+- `FilterCheckbox`：字段值命中任一选中值（String 宽松比较，兼容数字/字符串混合类型）；未选中任何值时放行全部
+- `FilterDateRange`：`[start, end]` 日期区间；仅一端有值时只约束该端；纯日期字符串（`YYYY-MM-DD`，无时间部分）的端点按**整天**处理（start 当天 00:00 起 / end 当天末尾止）；无法解析为日期的字段值视为不匹配
+- `FilterNumberRange`：`[min, max]` 数值区间；仅一端有值时只约束该端；空值 / 非数值字段值视为不匹配（避免 `Number(null)=0` 误判）
+- 同列多个已确认过滤选项之间为「或」，不同列之间为「且」；过滤后分页 `total` 自动同步为过滤结果行数
+- 静态模式下 `FilterCheckbox` 的选项直接取自 `filterRender.props.options`（与远程模式不同：不会调用 `requestFilterAPI`）
+
+```vue
+<TablePro
+  :columns="columns"
+  :data="data"
+  :pagination="true"
+  :pager-config="{ pageSizes: [10, 20, 50] }"
+  :init-param="{ sortField: 'createTime', sortOrder: 'desc' }"
+  height="auto"
+  style="height: 480px"
+/>
+```
+
+> 实现位于 [src/components/tablePro/utils/localFilterSort.js](src/components/tablePro/utils/localFilterSort.js)，由 `localProcessedData` computed 驱动；过滤/排序状态在「确认」「重置」等事件上下文中收集，避免 computed 直接读取 vxe 内部状态造成响应式循环。
+
 ---
 
 ## 排序（sortConfig）
 
 默认配置：`{ remote: true, multiple: false, trigger: 'button' }`。
+
+### 静态模式本地排序
+
+未传 `requestApi` 时，组件对全量数据本地排序：
+
+- **多字段排序优先级**：按 vxe `getSortColumns()` 返回顺序依次比较（即用户点击列头的先后顺序）；是否允许多字段排序由 `sortConfig.multiple` 决定
+- **比较规则优先级**：两端均可转为数字 → 按数值比较；否则均可解析为日期 → 按时间戳比较；否则按字符串比较
+- **空值处理**：空值（`null` / `undefined` / `''`）**恒排在最后**，不随 `asc` / `desc` 翻转
+- **稳定排序**：使用 `Array.prototype.sort`（现代引擎稳定排序），比较相等的行保持原顺序
+- **与过滤的组合**：先执行过滤、后对过滤结果排序（`localProcessedData` 单次 computed 完成）
+- **`sortConfig.remote: false`** 时排序交给 vxe 原生处理，本地仅做过滤
+- **与 `initParam` 默认排序的关系**：清除用户新增的排序后，`initParam` 预设的默认排序（如 `sortField: 'createTime', sortOrder: 'desc'`）会重新生效
+- 排序激活态（`.sort--active`）由 vxe 管理，多字段排序时多列可同时显示激活态
 
 ### 远程排序参数定制（sortParamConfig）
 
