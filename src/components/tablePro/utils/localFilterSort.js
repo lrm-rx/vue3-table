@@ -164,10 +164,16 @@ export const applyLocalFilterSort = (data, filters, sorts) => {
   }));
   return [...rows].sort((rowA, rowB) => {
     for (const { field, desc } of sortFields) {
-      const cmp = compareSortValues(
-        rowA ? rowA[field] : undefined,
-        rowB ? rowB[field] : undefined,
-      );
+      const a = rowA ? rowA[field] : undefined;
+      const b = rowB ? rowB[field] : undefined;
+      // 空值恒排最后，不随 asc/desc 翻转（不受 desc 取反影响）
+      const aEmpty = isBlank(a);
+      const bEmpty = isBlank(b);
+      if (aEmpty || bEmpty) {
+        if (aEmpty && bEmpty) continue; // 都空，交由下一排序字段决定
+        return aEmpty ? 1 : -1;
+      }
+      const cmp = compareSortValues(a, b);
       if (cmp !== 0) return desc ? -cmp : cmp;
     }
     return 0;
