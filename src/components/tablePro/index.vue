@@ -12,6 +12,7 @@ import {
   provide,
   nextTick,
   onMounted,
+  watch,
   h,
   markRaw,
   toHandlerKey,
@@ -663,7 +664,12 @@ const mergedColumns = computed(() => {
     if (!typeKey || !filterDefaults[typeKey]) return
     const autoCfg = filterDefaults[typeKey] || {}
     if (col.filters == null && autoCfg.filters) {
-      col.filters = autoCfg.filters.map((o) => ({ ...o, data: o.data ? { ...o.data } : {} }))
+      // 逐列深拷贝默认 data（含 values 数组）：filterDefaults 的 data 字面量是模块级
+      // 共享的，浅拷贝会让多列引用同一数组，导致一列的默认值/重置影响其他列
+      col.filters = autoCfg.filters.map((o) => ({
+        ...o,
+        data: o.data ? cloneFilterData(o.data) : {},
+      }))
     }
     if (col.filterRender == null && autoCfg.filterRender) {
       col.filterRender = { ...autoCfg.filterRender }
@@ -1157,7 +1163,9 @@ const applyInitFiltersDefault = (ip) => {
   const sp = tableHook.searchParam.value;
   const fakeFilters = [];
   Object.keys(ip.filters).forEach((field) => {
-    const col = findColumnByField(props.columns || [], field);
+    // 从 mergedColumns 查找列：原始 props.columns 中 filterType 简写列尚未注入
+    // filterRender，直接按 field 查找会漏掉它们的默认过滤参数（首屏请求缺失）
+    const col = findColumnByField(mergedColumns.value || [], field);
     const fName = col && col.filterRender && col.filterRender.name;
     if (!fName || !FILTER_DEFAULTS[fName]) return;
     const defaultVal = ip.filters[field];
@@ -1532,7 +1540,6 @@ const handleFilterPanelClose = (column) => {
 };
 
 const onFilterVisible = (payload) => {
-  ElMessage.success("过滤面板打开");
   if (!payload || !payload.column) return;
   const column = payload.column;
   if (payload.visible) {
@@ -1913,24 +1920,20 @@ const onToolbarButtonClick = ({ code, button }) => {
 
 // ========== 单选/多选事件：收集选中数据 + 透传事件 ==========
 const onCheckboxChange = (e) => {
-  ElMessage.success("多选");
   selectionChange(e?.records || []);
   emit("checkbox-change", e);
 };
 const onCheckboxAll = (e) => {
-  ElMessage.success("全选");
   selectionChange(e?.records || []);
   emit("checkbox-all", e);
 };
 const onRadioChange = (e) => {
-  ElMessage.success("单选");
   radioChange(e?.row || null);
   emit("radio-change", e);
 };
 
 // 内置「重置过滤」工具按钮：清空所有列过滤条件并触发重置事件
-const onResetAllFilter = () => {  
-  ElMessage.success("重置所有过滤");
+const onResetAllFilter = () => {
   resetAllFilter();
   // 清除所有待恢复的快照（工具栏重置优先于面板草稿）
   Object.keys(pendingFilterSnapshots).forEach((k) => {
@@ -2222,7 +2225,6 @@ defineExpose({
   validate: (...args) => gridRef.value?.validate?.(...args),
   fullValidate: (...args) => gridRef.value?.fullValidate?.(...args),
   clearValidate: (...args) => gridRef.value?.clearValidate?.(...args),
-  scrollToRow: (...args) => gridRef.value?.scrollToRow?.(...args),
 });
 </script>
 
@@ -2273,7 +2275,6 @@ defineExpose({
     </div>
     <Pagination
       v-if="pagination"
-      :visible="pagination"
       :pager-config="currentPager"
       :before-page-change="beforePageChange"
       @change="onPagerChange"

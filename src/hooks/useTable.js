@@ -37,16 +37,11 @@ export const useTable = (
   /**
    * @description 分页查询参数(只包括分页和表格字段排序,其他排序方式可自行配置)
    * */
-  const pageParam = computed({
-    get: () => {
-      return {
-        pageNum: state.pageable.pageNum,
-        pageSize: state.pageable.pageSize
-      };
-    },
-    set: (newVal) => {
-      console.log("我是分页更新之后的值", newVal);
-    }
+  const pageParam = computed(() => {
+    return {
+      pageNum: state.pageable.pageNum,
+      pageSize: state.pageable.pageSize
+    };
   });
 
   /**
