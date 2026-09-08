@@ -131,6 +131,9 @@ const props = defineProps({
     type: Object,
     default: () => ({ currentPage: 1, pageSize: 10, total: 0 }),
   },
+  // 分页切换前置拦截（透传内部分页组件，见 Pagination.vue）：
+  // 返回 false 或 Promise reject（含 resolve 为 false）时阻止切换页码/分页大小并回滚 UI
+  beforePageChange: { type: Function, default: null },
 
   // ========== 远程数据模式相关 props ==========
   // 请求表格数据的 api（传入即进入远程模式，由 useTable 接管数据与分页）
@@ -2272,6 +2275,7 @@ defineExpose({
       v-if="pagination"
       :visible="pagination"
       :pager-config="currentPager"
+      :before-page-change="beforePageChange"
       @change="onPagerChange"
     />
   </div>

@@ -474,6 +474,25 @@ const onStaticFilterConfirm = (payload) => {
   ElMessage.success(`本地过滤确认：生效过滤 ${active} 条，排序 ${sorts} 个字段`);
 };
 
+// ========== beforePageChange 演示：分页切换前置拦截 ==========
+// 返回 false / Promise reject（含 resolve 为 false）→ 阻止本次切换并回滚 UI
+const handleBeforePageChange = async ({ type, currentPage, pageSize }) => {
+  try {
+    await ElMessageBox.confirm(
+      `确认切换到第 ${currentPage} 页，每页 ${pageSize} 条吗？`,
+      "确认切换",
+      {
+        confirmButtonText: "确认",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+    return true
+  } catch {
+    return false
+  }
+};
+
 // ========== 测试按钮 / 事件回调 ==========
 const tableProRef = ref();
 const paginationEnabled = ref(true);
@@ -637,6 +656,7 @@ const onSubmit = async () => {
       :cell-edit-props="cellEditProps"
       :edit-rules="editRules"
       :valid-config="{ autoPos: false }"
+      :before-page-change="handleBeforePageChange"
       height="auto"
       style="height: 560px"
       @checkbox-change="onCheckboxChange"
@@ -719,7 +739,9 @@ const onSubmit = async () => {
       命中任一选中值）· 年龄（FilterNumberRange 数值区间）· 创建时间（FilterDateRange
       日期区间，纯日期端点按整天）；<b>多字段排序</b>：sortConfig.multiple=true
       依次点击多列排序图标按点击优先级组合；年龄空值恒排最后；过滤后分页 total
-      同步变化；默认 initParam 按 createTime 倒序
+      同步变化；默认 initParam 按 createTime 倒序；<b>beforePageChange
+      拦截演示</b>：切到每页 50 条（同步 false 回滚）与跳转第 4
+      页（Promise reject）会被阻止，其余分页操作正常放行
     </div>
     <TablePro
       :columns="staticColumns"
@@ -728,6 +750,7 @@ const onSubmit = async () => {
       :pager-config="{ pageSizes: [10, 20, 50] }"
       :sort-config="staticSortConfig"
       :init-param="staticInitParam"
+      :before-page-change="handleBeforePageChange"
       height="auto"
       style="height: 480px"
       @filter-confirm="onStaticFilterConfirm"
