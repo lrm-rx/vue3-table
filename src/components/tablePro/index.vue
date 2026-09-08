@@ -326,137 +326,6 @@ const tableHook = useTable(
     typeof props.requestError === "function" && props.requestError(...args),
 );
 
-// ========== 过滤默认值构建工具 ==========
-// 将 initParam.filters 中的默认值转换为对应过滤类型的 data 结构，供各处复用
-const buildFilterDataFromDefault = (name, defaultVal) => {
-  switch (name) {
-    case "FilterInput":
-      return { value: defaultVal == null ? "" : String(defaultVal) };
-    case "FilterCheckbox":
-      return {
-        values: Array.isArray(defaultVal)
-          ? [...defaultVal]
-          : defaultVal == null
-            ? []
-            : [defaultVal],
-        search: "",
-      };
-    case "FilterDateRange":
-    case "FilterNumberRange": {
-      // 区间类默认值：数组 [first, second] 或旧对象格式 { start, end } / { min, max }
-      let a = null;
-      let b = null;
-      if (Array.isArray(defaultVal)) {
-        a = defaultVal[0];
-        b = defaultVal[1];
-      } else if (defaultVal && typeof defaultVal === "object") {
-        a = defaultVal.start != null ? defaultVal.start : defaultVal.min;
-        b = defaultVal.end != null ? defaultVal.end : defaultVal.max;
-      }
-      return {
-        values: [
-          a != null && a !== "" ? a : null,
-          b != null && b !== "" ? b : null,
-        ],
-      };
-    }
-    default:
-      return null;
-  }
-};
-
-// 获取指定列的默认过滤 data：优先用 initParam.filters，否则回退 FILTER_DEFAULTS
-const getColumnDefaultData = (field, filterRenderName) => {
-  const ip = props.initParam || {};
-  const defaultVal = ip.filters && ip.filters[field];
-  if (defaultVal != null) {
-    const data = buildFilterDataFromDefault(filterRenderName, defaultVal);
-    if (data) return data;
-  }
-  const fac = FILTER_DEFAULTS[filterRenderName];
-  return fac ? fac() : null;
-};
-
-// ========== Element Plus 组件映射（editRender.name -> 组件 + 选项包裹配置）==========
-// 模块作用域常量：mergedColumns computed 内复用，避免每次 recompute 重建
-const DEFAULT_FILTER_CONFIG = {
-  FilterInput:       { filters: [{ data: { value: '' } }],                 filterRender: { name: 'FilterInput' } },
-  FilterCheckbox:    { filters: [{ data: { values: [], search: '' } }],   filterRender: { name: 'FilterCheckbox' } },
-  FilterDateRange:   { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterDateRange' } },
-  FilterNumberRange: { filters: [{ data: { values: [null, null] } }],    filterRender: { name: 'FilterNumberRange' } },
-}
-
-const EL_EDIT_MAP = {
-  ElInput:        { comp: ElInput },
-  ElInputNumber:  { comp: ElInputNumber },
-  ElDatePicker:   { comp: ElDatePicker },
-  ElTimePicker:   { comp: ElTimePicker },
-  ElSwitch:       { comp: ElSwitch },
-  ElRate:         { comp: ElRate },
-  ElSelect:       { comp: ElSelect,       wrap: 'ElOption' },
-  ElRadio:        { comp: ElRadioGroup,   wrap: 'ElRadio' },
-  ElRadioButton:  { comp: ElRadioGroup,   wrap: 'ElRadioButton' },
-  ElCheckbox:     { comp: ElCheckboxGroup,wrap: 'ElCheckbox' },
-  ElCheckboxButton:{ comp: ElCheckboxGroup,wrap:'ElCheckboxButton' },
-  // 自定义编辑控件（非 Element Plus 原生）
-  TextareaPopoverEdit: { comp: TextareaPopoverEdit },
-}
-const WRAP_COMPONENTS = { ElOption, ElRadio, ElRadioButton, ElCheckbox, ElCheckboxButton }
-
-// 读取某列的编辑选项数组：editRender.props.options 优先于 props.editOptions[field]
-const resolveEditOptions = (field, editRender) => {
-  if (editRender && Array.isArray(editRender.options)) return editRender.options
-  const eo = props.editOptions || {}
-  return Array.isArray(eo[field]) ? eo[field] : []
-}
-// 合并编辑控件 props：editRender.props + editRender.props.props + cellEditProps[field] + v-model
-const mergeEditCompProps = (field, editRender, extra = {}) => {
-  const erProps = (editRender && editRender.props) || {}
-  const innerProps = erProps.props || {}
-  const cep = props.cellEditProps || {}
-  const commonProps = cep[field] || {}
-  return {
-    ...erProps,              // editRender.props 顶层（如 activeValue / type）
-    ...innerProps,           // editRender.props.props（标准 props 容器）
-    ...commonProps,          // 外部 :cell-edit-props 注入（优先级更高）
-    ...extra,                // v-model 等基础绑定（优先级最高）
-  }
-}
-
-// ========== 列查找/遍历工具（支持表头分组 children 递归）==========
-const findColumnByField = (cols, field) => {
-  if (!Array.isArray(cols) || !field) return undefined
-  for (const col of cols) {
-    if (!col || typeof col !== 'object') continue
-    if (col.field === field) return col
-    if (Array.isArray(col.children) && col.children.length) {
-      const hit = findColumnByField(col.children, field)
-      if (hit) return hit
-    }
-  }
-  return undefined
-}
-const forEachLeafColumn = (cols, fn) => {
-  ;(cols || []).forEach((col) => {
-    if (!col || typeof col !== 'object') return
-    if (Array.isArray(col.children) && col.children.length) {
-      forEachLeafColumn(col.children, fn)
-    } else {
-      fn(col)
-    }
-  })
-}
-
-// slots 渲染错误兜底：捕获用户 render/headerRender/editRender 内部异常，避免整表崩塌
-const renderSlotError = (e) =>
-  h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
-
-// 读取列自定义参数 key：取 col.params.defParamKey，兜底 field
-const resolveParamKey = (col, fallbackField) => {
-  if (!col) return fallbackField
-  return (col.params && col.params.defParamKey) || col.field || fallbackField
-}
-
 // 构建 field → paramKey 映射（vxe-grid getColumns() 不保留自定义 params 属性，需从 props.columns 查找）
 // 复用于 getFilterSortState / collectCheckboxFilterParams，避免重复遍历
 const buildFieldToParamKeyMap = () => {
@@ -467,369 +336,24 @@ const buildFieldToParamKeyMap = () => {
   return m;
 };
 
-const mergedColumns = computed(() => {
-  const defCfg = props.defaultColumnConfig || {}
-  const { filterDefaults: defFilterDefaults, ...defColumnCommon } = defCfg
-
-  const filterDefaults = { ...DEFAULT_FILTER_CONFIG, ...(defFilterDefaults || {}) }
-
-  const ip = props.initParam || {}
-  const initFilters = ip.filters && typeof ip.filters === 'object' ? ip.filters : {}
-
-  // 外部插槽集合，用于支持 render/headerRender 字符串引用具名插槽
-  const externalSlots = slots || {}
-
-  // 应用 headerRender → slots.header（叶子列与父分组列共用）
-  // 优先级：用户显式 slots.header > col.headerRender。支持函数式 JSX 或字符串引用具名插槽
-  const applyHeaderRender = (col, field) => {
-    if (col.slots.header) return
-    if (typeof col.headerRender === 'function') {
-      const userHeader = col.headerRender
-      col.slots.header = markRaw((scope) => {
-        try {
-          const params = {
-            column: col,
-            field,
-            title: col.title,
-            $table: scope.$table,
-            rowIndex: scope.$rowIndex,
-            columnIndex: scope.$columnIndex,
-          }
-          return userHeader(params, h)
-        } catch (e) {
-          return renderSlotError(e)
-        }
-      })
-    } else if (typeof col.headerRender === 'string') {
-      const slotName = col.headerRender
-      if (typeof externalSlots[slotName] === 'function') {
-        col.slots.header = slotName
-      }
-    }
-  }
-
-  // ---------- 叶子列处理：步骤拆分辅助函数 ----------
-  // 1) 公共列属性合并（仅对非特殊列生效，避免 checkbox/seq 的居中、showOverflow 干扰）
-  const applyCommonColumnProps = (col, rawCol, isSpecialCol) => {
-    if (!isSpecialCol && Object.keys(defColumnCommon).length) {
-      const merged = { ...defColumnCommon, ...col }
-      // 列 slots 在展开 defColumnCommon 时可能被覆盖，重新恢复
-      merged.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      return merged
-    }
-    return col
-  }
-
-  // 1a) 对齐默认值与一致性：列显式配置 > defaultColumnConfig > 组件默认 'left'
-  const applyColumnAlign = (col, colType) => {
-    if (colType === 'checkbox' || colType === 'seq') {
-      if (col.align == null) col.align = 'center'
-      if (col.headerAlign == null) col.headerAlign = 'center'
-    } else if (col.headerAlign != null && col.align == null) {
-      col.align = col.headerAlign
-    } else if (col.align == null && col.headerAlign == null) {
-      col.align = 'left'
-      col.headerAlign = 'left'
-    }
-  }
-
-  // 2) 过滤配置自动注入：支持两种等价写法
-  //    · filterType: 'FilterCheckbox'（简写，自动注入 filters + filterRender）
-  //    · filterRender: { name: 'FilterCheckbox' }（已有 name 时可省略 filterType，
-  //      按 name 自动注入 filters，filterRender 保留用户配置）
-  const applyFilterTypeConfig = (col) => {
-    const typeKey = col.filterType || (col.filterRender && col.filterRender.name)
-    if (!typeKey || !filterDefaults[typeKey]) return
-    const autoCfg = filterDefaults[typeKey] || {}
-    if (col.filters == null && autoCfg.filters) {
-      // 逐列深拷贝默认 data（含 values 数组）：filterDefaults 的 data 字面量是模块级
-      // 共享的，浅拷贝会让多列引用同一数组，导致一列的默认值/重置影响其他列
-      col.filters = autoCfg.filters.map((o) => ({
-        ...o,
-        data: o.data ? cloneFilterData(o.data) : {},
-      }))
-    }
-    if (col.filterRender == null && autoCfg.filterRender) {
-      col.filterRender = { ...autoCfg.filterRender }
-    }
-  }
-
-  // 3) render → slots.default（支持函数式 JSX 或字符串引用外部具名插槽）
-  const applyRenderSlot = (col, field) => {
-    if (col.slots.default) return
-    if (typeof col.render === 'function') {
-      const userRender = col.render
-      col.slots.default = markRaw((scope) => {
-        try {
-          const params = {
-            row: scope.row,
-            column: col,
-            field,
-            cellValue: field ? scope.row && scope.row[field] : undefined,
-            rowIndex: scope.$rowIndex,
-            columnIndex: scope.$columnIndex,
-            $table: scope.$table,
-          }
-          return userRender(params, h)
-        } catch (e) {
-          return renderSlotError(e)
-        }
-      })
-    } else if (typeof col.render === 'string') {
-      const slotName = col.render
-      if (typeof externalSlots[slotName] === 'function') {
-        col.slots.default = slotName
-      }
-    }
-  }
-
-  // 4a) 函数式 editRender → slots.edit（JSX 渲染）
-  const applyFunctionEditRender = (col, field, editEnabled) => {
-    if (editEnabled) {
-      if (col.editable == null) col.editable = true
-      if (!col.slots.edit) {
-        const userEdit = col.editRender
-        col.slots.edit = markRaw((scope) => {
-          try {
-            const row = scope.row
-            const originalVal = field != null && row ? row[field] : undefined
-            const params = {
-              row,
-              column: col,
-              field,
-              cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
-              rowIndex: scope.$rowIndex,
-              columnIndex: scope.$columnIndex,
-              $table: scope.$table,
-            }
-            return userEdit(params, h)
-          } catch (e) {
-            return renderSlotError(e)
-          }
-        })
-      }
-    }
-    // 函数式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
-    delete col.editRender
-  }
-
-  // 4b) 字符串式 editRender → 引用外部具名插槽
-  const applyStringEditRender = (col, editEnabled) => {
-    if (editEnabled) {
-      if (col.editable == null) col.editable = true
-      if (!col.slots.edit) {
-        const slotName = col.editRender
-        if (typeof externalSlots[slotName] === 'function') {
-          col.slots.edit = slotName
-        }
-      }
-    }
-    // 字符串式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
-    delete col.editRender
-  }
-
-  // 4c-1) 构建 Select/Radio/Checkbox 子项（options → VNode 数组）
-  const buildWrapOptionChildren = (options, field, wrapName) => {
-    const WrapComp = WRAP_COMPONENTS[wrapName]
-    return options.map((opt, idx) => {
-      const labelText = opt.label != null ? opt.label : opt.value
-      const optValue = opt.value != null ? opt.value : opt.label
-      const key = `${field}-opt-${idx}-${String(optValue)}`
-      const wrapProps = { key }
-      if (wrapName === 'ElOption') {
-        // ElOption：value + label
-        wrapProps.label = labelText
-        wrapProps.value = optValue
-      } else {
-        // ElRadio/ElCheckbox 子项：label 是 group 的选中绑定值
-        wrapProps.label = optValue
-        wrapProps.value = optValue
-      }
-      if (opt.disabled != null) wrapProps.disabled = !!opt.disabled
-      return h(WrapComp, wrapProps, () => labelText)
-    })
-  }
-
-  // 弹出面板类编辑控件（下拉/日期/时间面板 teleport 到 body，点击面板时 vxe 会判定为"编辑单元格外部"而退出编辑态）
-  // 给 popper 加上 vxe-table--ignore-clear 类，vxe 全局 mousedown 处理器检测到该类会跳过清除编辑态
-  const POPUP_EDIT_NAMES = new Set(['ElSelect', 'ElDatePicker', 'ElTimePicker'])
-  const IGNORE_CLEAR_CLASS = 'vxe-table--ignore-clear'
-  // 合并 popperClass：用户自定义 + ignore-clear（确保点击下拉/日期面板选项时编辑态不被清除）
-  const resolvePopperClass = (erName, existing) => {
-    if (!POPUP_EDIT_NAMES.has(erName)) return existing
-    const parts = [IGNORE_CLEAR_CLASS]
-    if (existing) parts.push(existing)
-    return parts.join(' ')
-  }
-
-  // 4c-2) 对象配置式 editRender：构建 slots.edit 渲染函数（Input 类无子项 / Select·Radio·Checkbox 渲染 options）
-  const buildObjectEditSlotFn = (col, field, Comp, wrapName) => markRaw((scope) => {
-    const row = scope.row
-    const originalVal = field != null && row ? row[field] : undefined
-    const currentVal = scope.cellValue != null ? scope.cellValue : originalVal
-    // 从全局编辑态取本地值（edit-actived 初始化），避免在 slots 函数里新建 ref/watch
-    const stateKey = resolveEditStateKey(row, field)
-    if (!(stateKey in editLocalState)) editLocalState[stateKey] = currentVal
-    const erName = col.editRender && col.editRender.name
-    const extra = {
-      modelValue: editLocalState[stateKey],
-      'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
-      // 透传列标题，供自定义编辑组件（如 TextareaPopoverEdit）在头部显示
-      title: col.title,
-      // 透传 vxe 表格实例（scope.$table），供自定义编辑组件调用 clearActive 等方法退出编辑态
-      table: markRaw(scope.$table),
-    }
-    // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
-    const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
-    if (popperCls != null) extra.popperClass = popperCls
-    // TextareaPopoverEdit 三按钮事件透传：携带 { row, column, field, value } 抛给 tablePro
-    if (erName === 'TextareaPopoverEdit') {
-      const buildPayload = (val) => ({ row, column: scope.column, field, value: val })
-      extra.onClear = (e) => emit('textarea-clear', buildPayload(e?.value ?? editLocalState[stateKey]))
-      extra.onCancel = (e) => emit('textarea-cancel', buildPayload(e?.value ?? editLocalState[stateKey]))
-      extra.onConfirm = (e) => emit('textarea-confirm', buildPayload(e?.value ?? editLocalState[stateKey]))
-    }
-    const bindProps = mergeEditCompProps(field, col.editRender, extra)
-    // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
-
-    // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
-    const onMountedHook = autoOpenOnMounted(erName)
-    if (onMountedHook) bindProps.onVnodeMounted = onMountedHook
-
-    if (!wrapName) {
-      // Input/InputNumber/DatePicker/TimePicker/Switch/Rate：无子项
-      return h(Comp, bindProps)
-    }
-    // Select/Radio/Checkbox：渲染 options
-    const colEditRender = col.editRender || {}
-    const options = resolveEditOptions(field, colEditRender)
-    const children = buildWrapOptionChildren(options, field, wrapName)
-    return h(Comp, bindProps, { default: () => children })
-  })
-
-  // 4c-3) 对象配置式 editRender 时，为非编辑态构建 label 回退（基于 editOptions 映射）
-  // 注：editEnabled=false 时也生效，确保不可编辑状态下仍按 options 显示 label
-  const buildEditLabelFallback = (col, field) => markRaw((scope) => {
-    const raw = field != null && scope.row ? scope.row[field] : undefined
-    const colEditRender = col.editRender || {}
-    const options = resolveEditOptions(field, colEditRender)
-    if (options.length) {
-      const findLabel = (v) => {
-        const hit = options.find((o) => o.value === v || String(o.value) === String(v))
-        return hit ? hit.label : (v == null ? '' : String(v))
-      }
-      if (Array.isArray(raw)) {
-        return h(
-          'span',
-          raw.map((v, i) => h('span', { key: i, style: i ? 'margin-left:6px' : '' }, findLabel(v)))
-        )
-      }
-      return h('span', findLabel(raw))
-    }
-    return h('span', raw == null ? '' : String(raw))
-  })
-
-  // 4c) 对象配置式 editRender → editable + slots.edit + label 回退
-  const applyObjectEditRender = (col, field, editEnabled) => {
-    if (editEnabled && col.editable == null) col.editable = true
-    const erName = col.editRender.name
-    const mapEntry = EL_EDIT_MAP[erName]
-    if (!mapEntry) return
-
-    const Comp = mapEntry.comp
-    const wrapName = mapEntry.wrap
-    if (editEnabled && !col.slots.edit) {
-      // markRaw 避免 Vue 深度劫持造成渲染循环或状态丢失
-      col.slots.edit = buildObjectEditSlotFn(col, field, Comp, wrapName)
-    } else if (editEnabled && typeof col.slots.edit === 'string') {
-      // 用户写 slots.edit: 'edit_xxx' 字符串时直接交给外部具名插槽
-    }
-    // 未提供 render/slots.default 时，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
-    if (!col.slots.default) {
-      col.slots.default = buildEditLabelFallback(col, field)
-    }
-  }
-
-  // 4) editRender → editable:true + slots.edit（分流：函数式 / 字符串式 / 对象配置式）
-  // 优先级：用户显式 slots.edit > editRender（详见 README）
-  // props.editable=false 时（权限控制）：不设置 col.editable / 不构建 slots.edit，
-  //   点击不进入编辑态、表头无编辑图标；对象式的 slots.default label 回退仍生效（仅显示）
-  const applyEditRenderSlot = (col, field) => {
-    if (!col.editRender) return
-    const editEnabled = props.editable !== false
-    if (typeof col.editRender === 'function') {
-      applyFunctionEditRender(col, field, editEnabled)
-    } else if (typeof col.editRender === 'string') {
-      applyStringEditRender(col, editEnabled)
-    } else if (col.editRender.name) {
-      applyObjectEditRender(col, field, editEnabled)
-    }
-  }
-
-  // 5) 默认过滤值注入（initParam.filters → col.filters[0].data）
-  const applyDefaultFilterValue = (col, field) => {
-    if (!col.filters || !col.filters.length || !col.filterRender) return
-    const fName = col.filterRender.name
-    if (!fName || !FILTER_DEFAULTS[fName]) return
-    const defaultVal = initFilters[field]
-    if (defaultVal == null) return
-    const data = buildFilterDataFromDefault(fName, defaultVal)
-    if (!data) return
-    col.filters = col.filters.map((opt, i) =>
-      i === 0 ? { ...opt, data: { ...data }, checked: isFilterActive(fName, data) } : { ...opt },
-    )
-  }
-
-  // 叶子列处理总入口：按步骤调用各辅助函数
-  const transformLeafColumn = (rawCol) => {
-    if (!rawCol || typeof rawCol !== 'object') return rawCol
-    const colType = rawCol.type
-    const isSpecialCol = !!(colType && /^(checkbox|seq|radio|expand)$/.test(colType))
-
-    let col = { ...rawCol }
-    // slots 深拷贝一层，避免污染 rawCol
-    col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-
-    // 1) 公共列属性
-    col = applyCommonColumnProps(col, rawCol, isSpecialCol)
-    // 1a) 对齐默认值与一致性
-    applyColumnAlign(col, colType)
-    // 2) filterType 自动注入过滤配置
-    applyFilterTypeConfig(col)
-    // 3) render → slots.default
-    const field = col.field || ''
-    applyRenderSlot(col, field)
-    // 3a) headerRender → slots.header
-    applyHeaderRender(col, field)
-    // 4) editRender → editable:true + slots.edit
-    applyEditRenderSlot(col, field)
-    // 5) 默认过滤值注入
-    applyDefaultFilterValue(col, field)
-
-    return col
-  }
-
-  // 父分组列：只递归子列 + 应用 headerRender，跳过数据列专属逻辑避免错误注入
-  // params.hideColumn === true 的列完全不渲染（区别于 visible:false 可在个性化配置中开启）
-  const transformColumn = (rawCol) => {
-    if (!rawCol || typeof rawCol !== 'object') return rawCol
-    // hideColumn=true：直接过滤，不进入 vxe-grid columns，个性化配置也无法开启
-    if (rawCol.params && rawCol.params.hideColumn === true) return null
-    if (Array.isArray(rawCol.children) && rawCol.children.length) {
-      const col = { ...rawCol }
-      col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      col.children = rawCol.children.map(transformColumn).filter(Boolean)
-      // 父分组列：所有子列都被 hideColumn 隐藏时，父列也不渲染
-      if (col.children.length === 0) return null
-      // 父分组列也支持 headerRender（自定义表头渲染）
-      applyHeaderRender(col, col.field || '')
-      return col
-    }
-    return transformLeafColumn(rawCol)
-  }
-
-  return (props.columns || []).map(transformColumn).filter(Boolean)
-})
+// ========== 合并列配置（逻辑见 utils/columns.js）==========
+// 列转换纯函数封装在 buildColumns：render/headerRender/editRender/filterType 简写
+// 等均在构建期展开；hideColumn 列在此过滤。响应式输入（props/插槽/编辑态）每次
+// recompute 时作为 config 传入，依赖追踪与原先在 computed 内直接读 props 等价。
+const mergedColumns = computed(() =>
+  buildColumns({
+    columns: props.columns,
+    defaultColumnConfig: props.defaultColumnConfig,
+    initParam: props.initParam,
+    slots,
+    editable: props.editable,
+    editOptions: props.editOptions,
+    cellEditProps: props.cellEditProps,
+    editLocalState,
+    resolveEditStateKey,
+    emit,
+  }),
+);
 
 // ========== 函数式/字符串式 editRender 标记 ==========
 // 这两种形式直接绑 row[field]，onEditClosed 不能再用 editLocalState 覆盖（会回滚 + cell-edit-change 参数颠倒）
@@ -1028,7 +552,10 @@ const applyInitSortDefault = (sortFields, sortOrders) => {
     field: f,
     order: sortOrders[i] || "asc",
   }));
-  const { params: sortParams, paramKeys } = sortStateToParams(initSorts);
+  const { params: sortParams, paramKeys } = sortStateToParams(
+    initSorts,
+    props.sortParamConfig,
+  );
   Object.keys(sortParams).forEach((k) => {
     sp[k] = sortParams[k];
   });
@@ -1147,271 +674,43 @@ watch(
   },
 );
 
-// ========== 过滤 popover 二次定位 ==========
-// vxe transfer=true 下 filter 面板 clamp 时 viewport/document 坐标混用，水平滚动时首尾列弹窗会超出视口
-// 每次 filter-visible 后基于视口尺寸二次 clamp，箭头始终指向触发列
-
-// 1. 获取触发元素中心 X（document 坐标系），优先 .vxe-filter--btn，回退列中心
-const getFilterTriggerCenterX = (column, fallbackX) => {
-  if (!column || !column.id) return fallbackX;
-  const colEl = document.querySelector(`.vxe-header--column.${column.id}`);
-  if (!colEl) return fallbackX;
-  const docScrollLeft =
-    document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-  const filterBtnEl = colEl.querySelector(".vxe-filter--btn");
-  const targetEl = filterBtnEl || colEl;
-  const targetRect = targetEl.getBoundingClientRect();
-  return docScrollLeft + targetRect.left + targetRect.width / 2;
-};
-
-// 3. 水平边界 clamp：保证弹窗整体在视口内（宽度溢出时设 maxWidth）
-const clampFilterPanelHorizontal = (panel, left, vw, pw, margin) => {
-  const docScrollLeft =
-    document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-  const minLeft = docScrollLeft + margin;
-  const maxLeft = docScrollLeft + vw - pw - margin;
-  if (pw < vw - margin * 2) {
-    if (left < minLeft) left = minLeft;
-    else if (left > maxLeft) left = maxLeft;
-  } else {
-    left = minLeft;
-    panel.style.maxWidth = `${vw - margin * 2}px`;
-  }
-  return left;
-};
-
-// 4. 垂直边界 clamp（含箭头空间）
-const clampFilterPanelVertical = (top, vh, ph, margin) => {
-  const docScrollTop =
-    document.documentElement.scrollTop || document.body.scrollTop || 0;
-  const minTop = docScrollTop + margin;
-  const maxTop = docScrollTop + vh - ph - margin;
-  if (ph < vh - margin * 2) {
-    if (top < minTop) top = minTop;
-    else if (top > maxTop) top = maxTop;
-  }
-  return top;
-};
-
-// 5. 计算箭头水平偏移（相对 panel 左上角），clamp 留 12px 防止露出圆角外
-const setFilterArrowOffset = (panel, triggerCenterX, left, pw, arrowSize) => {
-  const arrowHalf = arrowSize; // 三角形底边一半
-  let arrowLeft = triggerCenterX - left;
-  const arrowMin = 12 + arrowHalf;
-  const arrowMax = pw - 12 - arrowHalf;
-  if (arrowLeft < arrowMin) arrowLeft = arrowMin;
-  else if (arrowLeft > arrowMax) arrowLeft = arrowMax;
-  // 通过 CSS 变量传给 ::before / ::after 伪元素
-  panel.style.setProperty("--vxe-filter-arrow-left", `${arrowLeft}px`);
-};
-
-// 同步执行面板定位的核心逻辑（供 clampFilterPanelToViewport 与滚动重定位复用）
-// recalcFromTrigger=true 时基于触发元素当前位置重新计算 top（滚动场景），
-// false 时仅基于面板已有 top 进行 clamp（初次打开场景，vxe 已定位过）
-const doClampFilterPanel = (column, recalcFromTrigger = false) => {
-  const panel = document.querySelector(
-    ".vxe-table--filter-wrapper.is--active",
-  );
-  if (!panel) return;
-  const margin = 16;
-  // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
-  const ARROW_SIZE = 8;
-  const ARROW_GAP = 2;
-  const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
-
-  const vw = document.documentElement.clientWidth || window.innerWidth;
-  const vh = document.documentElement.clientHeight || window.innerHeight;
-  const pw = panel.offsetWidth;
-  const ph = panel.offsetHeight;
-  let left = parseFloat(panel.style.left) || 0;
-  let top = parseFloat(panel.style.top) || 0;
-
-  if (recalcFromTrigger) {
-    // 滚动重定位：基于触发元素当前 viewport 位置重新计算 top（document 坐标系）
-    // 确保面板始终紧跟触发元素，不会因外层滚动容器滚动而偏移
-    const colEl =
-      column && column.id
-        ? document.querySelector(`.vxe-header--column.${column.id}`)
-        : null;
-    const filterBtnEl = colEl?.querySelector(".vxe-filter--btn");
-    const triggerEl = filterBtnEl || colEl;
-    if (triggerEl) {
-      const rect = triggerEl.getBoundingClientRect();
-      const docScrollTop =
-        document.documentElement.scrollTop || document.body.scrollTop || 0;
-      const docScrollLeft =
-        document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-      // 面板顶部 = 触发元素底部 + 箭头空间（document 坐标）
-      top = docScrollTop + rect.bottom + ARROW_EXTRA;
-      // 面板左对齐触发元素中心
-      const triggerCenterX = docScrollLeft + rect.left + rect.width / 2;
-      left = triggerCenterX - pw / 2;
-      // 水平边界
-      left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-      // 垂直边界
-      top = clampFilterPanelVertical(top, vh, ph, margin);
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
-      // 箭头水平偏移
-      setFilterArrowOffset(
-        panel,
-        triggerCenterX,
-        left,
-        pw,
-        ARROW_SIZE,
-      );
-      // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
-      takeRepositionBaseline(panel);
-      return;
-    }
-    // 触发元素找不到则回退到 clamp 逻辑
-  }
-
-  // 初次打开 clamp 逻辑：基于 vxe 已设置的 top/left 进行边界修正
-  // 1. 获取触发元素中心 X
-  const triggerCenterX = getFilterTriggerCenterX(column, left + pw / 2);
-  // 2. 面板整体向下挪 ARROW_EXTRA，给箭头留出表头下方到面板上方的可见空间
-  //    否则伪元素 translate(-100%) 会被表头白色背景挡住
-  top += ARROW_EXTRA;
-  // 3. 水平边界
-  left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-  // 4. 垂直边界
-  top = clampFilterPanelVertical(top, vh, ph, margin);
-  panel.style.left = `${left}px`;
-  panel.style.top = `${top}px`;
-  // 5. 箭头水平偏移
-  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
-  // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
-  takeRepositionBaseline(panel);
-};
-
-// clampFilterPanelToViewport 总入口：nextTick + setTimeout 内按步骤执行
-const clampFilterPanelToViewport = async (column) => {
-  await nextTick();
-  // setTimeout 让 vxe 内部完成 filterStore.style 写入后再覆盖
-  setTimeout(() => doClampFilterPanel(column, false), 0);
-};
-
-// ========== 滚动时重新定位过滤面板（不关闭面板）==========
-// vxe transfer=true 下面板为 position:absolute 定位到 body；
-// 当表格位于外层可滚动容器中、或页面发生滚动时，面板不会跟随触发元素，
-// 造成视觉偏移。此处使用「基准快照 + delta 增量」方法：
-//   - 面板打开 / clamp 后，记录当前 left/top 以及页面 scrollTop/scrollLeft。
-//   - 之后的每一次外层滚动，按 scrollTop/Left 的 delta 平移 left/top。
-//   - 这样垂直滚动时只改动 top（delta），不重算 left，避免因 viewport/面板宽度等
-//     微小波动（滚动条 gutter 出现、clamp 边界浮点）造成水平方向的偏移。
-//
-// 内部 scroll 跳过：FilterCheckbox 列表的 scroll 不影响外层位置，直接 return。
-let activeFilterColumn = null;
-let repositionRafId = null;
-// 基准快照：记录面板首次 clamp 完成 / 重算整量 时的 left/top 与页面滚动坐标
-let filterReposBaseline = null;
-const takeRepositionBaseline = (panel) => {
-  if (!panel) return;
-  filterReposBaseline = {
-    left: parseFloat(panel.style.left) || 0,
-    top: parseFloat(panel.style.top) || 0,
-    docScrollLeft: document.documentElement.scrollLeft || document.body.scrollLeft || 0,
-    docScrollTop: document.documentElement.scrollTop || document.body.scrollTop || 0,
-  };
-};
-const repositionActiveFilterPanel = (evt) => {
-  if (!activeFilterColumn) return;
-  if (repositionRafId != null) return;
-  // 若 scroll 事件目标在当前激活的 filter panel 内部（例如 FilterCheckbox 选项列表滚动），
-  // 则跳过重定位：面板本身不需要移动。
-  if (evt && evt.target instanceof Node) {
-    const panelEl = document.querySelector(".vxe-table--filter-wrapper.is--active");
-    if (panelEl && panelEl.contains(evt.target)) return;
-  }
-  repositionRafId = requestAnimationFrame(() => {
-    repositionRafId = null;
-    const panel = document.querySelector(".vxe-table--filter-wrapper.is--active");
-    if (!panel) return;
-    // 优先走「基准快照 + delta 增量」，只改需要改的方向，避免引入不必要的偏移
-    if (filterReposBaseline) {
-      const scrollLeftNow = document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-      const scrollTopNow = document.documentElement.scrollTop || document.body.scrollTop || 0;
-      const dLeft = scrollLeftNow - filterReposBaseline.docScrollLeft;
-      const dTop = scrollTopNow - filterReposBaseline.docScrollTop;
-      if (dLeft === 0 && dTop === 0) return;
-      const margin = 16;
-      const vw = document.documentElement.clientWidth || window.innerWidth;
-      const vh = document.documentElement.clientHeight || window.innerHeight;
-      const pw = panel.offsetWidth;
-      const ph = panel.offsetHeight;
-      // 只在对应方向有滚动时，才更新该方向坐标
-      let left = filterReposBaseline.left;
-      let top = filterReposBaseline.top;
-      if (dLeft !== 0) {
-        left = clampFilterPanelHorizontal(panel, filterReposBaseline.left + dLeft, vw, pw, margin);
-      }
-      if (dTop !== 0) {
-        top = clampFilterPanelVertical(filterReposBaseline.top + dTop, vh, ph, margin);
-      }
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
-      return;
-    }
-    // 无基准快照（极少出现）时回退到按触发元素整量重算
-    doClampFilterPanel(activeFilterColumn, true);
-  });
-};
-
-// 1) window capture 阶段捕获页面外层滚动 + 所有嵌套滚动容器的 scroll 事件
-//    （scroll 事件不冒泡，需 capture 才能在 window 层捕获嵌套元素的滚动）
-useEventListener(window, "scroll", repositionActiveFilterPanel, {
-  capture: true,
-});
-// 2) 直接监听表格 body wrapper 的 scroll 事件（内层滚动，双保险）
-//    bodyWrapperEl 在 gridRef 挂载后动态计算
-const filterBodyWrapperEl = computed(() => {
-  const el = gridRef.value?.$el;
-  if (!el || !el.querySelector) return null;
-  return (
-    el.querySelector(".vxe-table--body-wrapper") ||
-    el.querySelector(".vxe-table--body") ||
-    null
-  );
-});
-useEventListener(filterBodyWrapperEl, "scroll", repositionActiveFilterPanel);
+// ========== 过滤 popover 二次定位 + 滚动跟随 ==========
+// vxe transfer=true 下面板 clamp 时 viewport/document 坐标混用，水平滚动时首尾列
+// 弹窗会超出视口；且面板 absolute 定位到 body 后不随外层滚动容器滚动，需
+// 「基准快照 + delta 增量」方式跟随。实现已抽离至 composables/useFilterPanelPosition.js
+// （仅依赖 gridRef，内部注册 window / body wrapper 滚动监听）。
+const { openFilterPanel, closeFilterPanel } = useFilterPanelPosition(gridRef);
 
 // ========== 过滤面板 visible 处理 ==========
-// 面板打开：恢复其他列草稿 + 保存当前列快照 + bump 计数器 + clamp 面板位置
+// 面板打开：恢复其他列草稿 + 保存当前列快照 + bump 计数器 + 二次定位面板
 const handleFilterPanelOpen = (column) => {
   // 0) 恢复其他列的未确认快照（切换列时清除草稿，与 vxe-table 过滤逻辑一致）
   const $table = gridRef.value;
   if ($table && $table.getColumns) {
     $table.getColumns().forEach((col) => {
       if (col.id !== column.id && pendingFilterSnapshots[col.id]) {
-        restoreFilterSnapshot(col);
+        restoreFilterSnapshot(pendingFilterSnapshots, col);
       }
     });
   }
   // 1) 保存当前列快照（用于关闭未确认时恢复）
-  saveFilterSnapshot(column);
+  saveFilterSnapshot(pendingFilterSnapshots, column);
   // 2) bump 计数器强制 FilterCheckbox 重新拉取（避免复用串列 / 级联数据陈旧）
   const field = column.field;
   if (field) bumpFilterRefetchCounter(field);
-  // 3) 记录当前打开的列，供滚动重定位使用
-  activeFilterColumn = column;
-  clampFilterPanelToViewport(column);
+  // 3) 记录当前打开的列并二次 clamp 面板位置（滚动跟随由 composable 内部接管）
+  openFilterPanel(column);
 };
 
 // 面板关闭：若快照仍存在（未点击确定），恢复到打开前状态
 const handleFilterPanelClose = (column) => {
-  // 清除当前打开列记录（面板已关闭，不再需要滚动重定位）
-  activeFilterColumn = null;
-  filterReposBaseline = null;
-  if (repositionRafId != null) {
-    cancelAnimationFrame(repositionRafId);
-    repositionRafId = null;
-  }
+  // 停止滚动跟随追踪（面板已关闭，不再需要重定位）
+  closeFilterPanel();
   if (!pendingFilterSnapshots[column.id]) return;
   // nextTick + setTimeout 确保 vxe 内部设置 opt.checked 之后再恢复（优先级最后）
   nextTick(() => {
     setTimeout(() => {
-      restoreFilterSnapshot(column);
+      restoreFilterSnapshot(pendingFilterSnapshots, column);
       syncFilterHeaderClass();
     }, 0);
   });
@@ -1425,82 +724,6 @@ const onFilterVisible = (payload) => {
   } else {
     handleFilterPanelClose(column);
   }
-};
-
-// 列过滤状态数组 → 扁平请求参数对象 + 涉及的 key 集合
-// key 默认取 field，可通过 params.defParamKey 自定义；区间类支持 paramMode: array/split/both（详见 README）
-const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
-const filterStateToParams = (filters) => {
-  const params = {};
-  const paramKeys = new Set();
-  (filters || []).forEach((f) => {
-    if (!f || !f.active) return;
-    const d = f.data || {};
-    const key = f.paramKey || f.field;
-    switch (f.type) {
-      case "FilterInput": {
-        const v = String(d.value ?? "").trim();
-        if (v) {
-          params[key] = v;
-          paramKeys.add(key);
-        }
-        break;
-      }
-      case "FilterCheckbox": {
-        const vals = Array.isArray(d.values)
-          ? d.values.filter((v) => v != null && v !== "")
-          : [];
-        if (vals.length) {
-          // 多个值始终用数组传递
-          params[key] = vals;
-          paramKeys.add(key);
-        }
-        break;
-      }
-      case "FilterDateRange":
-      case "FilterNumberRange": {
-        const raw = Array.isArray(d.values) ? [...d.values] : [null, null];
-        // 补齐为 2 元素数组，保证位置语义稳定
-        while (raw.length < 2) raw.push(null);
-        const ev =
-          f.props && f.props.emptyValue !== undefined
-            ? f.props.emptyValue
-            : null;
-        const normalized = raw.map((v) =>
-          v == null || v === "" ? ev : v,
-        );
-        const mode =
-          f.props && ["array", "split", "both"].includes(f.props.paramMode)
-            ? f.props.paramMode
-            : "array";
-        // split 两端的 key 命名规则
-        const isDate = f.type === "FilterDateRange";
-        const key0 = isDate ? `start${capitalize(key)}` : `${key}Min`;
-        const key1 = isDate ? `end${capitalize(key)}` : `${key}Max`;
-
-        if (mode === "array" || mode === "both") {
-          // 数组格式：两端至少一端有值才发送
-          if (normalized.some((v) => v != null && v !== "")) {
-            params[key] = normalized;
-            paramKeys.add(key);
-          }
-        }
-        if (mode === "split" || mode === "both") {
-          // 分开格式：按端独立判断
-          if (normalized[0] != null && normalized[0] !== "") {
-            params[key0] = normalized[0];
-            paramKeys.add(key0);
-          }
-          if (normalized[1] != null && normalized[1] !== "") {
-            params[key1] = normalized[1];
-            paramKeys.add(key1);
-          }
-        }
-        break;
-      }
-    }
-  });
-  return { params, paramKeys };
 };
 
 // 上一次过滤写入的 key，下次应用时用来清掉已失效的过滤参数（不影响外部 searchParam）
@@ -1574,42 +797,6 @@ const getFilterParams = () => {
   return filterStateToParams(filters);
 };
 
-// 列排序状态数组 → 请求参数对象 + key 集合
-// 参数 key 名与格式由 props.sortParamConfig 控制（合并/非合并模式，详细见 README）
-const sortStateToParams = (sorts) => {
-  const active = (sorts || []).filter(
-    (s) => s && s.order && s.order !== "null" && (s.field || s.property),
-  );
-  if (!active.length) return { params: {}, paramKeys: new Set() };
-
-  const fields = active.map((s) => s.field || s.property);
-  const orders = active.map((s) => s.order);
-
-  const cfg = props.sortParamConfig || {};
-  const combined = cfg.combined === true;
-
-  if (combined) {
-    const combinedKey = cfg.combinedKey || "orderBy";
-    const sep =
-      cfg.combinedSeparator != null ? cfg.combinedSeparator : " ";
-    const multiSep =
-      cfg.combinedMultiSeparator != null ? cfg.combinedMultiSeparator : ",";
-    // 每项形如 "field order"，项间用 multiSep 连接
-    const value = active
-      .map((_, i) => `${fields[i]}${sep}${orders[i]}`)
-      .join(multiSep);
-    return { params: { [combinedKey]: value }, paramKeys: new Set([combinedKey]) };
-  }
-
-  const fieldKey = cfg.fieldKey || "sortField";
-  const orderKey = cfg.orderKey || "sortOrder";
-  const params = {
-    [fieldKey]: fields.length === 1 ? fields[0] : fields.join(","),
-    [orderKey]: orders.length === 1 ? orders[0] : orders.join(","),
-  };
-  return { params, paramKeys: new Set([fieldKey, orderKey]) };
-};
-
 // 上一轮排序写入的 key（随 sortParamConfig 动态变化），与过滤 key 集合互不重叠
 const lastSortParamKeys = new Set();
 
@@ -1646,7 +833,7 @@ const onSortChange = (payload) => {
 const resetColumnFiltersData = (col) => {
   const fName = col.filterRender && col.filterRender.name;
   if (!fName || !FILTER_DEFAULTS[fName]) return;
-  const defaultData = getColumnDefaultData(col.field, fName);
+  const defaultData = getColumnDefaultData(col.field, fName, props.initParam);
   (col.filters || []).forEach((opt) => {
     if (defaultData) {
       if (opt.data) Object.assign(opt.data, defaultData);
@@ -1747,7 +934,7 @@ provide("tableProFilterContext", {
   emitConfirm: (params) => {
     // 清除快照（确认的改动保留，面板关闭时不再恢复）
     const col = params && params.column;
-    if (col) clearFilterSnapshot(col);
+    if (col) clearFilterSnapshot(pendingFilterSnapshots, col);
     const payload = getFilterSortState();
     applyFilterAndSyncHeader(payload);
     emit("filter-confirm", payload);
@@ -1755,7 +942,7 @@ provide("tableProFilterContext", {
   emitReset: (params) => {
     const col = params && params.column;
     // 更新快照为重置后的状态（重置立即生效，后续关闭面板不再恢复到重置前）
-    if (col) updateFilterSnapshot(col);
+    if (col) updateFilterSnapshot(pendingFilterSnapshots, col);
     const info = col ? { field: col.field, title: col.title } : {};
     const payload = { column: info, ...getFilterSortState() };
     applyFilterAndSyncHeader(payload);
