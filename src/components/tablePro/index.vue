@@ -13,34 +13,12 @@ import {
   nextTick,
   onMounted,
   watch,
-  h,
-  markRaw,
   toHandlerKey,
   camelize,
   mergeProps,
 } from "vue";
-import { useEventListener } from "@vueuse/core";
-// Element Plus 编辑组件（列编辑 slots.edit 使用）
-import {
-  ElInput,
-  ElInputNumber,
-  ElSelect,
-  ElOption,
-  ElRadioGroup,
-  ElRadio,
-  ElRadioButton,
-  ElCheckboxGroup,
-  ElCheckbox,
-  ElCheckboxButton,
-  ElDatePicker,
-  ElTimePicker,
-  ElSwitch,
-  ElRate,
-} from "element-plus";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
-// 自定义编辑控件（在 EL_EDIT_MAP 中注册后即可通过 editRender: { name: 'XxxEdit' } 使用）
-import TextareaPopoverEdit from "./editors/TextareaPopoverEdit.vue";
 import { FILTER_DEFAULTS, isFilterActive } from "./filters/filter-config.js";
 // 事件清单（vxe-grid 透传事件 + TablePro 自身事件），用于 defineEmits 与原生事件转发
 import { FORWARD_GRID_EVENTS, TABLE_PRO_EVENTS } from "./utils/events.js";
@@ -50,6 +28,26 @@ import { useSelection } from "@/hooks/useSelection";
 import Pagination from "./pagination/Pagination.vue";
 // 静态模式本地过滤 + 排序（requestApi 未传时对 data 全量数据生效）
 import { applyLocalFilterSort } from "./utils/localFilterSort.js";
+// 列配置构建（mergedColumns 纯逻辑：render/headerRender/editRender/filterType 简写注入等）
+import {
+  buildColumns,
+  findColumnByField,
+  forEachLeafColumn,
+  resolveParamKey,
+} from "./utils/columns.js";
+// 过滤/排序状态 → 请求参数（纯函数）
+import { filterStateToParams, sortStateToParams } from "./utils/params.js";
+// 过滤面板草稿快照 + 默认过滤值构建（纯函数）
+import {
+  buildFilterDataFromDefault,
+  saveFilterSnapshot,
+  restoreFilterSnapshot,
+  updateFilterSnapshot,
+  clearFilterSnapshot,
+  getColumnDefaultData,
+} from "./utils/filterState.js";
+// 过滤 popover 二次定位 + 滚动跟随
+import { useFilterPanelPosition } from "./composables/useFilterPanelPosition.js";
 
 // 关闭自动 inheritAttrs（避免父组件传入的未声明属性落到根 div），
 // 改由下方 gridProps 显式将这些属性透传到 <vxe-grid>；class / style 仍绑定到根元素 .table-pro
@@ -236,94 +234,8 @@ const resolveEditStateKey = (row, field) => {
     : `auto:${(row[ROW_ID_KEY] = ++_rowAutoIdSeq)}`
   return `${prefix}:${String(field)}`
 }
-// 进入编辑态后自动聚焦/展开的组件集合（仅对象配置式 editRender 生效）
-//   · 文字输入类：ElInput/ElInputNumber → 聚焦 input（高亮光标，直接打字即可）
-//   · 面板弹出类：ElSelect/ElDatePicker/ElTimePicker/ElCascader/ElColorPicker → 展开面板
-//   · TextareaPopoverEdit：组件内部 onMounted 已处理 popover 打开+聚焦，这里仅占位避免重复逻辑
-const AUTO_FOCUS_EDIT_NAMES = new Set(['ElInput', 'ElInputNumber'])
-const AUTO_POPUP_EDIT_NAMES = new Set(['ElSelect', 'ElDatePicker', 'ElTimePicker', 'ElCascader', 'ElColorPicker'])
-const AUTO_OPEN_EDIT_NAMES = new Set([...AUTO_FOCUS_EDIT_NAMES, ...AUTO_POPUP_EDIT_NAMES, 'TextareaPopoverEdit'])
-
-// 自动聚焦 Element Plus 文字输入类组件的 input
-//   · ElInput/ElInputNumber：组件实例 focus() → input.focus() + dispatchEvent(FocusEvent)
-//   · TextareaPopoverEdit：组件内部 onMounted 自行处理（此处 no-op 返回即可）
-const autoFocusTextInput = (erName, el, proxy) => {
-  // TextareaPopoverEdit 已在内部 onMounted 处理，直接跳过
-  if (erName === 'TextareaPopoverEdit') return
-  // 优先通过组件实例 focus()（如 ElInput.proxy.focus → 聚焦内部 input）
-  if (proxy && typeof proxy.focus === 'function') {
-    proxy.focus()
-    return
-  }
-  // 兜底：DOM 查询到 input/textarea 再 focus
-  if (!el || !el.querySelector) return
-  const inputEl = el.querySelector('input') || el.querySelector('textarea')
-  if (inputEl && typeof inputEl.focus === 'function') {
-    inputEl.focus()
-    inputEl.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
-  }
-}
-
-// 自动弹出面板类组件（ElSelect/ElDatePicker/ElTimePicker 等）
-const autoOpenPopupComp = (erName, el, proxy) => {
-  if (erName === 'ElSelect') {
-    // ElSelect：触发 .el-select__wrapper 的 click → 内部 toggleMenu
-    if (el && el.querySelector) {
-      const wrapper = el.querySelector('.el-select__wrapper') || el
-      wrapper.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    }
-    return
-  }
-  // ElDatePicker/ElTimePicker/ElCascader/ElColorPicker
-  // 组件实例方法（部分版本可能不暴露，跳过即可）
-  if (proxy && typeof proxy.handleOpen === 'function') proxy.handleOpen()
-  if (proxy && typeof proxy.focus === 'function') proxy.focus()
-  // DOM 事件：在 .el-input__wrapper 上 mousedown + click 触发 ElDatePicker 内部 handleFocus
-  //   · 直接在 input 上触发不生效（ElDatePicker 监听 wrapper 而非 input）
-  //   · 兜底用 document.querySelector 查找当前激活编辑 cell 内的元素
-  let wrapperEl = el && el.querySelector ? el.querySelector('.el-input__wrapper') : null
-  if (!wrapperEl) {
-    const editCell = document.querySelector('.vxe-cell--edit') || document.querySelector('.is--edit')
-    wrapperEl = editCell && editCell.querySelector('.el-input__wrapper')
-  }
-  if (!wrapperEl) return
-  wrapperEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
-  // input 获得焦点 + 触发 focus 事件（ElDatePicker 监听 @focus → handleFocus → 显示面板）
-  const inputEl = wrapperEl.querySelector('input')
-  if (inputEl) {
-    if (typeof inputEl.focus === 'function') inputEl.focus()
-    inputEl.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
-  }
-  wrapperEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-}
-
-// onVnodeMounted 钩子：组件挂载后自动 focus 输入/弹出面板
-//   · ElDatePicker 是 Fragment 组件，vnode.el/vnode.$el 可能是 #text，需向上找 parentElement
-//   · setTimeout(0) 等 Element Plus 内部初始化（popper/input 等）完成
-const autoOpenOnMounted = (erName) => {
-  if (!AUTO_OPEN_EDIT_NAMES.has(erName)) return null
-  return (vnode) => {
-    const proxy = vnode && vnode.component && vnode.component.proxy
-    const rawEl = (proxy && proxy.$el) || (vnode && vnode.el)
-    // 若是 Text/Comment 节点，向上找最近的 Element（Fragment 组件如 ElDatePicker）
-    const el = rawEl && rawEl.nodeType === 1 ? rawEl : (rawEl && rawEl.parentElement)
-    const trigger = () => {
-      try {
-        if (AUTO_FOCUS_EDIT_NAMES.has(erName) || erName === 'TextareaPopoverEdit') {
-          autoFocusTextInput(erName, el, proxy)
-        } else if (AUTO_POPUP_EDIT_NAMES.has(erName)) {
-          autoOpenPopupComp(erName, el, proxy)
-        }
-      } catch (e) {
-        /* ignore */
-      }
-    }
-    setTimeout(trigger, 0)
-  }
-}
-
 // 进入编辑态：用 row[field] 初始化本地值
-// 自动弹出由 buildObjectEditSlotFn 中的 onVnodeMounted 钩子处理（更可靠）
+// 自动弹出由 utils/columns.js 中 buildObjectEditSlotFn 的 onVnodeMounted 钩子处理（更可靠）
 const onEditActivated = (params) => {
   const row = params && params.row
   const field = params && params.column && params.column.field
@@ -386,42 +298,8 @@ const bumpFilterRefetchCounter = (field) => {
 // ========== 过滤面板草稿快照 ==========
 // vxe-grid 面板关闭时可能自动设置 opt.checked=true，导致未确认草稿被标记为已激活
 // 快照机制：打开→保存；确认→清除；重置→更新基线；关闭且未确认→恢复
+// 快照读写逻辑见 utils/filterState.js（纯函数，以 pendingFilterSnapshots 为 store）
 const pendingFilterSnapshots = reactive({});
-// 深拷贝过滤 data（处理 FilterCheckbox.values 等数组类型属性）
-const cloneFilterData = (data) => {
-  if (!data || typeof data !== "object") return data;
-  const clone = { ...data };
-  Object.keys(clone).forEach((k) => {
-    if (Array.isArray(clone[k])) clone[k] = [...clone[k]];
-  });
-  return clone;
-};
-const saveFilterSnapshot = (column) => {
-  if (!column || !column.id) return;
-  pendingFilterSnapshots[column.id] = (column.filters || []).map((opt) => ({
-    data: cloneFilterData(opt.data),
-    checked: opt.checked,
-  }));
-};
-const restoreFilterSnapshot = (column) => {
-  if (!column || !column.id) return;
-  const snapshot = pendingFilterSnapshots[column.id];
-  if (!snapshot) return;
-  (column.filters || []).forEach((opt, i) => {
-    if (snapshot[i]) {
-      opt.data = cloneFilterData(snapshot[i].data);
-      opt.checked = snapshot[i].checked;
-    }
-  });
-  delete pendingFilterSnapshots[column.id];
-};
-const updateFilterSnapshot = (column) => {
-  saveFilterSnapshot(column);
-};
-const clearFilterSnapshot = (column) => {
-  if (!column || !column.id) return;
-  delete pendingFilterSnapshots[column.id];
-};
 
 const currentDensity = ref("small");
 
