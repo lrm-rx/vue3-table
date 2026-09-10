@@ -122,8 +122,6 @@ const props = defineProps({
   showSearch: { type: Boolean, default: true },
   // 工具栏右侧密度切换（element-plus）
   showDensity: { type: Boolean, default: true },
-  // 工具栏内置「重置所有过滤条件」按钮
-  showResetFilter: { type: Boolean, default: true },
   // 是否记忆列状态到 localStorage
   customStorage: { type: Boolean, default: false },
   // 额外传入的 toolbarConfig（与内部默认合并）
@@ -165,11 +163,12 @@ const props = defineProps({
   initParam: { type: Object, default: () => ({}) },
 
   // ========== 列公共配置（减少 columns 中重复配置）==========
-  // 对所有数据列自动合并，列自身配置优先级更高。内置默认 { showOverflow:'tooltip', minWidth:120 }
-  // 注：filterDefaults 由组件内部 DEFAULT_FILTER_CONFIG 提供，无需在此重复配置
+  // 对所有数据列自动合并，列自身配置优先级更高。内置默认 { minWidth:120 }
+  // 注：showOverflow 不在此默认注入，改由 table 级 show-overflow 统一控制（支持动态切换换行），
+  //     列若显式配置 showOverflow 则优先级更高。
   defaultColumnConfig: {
     type: Object,
-    default: () => ({ showOverflow: "tooltip", minWidth: 120 }),
+    default: () => ({ minWidth: 120 }),
   },
 
   // ========== 单元格编辑：预置选项数组 ==========
@@ -191,6 +190,13 @@ const emit = defineEmits([...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS]);
 const slots = useSlots();
 const attrs = useAttrs();
 const gridRef = ref();
+
+// ========== 单元格文本换行切换 ==========
+// true：所有单元格允许文本换行（white-space: normal）；false：默认省略+悬浮提示
+const wrapText = ref(false);
+const toggleWrapText = () => {
+  wrapText.value = !wrapText.value;
+};
 
 // ========== 单选/多选数据收集（useSelection）==========
 // 收集 checkbox-change / radio-change 事件抛出的选中行，按 selectionKey 提取 id
@@ -1074,6 +1080,9 @@ const toolbarConfig = computed(() => {
       icon: "vxe-icon-refresh",
       queryMethod: handleToolbarRefresh,
     },
+    // 工具栏右侧工具区内置按钮开关
+    resetFilter: true,      // 「重置过滤」按钮（默认显示）
+    wrapToggle: false,      // 「文本换行」切换按钮（默认不显示）
     ...userCfg,
   };
   // 用户自定义按钮走 buttons，内置「重置过滤」走 toolSuffix 插槽（右侧工具区）
@@ -1228,6 +1237,7 @@ const gridProps = computed(() => {
       treeConfig: props.treeConfig,
       expandConfig: props.expandConfig,
       columnConfig: { resizable: true, ...props.columnConfig },
+      showOverflow: wrapText.value ? false : "tooltip",
       columns: mergedColumns.value,
       data: renderData.value,
       // 校验规则透传到 vxe-grid，配合暴露的 validate / fullValidate 方法
@@ -1293,6 +1303,9 @@ defineExpose({
   scrollTo: (x, y) => gridRef.value?.scrollTo?.(x, y),
   scrollToRow: (row) => gridRef.value?.scrollToRow?.(row),
   scrollToColumn: (col) => gridRef.value?.scrollToColumn?.(col),
+  // 单元格文本换行切换
+  wrapText,
+  toggleWrapText,
   // 本地过滤排序开启时，清空排序/过滤后 bump 触发本地重算（不经过 confirm/reset 流程）
   clearSort: () => {
     const r = gridRef.value?.clearSort?.();
@@ -1332,7 +1345,11 @@ defineExpose({
 </script>
 
 <template>
-  <div class="table-pro" :class="attrs.class" :style="attrs.style">
+  <div
+    class="table-pro"
+    :class="attrs.class"
+    :style="attrs.style"
+  >
     <div class="table-pro__body">
       <vxe-grid
         ref="gridRef"
@@ -1355,15 +1372,23 @@ defineExpose({
           />
         </template>
         <template #toolbarToolSuffix="scope">
+          <slot name="toolbarToolSuffix" v-bind="scope" />
           <vxe-button
-            v-if="showResetFilter && hasColumnFilter"
+            v-if="toolbarConfig?.wrapToggle"
+            circle
+            :icon="wrapText ? 'vxe-icon-menu-unfold' : 'vxe-icon-menu-fold'"
+            :title="wrapText ? '取消文本换行' : '文本换行'"
+            class="table-pro__toggle-wrap-btn"
+            @click="toggleWrapText"
+          />
+          <vxe-button
+            v-if="toolbarConfig?.resetFilter && hasColumnFilter"
             circle
             icon="vxe-icon-funnel-clear"
             title="重置过滤"
             class="table-pro__reset-filter-btn"
             @click="onResetAllFilter"
           />
-          <slot name="toolbarToolSuffix" v-bind="scope" />
         </template>
 
         <!-- 外部 cell_xxx / edit_xxx / header_xxx 具名插槽透传（详细用法见 README） -->
