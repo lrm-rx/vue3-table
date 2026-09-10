@@ -393,9 +393,32 @@ const onRequestError = (error) => {
   ElMessage.error(`表格请求失败：${error?.message || error}`);
 };
 
-// ========== 静态模式演示：本地过滤 + 排序（未传 requestApi）==========
-// 数据纯前端生成，全部过滤/排序由 tablePro 内部对 data 全量数据本地完成（无后端参与）
+// ========== 静态表演示：本地过滤 + 排序由 localFilterSort 布尔开关显式控制 ==========
+// 注意：不再由「是否传 requestApi」隐式决定，localFilterSort=true 时后端不参与
+// 数据纯前端生成；即使本表传入了 requestFilterAPI（探针），开关开启时也绝不调用
 const staticRoles = ["admin", "editor", "viewer", "developer"];
+// 本地过滤+排序开关（true=本地处理，false=后端参与）
+const localFilterSortEnabled = ref(true);
+// requestFilterAPI 调用探针：开关开启时计数必须恒为 0；关闭后打开角色过滤面板才会被调用
+const staticFilterApiCalls = ref(0);
+const staticRequestFilterApi = (params) => {
+  staticFilterApiCalls.value += 1;
+  console.warn("[staticRequestFilterApi] 被调用（仅 localFilterSort=false 时应出现）", params);
+  ElMessage.warning("静态表 requestFilterAPI 被调用（当前为后端参与模式）");
+  return Promise.resolve([
+    { label: "管理员", value: "admin" },
+    { label: "编辑", value: "editor" },
+    { label: "访客", value: "viewer" },
+    { label: "开发者", value: "developer" },
+    { label: "测试员（仅接口返回）", value: "tester" },
+  ]);
+};
+const onToggleLocalFilterSort = (v) => {
+  staticFilterApiCalls.value = 0;
+  ElMessage.info(
+    `本地过滤+排序已${v ? "开启（后端不参与，不调 requestFilterAPI）" : "关闭（后端参与）"}`,
+  );
+};
 const genStaticData = () => {
   const surnames = ["张", "李", "王", "赵", "陈", "刘", "杨", "黄", "周", "吴"];
   const list = [];
@@ -423,7 +446,7 @@ const staticColumns = ref([
     title: "角色",
     sortable: true,
     filterType: "FilterCheckbox",
-    // 静态过滤选项：未传 requestFilterAPI 时直接使用本地 options
+    // 本地过滤排序开关开启时直接使用本地 options（即使表上传了 requestFilterAPI 也不会调用）
     filterRender: {
       name: "FilterCheckbox",
       props: {
@@ -728,10 +751,26 @@ const onSubmit = async () => {
       </template>
     </TablePro>
 
-    <!-- ========== 静态模式演示：本地过滤 + 排序（未传 requestApi）========== -->
+    <!-- ========== 本地过滤 + 排序演示（localFilterSort 布尔开关显式控制）========== -->
     <el-divider content-position="left">
-      静态模式：本地过滤 + 排序（未传 requestApi，data 全量数据由组件本地处理）
+      本地过滤 + 排序：由 localFilterSort 布尔属性控制（true=本地处理 / false=后端参与，与是否传 requestApi 无关）
     </el-divider>
+    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+      <el-switch
+        v-model="localFilterSortEnabled"
+        @change="onToggleLocalFilterSort"
+      />
+      <span style="font-size: 13px; color: #606266">
+        localFilterSort = <b>{{ localFilterSortEnabled }}</b>
+        （{{ localFilterSortEnabled ? "本地处理，后端不参与" : "后端参与" }}）
+      </span>
+      <el-tag size="small" type="warning">
+        requestFilterAPI 被调用次数：{{ staticFilterApiCalls }}
+      </el-tag>
+      <span style="font-size: 12px; color: #909399">
+        开关开启时，即使本表传了 requestFilterAPI，打开角色过滤面板也不会调用（次数恒为 0，选项为列配置静态项）
+      </span>
+    </div>
     <div
       style="margin-bottom: 8px; color: #606266; font-size: 13px; line-height: 1.8"
     >
@@ -739,13 +778,16 @@ const onSubmit = async () => {
       命中任一选中值）· 年龄（FilterNumberRange 数值区间）· 创建时间（FilterDateRange
       日期区间，纯日期端点按整天）；<b>多字段排序</b>：sortConfig.multiple=true
       依次点击多列排序图标按点击优先级组合；年龄空值恒排最后；过滤后分页 total
-      同步变化；默认 initParam 按 createTime 倒序；<b>beforePageChange
+      同步变化；默认 initParam 按 createTime 倒序；<b>关闭开关</b>后过滤/排序不再本地生效（仅抛
+      filter-confirm 事件），打开角色过滤面板会走 requestFilterAPI（计数+1，多出「测试员」选项）；<b>beforePageChange
       拦截演示</b>：切到每页 50 条（同步 false 回滚）与跳转第 4
       页（Promise reject）会被阻止，其余分页操作正常放行
     </div>
     <TablePro
       :columns="staticColumns"
       :data="staticData"
+      :local-filter-sort="localFilterSortEnabled"
+      :requestFilterAPI="staticRequestFilterApi"
       :pagination="true"
       :pager-config="{ pageSizes: [10, 20, 50] }"
       :sort-config="staticSortConfig"

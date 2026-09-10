@@ -26,7 +26,7 @@ import { useTable } from "@/hooks/useTable";
 import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
 import Pagination from "./pagination/Pagination.vue";
-// 静态模式本地过滤 + 排序（requestApi 未传时对 data 全量数据生效）
+// 本地过滤 + 排序（localFilterSort=true 时对当前数据生效，与是否传 requestApi 无关）
 import { applyLocalFilterSort } from "./utils/localFilterSort.js";
 // 列配置构建（mergedColumns 纯逻辑：render/headerRender/editRender/filterType 简写注入等）
 import {
@@ -86,6 +86,12 @@ const props = defineProps({
     type: Object,
     default: () => ({ remote: true, transfer: true }),
   },
+  // ========== 本地过滤 + 排序开关（与是否传 requestApi 无关，独立布尔控制）==========
+  // true（开启）：后端不参与列过滤/排序 —— 组件对当前数据全量本地过滤 + 排序后再渲染，
+  //   FilterCheckbox 面板打开时也不会调用 requestFilterAPI（回退列配置的静态 options）；
+  // false（关闭，默认）：后端参与 —— 过滤/排序参数随 requestApi 远程检索，
+  //   FilterCheckbox 选项由 requestFilterAPI 远程提供（未传则仍回退静态 options）。
+  localFilterSort: { type: Boolean, default: false },
   treeConfig: { type: Object, default: () => ({}) },
   expandConfig: { type: Object, default: () => ({}) },
   columnConfig: { type: Object, default: () => ({}) },
@@ -417,9 +423,10 @@ const getFilterSortState = () => {
   return { filters, sorts };
 };
 
-// ========== 静态模式本地过滤 + 排序 ==========
-// requestApi 未传（静态数据模式）时无后端参与：列过滤（filterType）与列排序的确认动作
-// 不产生请求，由组件对 data 全量数据本地过滤 + 排序后再传给 vxe-grid。
+// ========== 本地过滤 + 排序（由 localFilterSort 布尔开关控制，与 requestApi 无关）==========
+// localFilterSort=true（开启）时后端不参与：列过滤（filterType）与列排序的确认动作
+// 不产生请求，由组件对当前数据（静态模式为 props.data，远程模式为当前页接口数据）
+// 本地过滤 + 排序后再传给 vxe-grid。
 // 多字段排序是否启用由 sortConfig.multiple 决定（vxe 控制单/多列状态，本地按状态透传）；
 // sortConfig.remote=false 时排序交给 vxe 原生处理，本地仅做过滤。
 //
@@ -434,14 +441,26 @@ const bumpLocalFilterSort = () => {
   // 事件上下文（非响应式）中收集最新过滤/排序状态，驱动 localProcessedData 重算
   localFilterSortState.value = getFilterSortState();
 };
+// 本地处理的数据源：静态数据模式取 props.data，远程数据模式取接口返回的当前页数据
+const localSourceData = computed(() =>
+  isRemoteMode.value ? tableHook.tableData.value || [] : props.data || [],
+);
 const localProcessedData = computed(() => {
-  const all = props.data || [];
-  if (isRemoteMode.value) return all;
+  const all = localSourceData.value;
+  // 开关关闭（后端参与）：不做本地过滤/排序，原样返回数据源
+  if (!props.localFilterSort) return all;
   const { filters, sorts } = localFilterSortState.value;
   const localSorts =
     props.sortConfig && props.sortConfig.remote === false ? [] : sorts;
   return applyLocalFilterSort(all, filters, localSorts);
 });
+// localFilterSort 运行时动态开启：立即收集一次当前过滤/排序状态驱动本地重算
+watch(
+  () => props.localFilterSort,
+  (enabled) => {
+    if (enabled) bumpLocalFilterSort();
+  },
+);
 
 // ========== 静态模式前端分页 ==========
 // 本地分页状态来自 props.pagerConfig；total 由 localProcessedData.length 自动计算
@@ -478,9 +497,16 @@ watch(
   },
 );
 
-// 实际渲染数据：远程用 useTable；静态先本地过滤+排序，再按分页切片；静态不分页原样返回
+// 实际渲染数据：
+//   · 远程数据 + 后端过滤排序（开关关闭）→ useTable 接口数据；
+//   · 远程数据 + 本地过滤排序（开关开启）→ 对接口当前页数据本地处理（分页仍由后端负责）；
+//   · 静态数据 → localProcessedData（开关开启时本地过滤+排序，关闭时即原始 data），再按分页切片
 const renderData = computed(() => {
-  if (isRemoteMode.value) return tableHook.tableData.value;
+  if (isRemoteMode.value) {
+    return props.localFilterSort
+      ? localProcessedData.value
+      : tableHook.tableData.value;
+  }
   const all = localProcessedData.value;
   if (!props.pagination) return all;
   const size = localPager.value.pageSize || 10;
@@ -619,9 +645,9 @@ const applyInitVxeUIState = (sortFields, sortOrders) => {
       // 4c) UI 同步完成，解除 guard（必须解除，避免后续 sort-change 被永久跳过）
       isApplyingDefaults.value = false;
     }
-    // 4d) 静态模式：默认过滤/排序已同步到 vxe UI 状态，触发本地过滤排序重算
-    // （远程模式数据由后端过滤排序，无需处理）
-    if (!isRemoteMode.value) bumpLocalFilterSort();
+    // 4d) 本地过滤排序开关开启：默认过滤/排序已同步到 vxe UI 状态，触发本地重算
+    // （开关关闭时数据由后端过滤排序，无需处理）
+    if (props.localFilterSort) bumpLocalFilterSort();
   });
 };
 
@@ -652,9 +678,9 @@ const isApplyingDefaults = ref(false);
 // 挂载后自动发起首次请求（仅远程模式且 requestAuto=true）
 onMounted(() => {
   applyInitParam();
-  // 静态模式：挂载完成后收集一次过滤/排序状态（覆盖 initParam 默认值与
+  // 本地过滤排序开关开启：挂载完成后收集一次过滤/排序状态（覆盖 initParam 默认值与
   // sortConfig.defaultSort 等 vxe 挂载期应用的状态）
-  if (!isRemoteMode.value) bumpLocalFilterSort();
+  if (props.localFilterSort) bumpLocalFilterSort();
   if (isRemoteMode.value && props.requestAuto) {
     // 注：updatedTotalParam 把 searchParam（含默认 filter/sort）同步到 totalParam，
     // 否则 getTableList 只发 pageParam 会丢失 filter/sort 默认值
@@ -771,18 +797,22 @@ const syncParamsToSearchParam = (params, paramKeys, lastKeys) => {
   paramKeys.forEach((k) => lastKeys.add(k));
 };
 
-// 列过滤 → useTable.search() 联动（仅远程模式生效，静态模式仅抛事件由外部处理）
+// 列过滤联动：localFilterSort=true 本地过滤；否则后端参与走 requestApi 远程检索
+// （未传 requestApi 时仅抛 filter-confirm 事件由外部自行处理）
 const applyFilterStateAndSearch = (filterSortPayload) => {
-  // 无论是否远程模式，都先记录最新过滤 key（即便当前静态，切到远程也能正确）
+  // 始终先记录最新过滤 key（切换开关/数据源后参数状态仍能保持正确）
   const { params: filterParams, paramKeys } = filterStateToParams(
     filterSortPayload?.filters || [],
   );
 
-  if (!isRemoteMode.value) {
-    // 静态模式：无后端过滤，bump 触发 localProcessedData 重新收集过滤状态并本地过滤
+  if (props.localFilterSort) {
+    // 本地模式：后端不参与，bump 触发 localProcessedData 重新收集过滤状态并本地过滤
     bumpLocalFilterSort();
     return;
   }
+
+  // 开关关闭但未传 requestApi：无后端可请求，仅抛事件，外部自行过滤
+  if (!isRemoteMode.value) return;
 
   // 1~3) 同步过滤参数到 searchParam（清失效 key + 写本轮 key + 更新 key 集合）
   syncParamsToSearchParam(filterParams, paramKeys, lastFilterParamKeys);
@@ -800,14 +830,17 @@ const getFilterParams = () => {
 // 上一轮排序写入的 key（随 sortParamConfig 动态变化），与过滤 key 集合互不重叠
 const lastSortParamKeys = new Set();
 
-// 列排序 → useTable.search() 联动（仅远程模式生效）
+// 列排序联动：localFilterSort=true 本地排序；否则后端参与走 requestApi 远程排序
 const applySortStateAndSearch = (sorts) => {
   const { params: sortParams, paramKeys } = sortStateToParams(sorts);
-  if (!isRemoteMode.value) {
-    // 静态模式：无后端排序，bump 触发 localProcessedData 重新收集排序状态并本地排序
+  if (props.localFilterSort) {
+    // 本地模式：后端不参与，bump 触发 localProcessedData 重新收集排序状态并本地排序
     bumpLocalFilterSort();
     return;
   }
+
+  // 开关关闭但未传 requestApi：无后端可请求（sortConfig.remote=false 时由 vxe 原生排序）
+  if (!isRemoteMode.value) return;
 
   // 1~3) 同步排序参数到 searchParam（清失效 key + 写本轮 key + 更新 key 集合）
   syncParamsToSearchParam(sortParams, paramKeys, lastSortParamKeys);
@@ -895,6 +928,9 @@ const collectCheckboxFilterParams = () => {
 };
 
 const fetchFilterOptions = async (field) => {
+  // 本地过滤排序模式：后端不参与，禁止调用 requestFilterAPI，
+  // FilterCheckbox 自动回退到列配置 filterRender.props.options 静态选项
+  if (props.localFilterSort) return null;
   if (typeof props.requestFilterAPI !== "function") return null;
   try {
     const filters = collectCheckboxFilterParams();
@@ -925,8 +961,10 @@ const applyFilterAndSyncHeader = (payload) => {
 provide("tableProFilterContext", {
   gather: getFilterSortState,
   fetchFilterOptions,
-  // 是否启用远程过滤选项（FilterCheckbox 据此决定远程/静态模式）
-  hasRemoteFilterAPI: () => typeof props.requestFilterAPI === "function",
+  // 是否启用远程过滤选项（FilterCheckbox 据此决定远程/静态模式）：
+  // 本地过滤排序开关开启时恒为 false（不触发 requestFilterAPI，回退静态 options）
+  hasRemoteFilterAPI: () =>
+    !props.localFilterSort && typeof props.requestFilterAPI === "function",
   // 每列重新拉取计数器：面板打开 bump 一次，FilterCheckbox 监听后强制重新 fetch
   filterRefetchCounter,
   clearCurrent: resetColumnFilter,
@@ -1255,15 +1293,15 @@ defineExpose({
   scrollTo: (x, y) => gridRef.value?.scrollTo?.(x, y),
   scrollToRow: (row) => gridRef.value?.scrollToRow?.(row),
   scrollToColumn: (col) => gridRef.value?.scrollToColumn?.(col),
-  // 静态模式下清空排序/过滤后 bump 触发本地重算（不经过 confirm/reset 流程）
+  // 本地过滤排序开启时，清空排序/过滤后 bump 触发本地重算（不经过 confirm/reset 流程）
   clearSort: () => {
     const r = gridRef.value?.clearSort?.();
-    if (!isRemoteMode.value) bumpLocalFilterSort();
+    if (props.localFilterSort) bumpLocalFilterSort();
     return r;
   },
   clearFilter: () => {
     const r = gridRef.value?.clearFilter?.();
-    if (!isRemoteMode.value) bumpLocalFilterSort();
+    if (props.localFilterSort) bumpLocalFilterSort();
     return r;
   },
   exportData: (opts) => gridRef.value?.exportData?.(opts),
