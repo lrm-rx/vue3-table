@@ -180,3 +180,114 @@ export const applyLocalFilterSort = (data, filters, sorts) => {
     return 0;
   });
 };
+
+// ========== FilterCheckbox 本地选项提取（单趟融合 + 记忆化）==========
+// 场景：localFilterSort=true 且列未配置静态 options 时，面板打开从分页前全量数据
+// 提取去重值。语义与 applyLocalFilterSort 的过滤阶段完全一致：
+//   · 应用其他列「已确认」的过滤条件（列间 AND / 同列 OR）
+//   · 始终排除目标列自身的过滤 —— 确认过滤后再次打开仍显示完整选项集合
+// 性能：
+//   1) 单趟扫描：行级过滤 + 目标列去重融合在一次循环内，
+//      不再先 applyLocalFilterSort 分配完整的过滤后中间数组（10 万行省时且省内存）；
+//   2) 记忆化：WeakMap 以数据源数组为键（数据源被替换时旧缓存随 GC 自动释放），
+//      二级 key 含「编辑版本 + 数据长度 + 目标列 + 其他列过滤签名」，
+//      重复打开面板且条件未变时直接返回缓存引用（近乎零成本）；
+//   3) 排序状态不影响选项成员，不参与签名（用户排序后重开选项一致）。
+const checkboxOptionsCache = new WeakMap();
+let checkboxOptionsTick = 0;
+
+// 单元格编辑提交（值变化）后调用：使所有数据源的提取缓存整体失效
+export const bumpCheckboxOptionsCache = () => {
+  checkboxOptionsTick += 1;
+};
+
+// 其他列过滤状态 → 稳定签名（排序无关：先排序字段名再拼接，列收集顺序变化不影响 key）
+const buildOtherFiltersSignature = (groups) => {
+  const parts = [];
+  groups.forEach((matchers, field) => {
+    // matchers 顺序与 filters 一致；data 为原始输入（字符串/数字/null），可安全 JSON 序列化
+    matchers.forEach((m) => {
+      parts.push(`${field}:${m.__type}:${JSON.stringify(m.__data ?? null)}`);
+    });
+  });
+  parts.sort();
+  return parts.join("~");
+};
+
+/**
+ * 从全量数据提取目标列的去重选项（带缓存）
+ * @param {Array} data 分页前全量数据（作为 WeakMap 缓存键，替换数据源自动换新缓存）
+ * @param {string} field 目标列字段名
+ * @param {Array} filters getFilterSortState 收集的全部列过滤状态
+ * @returns {Array<{label:string, value:*}>} 去重选项（保持首次出现顺序与原始值类型）
+ */
+export const extractCheckboxOptions = (data, field, filters) => {
+  const source = Array.isArray(data) ? data : [];
+  if (!field || !source.length) return [];
+
+  // 构建「其他列」匹配器分组（排除自身列、忽略未激活/未知类型）
+  const groups = new Map();
+  (filters || []).forEach((f) => {
+    if (
+      !f ||
+      !f.active ||
+      !f.field ||
+      f.field === field ||
+      !FILTER_MATCHERS[f.type]
+    ) {
+      return;
+    }
+    const matcher = FILTER_MATCHERS[f.type];
+    const list = groups.get(f.field) || [];
+    // 挂元数据供签名使用（匹配时忽略）
+    const fn = (row) => matcher(row[f.field], f.data);
+    fn.__type = f.type;
+    fn.__data = f.data;
+    list.push(fn);
+    groups.set(f.field, list);
+  });
+
+  const cacheKey = `${checkboxOptionsTick}|${source.length}|${field}|${buildOtherFiltersSignature(groups)}`;
+  let cacheMap = checkboxOptionsCache.get(source);
+  if (cacheMap && cacheMap.has(cacheKey)) return cacheMap.get(cacheKey);
+
+  // 单趟融合：其他列 AND（同列 OR）通过即提取目标列值并去重
+  const groupList = [...groups.values()];
+  const seen = new Set();
+  const result = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const row = source[i];
+    if (!row) continue;
+    let pass = true;
+    for (let g = 0; g < groupList.length; g += 1) {
+      const matchers = groupList[g];
+      let hit = false;
+      for (let j = 0; j < matchers.length; j += 1) {
+        if (matchers[j](row)) {
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        pass = false;
+        break;
+      }
+    }
+    if (!pass) continue;
+    const v = row[field];
+    // 空值与对象/数组类型不生成选项（无法按 String 宽松比较有效命中）
+    if (v == null || v === "" || typeof v === "object") continue;
+    // 与 FilterCheckbox 匹配一致按 String 去重，保留首次出现的原始值
+    const k = String(v);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    result.push({ label: k, value: v });
+  }
+
+  if (!cacheMap) {
+    cacheMap = new Map();
+    checkboxOptionsCache.set(source, cacheMap);
+  }
+  cacheMap.set(cacheKey, result);
+  return result;
+};

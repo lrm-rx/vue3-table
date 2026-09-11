@@ -421,6 +421,7 @@ const onToggleLocalFilterSort = (v) => {
 };
 const genStaticData = () => {
   const surnames = ["张", "李", "王", "赵", "陈", "刘", "杨", "黄", "周", "吴"];
+  const departments = ["技术部", "产品部", "市场部"];
   const list = [];
   for (let i = 1; i <= 32; i++) {
     list.push({
@@ -428,6 +429,9 @@ const genStaticData = () => {
       username: `${surnames[i % surnames.length]}${i}号`,
       account: `user_${String(i).padStart(3, "0")}`,
       role: staticRoles[i % staticRoles.length],
+      // 前 20 条循环三个部门；「海外事业部」仅存在于第 21 条之后（第 3 页），
+      // 用于验证 FilterCheckbox 无 options 时选项提取自「分页前全量数据」
+      department: i > 20 ? "海外事业部" : departments[i % departments.length],
       // i 为 9/18/27 时年龄为空，验证排序空值恒最后 + 区间过滤不含空值行
       age: i % 9 === 0 ? null : 20 + ((i * 7) % 30),
       createTime: `2024-${String((i % 12) + 1).padStart(2, "0")}-${String((i % 28) + 1).padStart(2, "0")}`,
@@ -469,6 +473,14 @@ const staticColumns = ref([
         </ElTag>
       );
     },
+  },
+  {
+    field: "department",
+    title: "部门",
+    sortable: true,
+    // 仅声明 FilterCheckbox 类型，不传 options：
+    // 本地过滤+排序开启时，选项自动从分页前全量数据提取去重值
+    filterType: "FilterCheckbox",
   },
   {
     field: "age",

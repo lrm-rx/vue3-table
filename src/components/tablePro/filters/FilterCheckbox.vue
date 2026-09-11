@@ -14,6 +14,12 @@
  *     映射为统一的 { label, value } 结构；
  *   - 未传入 requestFilterAPI 时，回退到列配置 filterRender.props.options。
  *
+ * 本地提取模式（localFilterSort=true）：
+ *   - 未配置静态 options（或为空数组）时，每次面板打开通过
+ *     ctx.getLocalCheckboxOptions(field) 从「前端分页前的全量数据」提取去重选项；
+ *   - 提取时仅叠加其他列已确认的过滤条件，不含当前列自身 ——
+ *     该列确认过滤后再次打开面板，仍显示过滤前的完整选项集合。
+ *
  * 选项顺序：始终保持选项的原始顺序（不再将已选值置顶），避免勾选/取消时出现跳动
  *
  * 布局：搜索框固定在顶部（flex-shrink:0），选项列表在剩余空间内滚动；
@@ -35,6 +41,8 @@ const staticOptions = computed(() => props.renderOpts?.props?.options || [])
 
 // 远程拉取的选项
 const remoteOptions = ref([])
+// 本地全量数据提取的选项（无静态 options 且 localFilterSort=true 时使用）
+const localOptions = ref([])
 const loading = ref(false)
 
 // 是否使用远程接口拉取选项
@@ -44,10 +52,20 @@ const useRemote = computed(
     ctx?.hasRemoteFilterAPI?.() === true,
 )
 
-// 实际使用的选项：远程模式使用 remoteOptions，否则使用 staticOptions
-const options = computed(() =>
-  useRemote.value ? remoteOptions.value : staticOptions.value,
+// 是否从本地全量数据提取选项：非远程模式 + 未配置静态 options（或为空数组）
+const useLocalExtract = computed(
+  () =>
+    !useRemote.value &&
+    staticOptions.value.length === 0 &&
+    typeof ctx?.getLocalCheckboxOptions === 'function',
 )
+
+// 实际使用的选项：远程 > 静态 options（非空）> 本地全量数据提取
+const options = computed(() => {
+  if (useRemote.value) return remoteOptions.value
+  if (staticOptions.value.length > 0) return staticOptions.value
+  return localOptions.value
+})
 
 const search = computed({
   get: () => props.option.data?.search ?? '',
@@ -100,30 +118,39 @@ const indeterminate = computed(() => {
   return some && !allChecked.value
 })
 
-// 远程拉取选项（封装为可复用函数）
+// 刷新选项（封装为可复用函数）：远程模式走接口，本地提取模式从全量数据计算
 const doFetchOptions = async () => {
-  if (!useRemote.value || typeof ctx.fetchFilterOptions !== 'function') return
-  loading.value = true
-  try {
-    const res = await ctx.fetchFilterOptions(props.field)
-    remoteOptions.value = res || []
-  } catch {
-    remoteOptions.value = []
-  } finally {
-    loading.value = false
+  if (useRemote.value) {
+    if (typeof ctx.fetchFilterOptions !== 'function') return
+    loading.value = true
+    try {
+      const res = await ctx.fetchFilterOptions(props.field)
+      remoteOptions.value = res || []
+    } catch {
+      remoteOptions.value = []
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+  if (useLocalExtract.value) {
+    // 同步提取：面板每次打开都会重新执行，确保级联条件（其他列过滤）为最新
+    localOptions.value = ctx.getLocalCheckboxOptions(props.field) || []
   }
 }
 
-// 每次面板打开时（filterRefetchCounter[field] 变化）都重新拉取选项
-// 同时监听 field 变化，避免 vxe 组件复用导致数据串列
+// 每次面板打开时（filterRefetchCounter[field] 变化）都重新拉取/提取选项
+// 同时监听 field 与选项模式变化，避免 vxe 组件复用导致数据串列
 watch(
   [
     () => props.field,
     () => (ctx?.filterRefetchCounter && props.field ? ctx.filterRefetchCounter[props.field] : 0),
+    () => useRemote.value,
+    () => useLocalExtract.value,
   ],
   async ([field]) => {
     if (!field) return
-    // 拉取选项（级联条件可能已变化，必须重新取）
+    // 刷新选项（远程级联条件 / 本地其他列过滤可能已变化，必须重新取）
     await doFetchOptions()
   },
   { immediate: true },

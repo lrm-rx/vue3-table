@@ -27,7 +27,11 @@ import { useSelection } from "@/hooks/useSelection";
 // 抽离的分页组件
 import Pagination from "./pagination/Pagination.vue";
 // 本地过滤 + 排序（localFilterSort=true 时对当前数据生效，与是否传 requestApi 无关）
-import { applyLocalFilterSort } from "./utils/localFilterSort.js";
+import {
+  applyLocalFilterSort,
+  extractCheckboxOptions,
+  bumpCheckboxOptionsCache,
+} from "./utils/localFilterSort.js";
 // 列配置构建（mergedColumns 纯逻辑：render/headerRender/editRender/filterType 简写注入等）
 import {
   buildColumns,
@@ -287,7 +291,10 @@ const onEditClosed = (params) => {
 
   // 仅值变化才发射 cell-edit-change
   if (newValue !== oldValue) {
-    const ctx = getEditContext_()
+    // 行数据被原地修改：使本地 FilterCheckbox 选项提取缓存失效，
+    // 下次打开面板能提取到编辑后的新值
+    bumpCheckboxOptionsCache();
+    const ctx = getEditContext_();
     if (typeof ctx.onCellEditChange === 'function') {
       ctx.onCellEditChange({
         row,
@@ -933,9 +940,26 @@ const collectCheckboxFilterParams = () => {
   return params;
 };
 
+// ========== 本地模式：从全量数据提取 FilterCheckbox 选项 ==========
+// localFilterSort=true 且列未配置静态 options（或为空数组）时，
+// 从「前端分页前的全部数据」（localSourceData）中提取该列的去重值作为勾选项。
+// 关键：提取时应用其他列「已确认」的过滤条件（列间级联仍然生效），
+// 但排除当前列自身的过滤条件 —— 该列确认过滤后再次打开面板，
+// 选项仍为过滤前的完整集合，不会出现「越筛越少、无法取消」的问题。
+const getLocalCheckboxOptions = (field) => {
+  if (!props.localFilterSort || !field) return [];
+  const all = localSourceData.value || [];
+  if (!all.length) return [];
+  const { filters } = getFilterSortState();
+  // 单趟融合提取 + 记忆化（实现见 localFilterSort.js）：
+  // 内部自动排除 field 自身列过滤；重复打开面板且其他列条件/数据未变时命中缓存
+  return extractCheckboxOptions(all, field, filters);
+};
+
 const fetchFilterOptions = async (field) => {
   // 本地过滤排序模式：后端不参与，禁止调用 requestFilterAPI，
-  // FilterCheckbox 自动回退到列配置 filterRender.props.options 静态选项
+  // FilterCheckbox 自动回退到列配置 filterRender.props.options 静态选项；
+  // 静态 options 也未配置时，由 FilterCheckbox 调 getLocalCheckboxOptions 从全量数据提取
   if (props.localFilterSort) return null;
   if (typeof props.requestFilterAPI !== "function") return null;
   try {
@@ -967,6 +991,8 @@ const applyFilterAndSyncHeader = (payload) => {
 provide("tableProFilterContext", {
   gather: getFilterSortState,
   fetchFilterOptions,
+  // 本地过滤排序模式下，未配置静态 options 时从分页前全量数据提取勾选项
+  getLocalCheckboxOptions,
   // 是否启用远程过滤选项（FilterCheckbox 据此决定远程/静态模式）：
   // 本地过滤排序开关开启时恒为 false（不触发 requestFilterAPI，回退静态 options）
   hasRemoteFilterAPI: () =>
