@@ -201,3 +201,203 @@ describe("FilterCheckbox 组件（jsdom 全量兜底渲染）", () => {
     expect(isIndeterminate(header(wrapper))).toBe(true);
   });
 });
+
+// ========== 远程分页 + 联想搜索（paged 模式） ==========
+// 后端分页 mock：共 35 项，pageSize=20，page1=20 条 / page2=15 条
+const makePagedCtx = (fetchFilterOptions) => ({
+  hasRemoteFilterAPI: () => true,
+  fetchFilterOptions,
+  filterRefetchCounter: reactive({ f: 0 }),
+});
+const pagedRows = (pageNum, pageSize = 20, total = 35) => {
+  const start = (pageNum - 1) * pageSize;
+  const rows = [];
+  for (let i = start; i < Math.min(start + pageSize, total); i++) {
+    rows.push({ label: `v${i + 1}`, value: `v${i + 1}` });
+  }
+  return rows;
+};
+const pagedRender = (extra = {}) => ({
+  props: { paged: true, pageSize: 20, searchDebounce: 0, ...extra },
+});
+const scrollToBottom = (wrapper) =>
+  wrapper.find(".filter-checkbox__list").element.dispatchEvent(new Event("scroll"));
+
+describe("FilterCheckbox 远程分页 + 联想搜索", () => {
+  it("首屏携带 keyword/pageNum/pageSize；触底请求下一页并按 value 去重追加；取满显示没有更多且不再请求", async () => {
+    const fetch = vi.fn(async (f, q) => {
+      const rows = pagedRows(q.pageNum, q.pageSize);
+      // 模拟后端跨页边界重复：page2 首项与 page1 末项相同
+      if (q.pageNum === 2) rows.unshift({ label: "v20", value: "v20" });
+      return { options: rows, total: 35, paged: true };
+    });
+    const wrapper = mountFC({ ctx: makePagedCtx(fetch), renderOpts: pagedRender() });
+    await flushPromises();
+    expect(fetch).toHaveBeenNthCalledWith(1, "f", {
+      keyword: "",
+      pageNum: 1,
+      pageSize: 20,
+    });
+    expect(items(wrapper)).toHaveLength(20);
+    const status = () => wrapper.find(".filter-checkbox__list-status");
+    expect(status().exists()).toBe(true);
+    expect(status().find(".is-end").exists()).toBe(false);
+
+    scrollToBottom(wrapper);
+    await flushPromises();
+    expect(fetch).toHaveBeenNthCalledWith(2, "f", {
+      keyword: "",
+      pageNum: 2,
+      pageSize: 20,
+    });
+    expect(items(wrapper)).toHaveLength(35); // v20 重复项被合并
+    expect(status().find(".is-end").text()).toContain("没有更多");
+
+    scrollToBottom(wrapper);
+    await flushPromises();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("联想搜索走后端：防抖 300ms 后携带 keyword 重置到第 1 页；等待期不做本地过滤", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(async (f, q) => {
+        if (q.keyword) {
+          return { options: [{ label: "匹配-x", value: "kx" }], total: 1, paged: true };
+        }
+        return { options: pagedRows(q.pageNum, q.pageSize), total: 35, paged: true };
+      });
+      const wrapper = mountFC({
+        ctx: makePagedCtx(fetch),
+        renderOpts: pagedRender({ searchDebounce: 300 }),
+      });
+      await vi.runAllTimersAsync();
+      expect(fetch).toHaveBeenNthCalledWith(1, "f", {
+        keyword: "",
+        pageNum: 1,
+        pageSize: 20,
+      });
+      expect(items(wrapper)).toHaveLength(20);
+
+      // 先触底加载第 2 页（共 35 项）
+      scrollToBottom(wrapper);
+      await vi.runAllTimersAsync();
+      expect(items(wrapper)).toHaveLength(35);
+
+      await wrapper.find("input").setValue("x");
+      // 防抖未到：不发请求，且分页模式【不做本地过滤】，仍显示全部已加载项
+      await vi.advanceTimersByTimeAsync(299);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(items(wrapper)).toHaveLength(35);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch).toHaveBeenNthCalledWith(3, "f", {
+        keyword: "x",
+        pageNum: 1,
+        pageSize: 20,
+      });
+      await vi.runAllTimersAsync();
+      expect(labels(wrapper)).toEqual(["匹配-x"]);
+      expect(wrapper.find(".filter-checkbox__list-status .is-end").exists()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("竞态防护：旧关键字的响应晚到时被丢弃，以最新请求结果为准", async () => {
+    let resolveOld;
+    let resolveNew;
+    const fetch = vi.fn(
+      (f, q) =>
+        new Promise((resolve) => {
+          if (q.keyword === "") resolveOld = resolve;
+          else resolveNew = resolve;
+        }),
+    );
+    const wrapper = mountFC({ ctx: makePagedCtx(fetch), renderOpts: pagedRender() });
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // searchDebounce=0：watch 触发后同步发起新请求
+    await wrapper.find("input").setValue("new");
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    // 新请求先返回
+    resolveNew({
+      options: [{ label: "新结果", value: "n" }],
+      total: 1,
+      paged: true,
+    });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["新结果"]);
+
+    // 旧首页响应晚到：必须被丢弃（不能覆盖新关键字结果）
+    resolveOld({
+      options: [{ label: "旧首页", value: "o" }],
+      total: 50,
+      paged: true,
+    });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["新结果"]);
+    expect(wrapper.find(".filter-checkbox__list-status .is-end").exists()).toBe(true);
+  });
+
+  it("已选值跨页保持（未加载页中的值不丢失）；全选作用于所有已加载页", async () => {
+    const option = makeOption({ values: ["v30"] }); // v30 在第 2 页
+    const fetch = vi.fn(async (f, q) => ({
+      options: pagedRows(q.pageNum, q.pageSize),
+      total: 35,
+      paged: true,
+    }));
+    const wrapper = mountFC({
+      option,
+      ctx: makePagedCtx(fetch),
+      renderOpts: pagedRender(),
+    });
+    await flushPromises();
+    // v30 尚未加载：已选值必须原样保留；全选/半选不把未加载项算入
+    expect(option.data.values).toEqual(["v30"]);
+    expect(header(wrapper).classes()).not.toContain("is-checked");
+    expect(isIndeterminate(header(wrapper))).toBe(false);
+
+    scrollToBottom(wrapper);
+    await flushPromises();
+    expect(items(wrapper)).toHaveLength(35);
+    const checkedValues = items(wrapper).filter((w) =>
+      w.classes().includes("is-checked"),
+    );
+    expect(checkedValues.map((w) => w.text())).toEqual(["v30"]);
+    expect(isIndeterminate(header(wrapper))).toBe(true);
+
+    // 全选：跨已加载页（含虚拟窗口外节点），且不产生重复值
+    await toggle(header(wrapper));
+    expect(option.data.values).toHaveLength(35);
+    expect(option.data.values).toContain("v1");
+    expect(option.data.values).toContain("v20");
+    expect(option.data.values).toContain("v35");
+  });
+
+  it("后端仍返回旧式数组：按单页处理（paged=false），显示没有更多且触底不追加", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue([
+        { label: "A", value: "a" },
+        { label: "B", value: "b" },
+        { label: "C", value: "c" },
+      ]);
+    const wrapper = mountFC({ ctx: makePagedCtx(fetch), renderOpts: pagedRender() });
+    await flushPromises();
+    expect(items(wrapper)).toHaveLength(3);
+    expect(wrapper.find(".filter-checkbox__list-status .is-end").exists()).toBe(true);
+
+    scrollToBottom(wrapper);
+    await flushPromises();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("首屏返回 null：按无数据处理，显示无匹配数据", async () => {
+    const fetch = vi.fn().mockResolvedValue(null);
+    const wrapper = mountFC({ ctx: makePagedCtx(fetch), renderOpts: pagedRender() });
+    await flushPromises();
+    expect(wrapper.find(".filter-checkbox__empty").text()).toBe("无匹配数据");
+  });
+});

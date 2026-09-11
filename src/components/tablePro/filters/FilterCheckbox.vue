@@ -26,15 +26,26 @@
  *   - 列表采用定高虚拟滚动（行高 22px，窗口计算见 virtualList.js），
  *     DOM 中只保留「可视窗口 + overscan」内的 checkbox（通常 20~40 个），
  *     不随选项总数增长；占位容器撑开滚动条，已渲染节点用 transform 定位；
- *   - 「全选」行吸顶（sticky），滚动时始终可见；全选语义仍作用于过滤后的全部项
+ *   - 「全选」行吸顶（sticky），滚动时始终可见；全选语义作用于当前选项集合
  *     （allChecked/indeterminate 基于完整 filteredOptions 计算，与渲染窗口无关）；
  *   - 勾选状态存于 option.data.values，节点回收/复用不影响已选值。
+ *
+ * 远程分页 + 联想搜索（filterRender.props.paged = true，且仅远程模式生效）：
+ *   - 面板打开请求第 1 页（requestFilterAPI 收到 { field, filters, keyword, pageNum, pageSize }），
+ *     滚到列表底部自动请求下一页并追加（去重），直到取满后端 total；
+ *   - 搜索框输入走【后端联想】：防抖（searchDebounce，默认 300ms）后重置到第 1 页请求，
+ *     不在前端对已加载页做本地过滤（避免「只能搜到当前页」）；
+ *     非分页模式下搜索仍为前端实时过滤（静态/本地提取/旧式全量远程）；
+ *   - 竞态防护：关键字快速变化/重开面板时递增请求序号，过期响应直接丢弃；
+ *   - 已勾选值（含未加载页中的值）始终保留在 option.data.values，翻页/重搜不丢失；
+ *   - 后端尚未分页（仍返回数组）时自动按单页处理，hasMore=false，可渐进接入；
+ *   - 分页模式下「全选」作用于当前已加载的全部选项（跨已加载页，含虚拟窗口外节点）。
  *
  * 布局：搜索框固定在顶部（flex-shrink:0），选项列表在剩余空间内滚动；
  *       checkbox 标签超长时省略号显示，hover 时通过 title 提示完整文本。
  */
 import { computed, ref, inject, watch } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { useElementSize, useDebounceFn } from '@vueuse/core'
 import {
   ITEM_HEIGHT,
   OVERSCAN,
@@ -75,6 +86,23 @@ const useLocalExtract = computed(
     typeof ctx?.getLocalCheckboxOptions === 'function',
 )
 
+// 远程分页配置（仅远程模式生效），来自列配置 filterRender.props：
+//   paged=true 开启；pageSize 默认 20；searchDebounce 默认 300ms；bottomDistance 触底阈值默认 60px
+const remoteProps = computed(() => props.renderOpts?.props || {})
+const pagedMode = computed(() => useRemote.value && remoteProps.value.paged === true)
+const remotePageSize = computed(() => {
+  const n = Number(remoteProps.value.pageSize)
+  return n > 0 ? Math.floor(n) : 20
+})
+const remoteSearchDebounce = computed(() => {
+  const n = Number(remoteProps.value.searchDebounce)
+  return Number.isFinite(n) && n >= 0 ? n : 300
+})
+const remoteBottomDistance = computed(() => {
+  const n = Number(remoteProps.value.bottomDistance)
+  return n > 0 ? n : 60
+})
+
 // 实际使用的选项：远程 > 静态 options（非空）> 本地全量数据提取
 const options = computed(() => {
   if (useRemote.value) return remoteOptions.value
@@ -96,8 +124,11 @@ const selected = computed({
   },
 })
 
-// 经搜索框过滤后的可见选项（始终保持选项原始顺序，不再将已选值置顶）
+// 可见选项：
+//   - 分页远程模式：后端按关键字联想返回，前端不再本地过滤（否则只能搜到已加载页）
+//   - 其余模式（静态/本地提取/旧式全量远程）：前端按关键字实时过滤，保持原始顺序
 const filteredOptions = computed(() => {
+  if (pagedMode.value) return options.value
   const kw = (search.value || '').toLowerCase()
   if (!kw) return options.value
   return options.value.filter((o) =>
@@ -160,20 +191,148 @@ const totalContentHeight = computed(
 )
 
 const onListScroll = (e) => {
-  scrollTop.value = e.target.scrollTop
+  const el = e.target
+  scrollTop.value = el.scrollTop
+  if (!pagedMode.value) return
+  // 触底加载：距底部不足阈值时请求下一页（loading/hasMore 由 loadRemoteNextPage 内部守卫）
+  if (
+    el.scrollTop + el.clientHeight >=
+    el.scrollHeight - remoteBottomDistance.value
+  ) {
+    loadRemoteNextPage()
+  }
 }
 
 // 选项集合变化（重新拉取 / 搜索关键字 / 级联收敛）时回到顶部，
-// 避免滚动位置停留在已不存在的区间；同时复位滚动容器避免 scrollTop 越界
+// 避免滚动位置停留在已不存在的区间；同时复位滚动容器避免 scrollTop 越界。
+// 分页模式的「触底追加」也会替换数组但不应回顶，故交由 fetchRemoteFirstPage 显式复位。
 watch(filteredOptions, () => {
+  if (pagedMode.value) return
   scrollTop.value = 0
   if (listRef.value) listRef.value.scrollTop = 0
+})
+
+// ========== 远程分页 + 联想搜索 ==========
+// 当前已加载页 / 后端总数 / 是否还有下一页 / 翻页加载中
+const remotePage = ref(0)
+const remoteTotal = ref(0)
+const loadingMore = ref(false)
+const hasMore = ref(false)
+// 请求序号：关键字快速变化或面板重开时，过期响应必须丢弃（竞态防护）
+let remoteFetchSeq = 0
+
+// 按 value 去重合并（防御后端跨页重复项），保持原始顺序
+const mergeUniqueOptions = (list) => {
+  const seen = new Set()
+  const out = []
+  for (const o of list) {
+    if (o == null) continue
+    const key = o.value ?? o.label
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(o)
+  }
+  return out
+}
+
+// 统一解析分页响应：兼容 { options, total, paged } 与旧式数组（按单页处理）
+const parsePagedResponse = (res) => {
+  if (Array.isArray(res)) {
+    return { pageOptions: res, total: res.length, paged: false }
+  }
+  const pageOptions = res?.options || []
+  const rawTotal = res?.total
+  const total =
+    rawTotal != null && Number.isFinite(Number(rawTotal))
+      ? Number(rawTotal)
+      : pageOptions.length
+  return { pageOptions, total, paged: res?.paged === true }
+}
+
+// 首页请求（面板打开 / 联想关键字变化 / 级联条件变化）：重置分页后拉第 1 页
+const fetchRemoteFirstPage = async () => {
+  if (typeof ctx?.fetchFilterOptions !== 'function') return
+  const seq = ++remoteFetchSeq
+  loading.value = true
+  loadingMore.value = false
+  try {
+    const res = await ctx.fetchFilterOptions(props.field, {
+      keyword: search.value || '',
+      pageNum: 1,
+      pageSize: remotePageSize.value,
+    })
+    if (seq !== remoteFetchSeq) return // 已被更新的请求取代
+    if (!res) {
+      remoteOptions.value = []
+      remotePage.value = 0
+      remoteTotal.value = 0
+      hasMore.value = false
+      return
+    }
+    const { pageOptions, total, paged } = parsePagedResponse(res)
+    remoteOptions.value = mergeUniqueOptions(pageOptions)
+    remotePage.value = 1
+    remoteTotal.value = total
+    // 后端仍返回数组（未分页）/ 空页 / 已取满 → 无下一页
+    hasMore.value =
+      paged && pageOptions.length > 0 && remoteOptions.value.length < total
+    // 首页/重搜后显式回到顶部（触底追加不经过本函数，不会被打断滚动位置）
+    scrollTop.value = 0
+    if (listRef.value) listRef.value.scrollTop = 0
+  } catch {
+    if (seq === remoteFetchSeq) remoteOptions.value = []
+  } finally {
+    if (seq === remoteFetchSeq) loading.value = false
+  }
+}
+
+// 触底加载下一页：成功后追加；失败则保留 hasMore，下次触底可重试
+const loadRemoteNextPage = async () => {
+  if (!pagedMode.value || loading.value || loadingMore.value || !hasMore.value) return
+  const nextPage = remotePage.value + 1
+  const seq = ++remoteFetchSeq
+  loadingMore.value = true
+  try {
+    const res = await ctx.fetchFilterOptions(props.field, {
+      keyword: search.value || '',
+      pageNum: nextPage,
+      pageSize: remotePageSize.value,
+    })
+    if (seq !== remoteFetchSeq) return
+    const { pageOptions, total, paged } = parsePagedResponse(res || [])
+    if (pageOptions.length > 0) {
+      remoteOptions.value = mergeUniqueOptions([...remoteOptions.value, ...pageOptions])
+    }
+    remotePage.value = nextPage
+    remoteTotal.value = total
+    hasMore.value =
+      paged && pageOptions.length > 0 && remoteOptions.value.length < total
+  } catch {
+    // 不推进页码、不清 hasMore：下次触底重新请求同一页
+  } finally {
+    if (seq === remoteFetchSeq) loadingMore.value = false
+  }
+}
+
+// 联想搜索：防抖后重置到第 1页（仅分页模式；非分页模式由 filteredOptions 本地过滤）
+const debouncedRemoteSearch = useDebounceFn(
+  () => {
+    if (pagedMode.value) fetchRemoteFirstPage()
+  },
+  () => remoteSearchDebounce.value,
+)
+watch(search, () => {
+  if (pagedMode.value) debouncedRemoteSearch()
 })
 
 // 刷新选项（封装为可复用函数）：远程模式走接口，本地提取模式从全量数据计算
 const doFetchOptions = async () => {
   if (useRemote.value) {
     if (typeof ctx.fetchFilterOptions !== 'function') return
+    if (pagedMode.value) {
+      await fetchRemoteFirstPage()
+      return
+    }
     loading.value = true
     try {
       const res = await ctx.fetchFilterOptions(props.field)
@@ -253,6 +412,13 @@ watch(
             </el-checkbox>
           </el-checkbox-group>
         </div>
+        <!-- 远程分页状态行（非分页模式不渲染）：不用假选项充当，避免干扰勾选/键盘行为 -->
+        <div v-if="pagedMode" class="filter-checkbox__list-status">
+          <span v-if="loadingMore" class="is-loading">加载中…</span>
+          <span v-else-if="!hasMore && filteredOptions.length" class="is-end">
+            没有更多了
+          </span>
+        </div>
       </div>
       <div v-else class="filter-checkbox__empty">无匹配数据</div>
     </template>
@@ -307,6 +473,20 @@ watch(
     position: absolute;
     inset: 0;
     display: block;
+  }
+
+  // 远程分页底部状态行（加载中 / 没有更多了），位于滚动流末尾
+  &__list-status {
+    flex-shrink: 0;
+    padding: 6px 0 4px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--el-text-color-secondary, #909399);
+
+    .is-loading {
+      color: var(--el-color-primary, #409eff);
+    }
   }
 
   // 虚拟窗口内的单个选项：绝对定位（top 固定，translateY 决定行位置）

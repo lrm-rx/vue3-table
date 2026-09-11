@@ -32,6 +32,8 @@ import {
   extractCheckboxOptions,
   bumpCheckboxOptionsCache,
 } from "./utils/localFilterSort.js";
+// 远程过滤选项分页结果归一化（数组 / {list|rows|records,total} 等）
+import { normalizeRemoteFilterResult } from "./utils/remoteFilterOptions.js";
 // 列配置构建（mergedColumns 纯逻辑：render/headerRender/editRender/filterType 简写注入等）
 import {
   buildColumns,
@@ -956,7 +958,10 @@ const getLocalCheckboxOptions = (field) => {
   return extractCheckboxOptions(all, field, filters);
 };
 
-const fetchFilterOptions = async (field) => {
+// query 缺省（旧式全量调用）：requestFilterAPI 收到 { field, filters }，返回映射后的选项数组。
+// query = { keyword, pageNum, pageSize }（分页/联想搜索调用）：额外透传分页与关键字参数，
+//   返回 { options, total, paged }；后端若仍只返回数组则 paged=false（单页兜底，兼容渐进接入）。
+const fetchFilterOptions = async (field, query = null) => {
   // 本地过滤排序模式：后端不参与，禁止调用 requestFilterAPI，
   // FilterCheckbox 自动回退到列配置 filterRender.props.options 静态选项；
   // 静态 options 也未配置时，由 FilterCheckbox 调 getLocalCheckboxOptions 从全量数据提取
@@ -964,7 +969,14 @@ const fetchFilterOptions = async (field) => {
   if (typeof props.requestFilterAPI !== "function") return null;
   try {
     const filters = collectCheckboxFilterParams();
-    let res = await props.requestFilterAPI({ field, filters });
+    const apiParams = { field, filters };
+    const isPagedCall = !!(query && query.pageNum != null);
+    if (isPagedCall) {
+      apiParams.keyword = query.keyword ?? "";
+      apiParams.pageNum = query.pageNum;
+      apiParams.pageSize = query.pageSize;
+    }
+    let res = await props.requestFilterAPI(apiParams);
     // filterDataCallback 对原始数据二次处理（提取 data / 重命名 / 过滤无效项等）
     if (typeof props.filterDataCallback === "function") {
       res = props.filterDataCallback(res);
@@ -972,10 +984,17 @@ const fetchFilterOptions = async (field) => {
     const keys = props.filterOptionKeys || {};
     const labelKey = keys.label || "label";
     const valueKey = keys.value || "value";
-    return (Array.isArray(res) ? res : []).map((item) => ({
-      label: item[labelKey],
-      value: item[valueKey],
-    }));
+    const mapRows = (rows) =>
+      (Array.isArray(rows) ? rows : []).map((item) => ({
+        label: item[labelKey],
+        value: item[valueKey],
+      }));
+
+    if (!isPagedCall) {
+      return mapRows(Array.isArray(res) ? res : []);
+    }
+    const { rows, total, paged } = normalizeRemoteFilterResult(res);
+    return { options: mapRows(rows), total, paged };
   } catch (e) {
     return null;
   }

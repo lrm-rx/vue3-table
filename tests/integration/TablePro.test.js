@@ -132,10 +132,12 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
 
   it("静态排序：vxe sort-change 触发本地排序并切片", async () => {
     const rows = makeRows(25);
+    // 本地排序由 localFilterSort 显式开关控制（默认 false：静态模式交给 vxe 原生排序）
     const { wrapper, grid } = await mountTablePro({
       columns: STATIC_COLUMNS,
       data: rows,
       pagination: true,
+      localFilterSort: true,
     });
     // 模拟 vxe 已按 age desc 排序
     grid.mock.sorts = [{ field: "age", order: "desc" }];
@@ -148,6 +150,25 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     expect(data[0].id).toBe(25); // 25,24,...16
     expect(data[9].id).toBe(16);
     // 事件转发给外部
+    expect(wrapper.emitted("sort-change")).toHaveLength(1);
+  });
+
+  it("localFilterSort 默认 false：静态模式 sort-change 不做本地排序（交由 vxe 原生）", async () => {
+    const rows = makeRows(25);
+    const { wrapper, grid } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: rows,
+      pagination: true,
+    });
+    grid.mock.sorts = [{ field: "age", order: "desc" }];
+    const attrs = gridAttrs(wrapper);
+    attrs.onSortChange({});
+    await flushPromises();
+
+    // 组件层不重排：当前页切片保持原顺序（真实环境由 vxe 对当前页原生排序）
+    const data = gridAttrs(wrapper).data;
+    expect(data.map((r) => r.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // sort-change 事件照常转发
     expect(wrapper.emitted("sort-change")).toHaveLength(1);
   });
 

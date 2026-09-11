@@ -347,6 +347,32 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 
 `requestFilterAPI` 接收 `{ field, filters }`，返回 Promise<选项数组>。FilterCheckbox 列打开过滤面板时自动拉取。
 
+#### 大数据量：分页触底加载 + 搜索联想（按列开启）
+
+列配置 `filterRender.props` 传入 `paged: true` 即对该列启用（仅远程模式生效；`localFilterSort=true` 时不调用接口）：
+
+```js
+{
+  field: "role",
+  title: "角色",
+  filterType: "FilterCheckbox",
+  filterRender: {
+    name: "FilterCheckbox",
+    props: {
+      paged: true,        // 开启后端分页 + 联想搜索
+      pageSize: 20,       // 每页条数，默认 20
+      searchDebounce: 300 // 搜索防抖毫秒，默认 300；bottomDistance 可配触底阈值，默认 60px
+    },
+  },
+}
+```
+
+- 请求参数：`{ field, filters, keyword, pageNum, pageSize }`；面板打开拉第 1 页（`keyword: ''`），列表滚到底部自动请求下一页并追加（按 value 去重），直到取满 `total`。
+- 搜索框输入走**后端联想**：防抖后以 `{ keyword, pageNum: 1, pageSize }` 重新请求首页（不在前端只过滤已加载页）；快速输入/重开面板时过期响应自动丢弃（请求序号竞态防护）。
+- 返回结构（任选其一，`total` 缺省按当前页条数兜底）：`{ list, total }` / `{ rows, total }` / `{ records, total }` / `{ data: [...], total }` / `{ data: { rows, total } }`。
+- **渐进兼容**：后端尚未分页时仍可直接返回数组，组件自动按单页处理（不再触底加载）；未配置 `paged` 的列行为与旧版完全一致（一次拉全量 + 前端搜索过滤）。
+- 已勾选值独立于已加载选项保存：翻页、联想搜索、面板重开均不丢失；分页模式下吸顶「全选」作用于当前已加载的全部选项（含虚拟窗口外节点）。配合定高虚拟滚动，任意页数下列表 DOM 节点数恒定（约 20~40 个）。
+
 ### 过滤相关方法/事件
 
 - 暴露方法：`getFilterParams()`、`getFilterSortState()`、`resetAllFilter()`、`resetColumnFilter({ field })`
