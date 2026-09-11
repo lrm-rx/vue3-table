@@ -22,10 +22,25 @@
  *
  * 选项顺序：始终保持选项的原始顺序（不再将已选值置顶），避免勾选/取消时出现跳动
  *
+ * 超高基数（数万选项）虚拟滚动：
+ *   - 列表采用定高虚拟滚动（行高 22px，窗口计算见 virtualList.js），
+ *     DOM 中只保留「可视窗口 + overscan」内的 checkbox（通常 20~40 个），
+ *     不随选项总数增长；占位容器撑开滚动条，已渲染节点用 transform 定位；
+ *   - 「全选」行吸顶（sticky），滚动时始终可见；全选语义仍作用于过滤后的全部项
+ *     （allChecked/indeterminate 基于完整 filteredOptions 计算，与渲染窗口无关）；
+ *   - 勾选状态存于 option.data.values，节点回收/复用不影响已选值。
+ *
  * 布局：搜索框固定在顶部（flex-shrink:0），选项列表在剩余空间内滚动；
  *       checkbox 标签超长时省略号显示，hover 时通过 title 提示完整文本。
  */
 import { computed, ref, inject, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
+import {
+  ITEM_HEIGHT,
+  OVERSCAN,
+  HEADER_HEIGHT,
+  getVisibleRange,
+} from './virtualList.js'
 
 const props = defineProps({
   option: { type: Object, required: true },
@@ -118,6 +133,43 @@ const indeterminate = computed(() => {
   return some && !allChecked.value
 })
 
+// ========== 定高虚拟滚动 ==========
+// 列表滚动容器（同时是吸顶全选行的定位上下文）
+const listRef = ref(null)
+const scrollTop = ref(0)
+// ResizeObserver 测量容器高度（面板高度随表格 body / 密度切换变化）
+const { height: listHeight } = useElementSize(listRef)
+
+// 可视窗口（扣除吸顶全选行；scrollTop 同样扣除头部偏移，使首行索引计算准确）
+const visibleRange = computed(() =>
+  getVisibleRange({
+    total: filteredOptions.value.length,
+    scrollTop: Math.max(0, scrollTop.value - HEADER_HEIGHT),
+    viewportHeight: Math.max(0, listHeight.value - HEADER_HEIGHT),
+    itemHeight: ITEM_HEIGHT,
+    overscan: OVERSCAN,
+  }),
+)
+// 当前真正渲染的选项（窗口切片）
+const visibleOptions = computed(() =>
+  filteredOptions.value.slice(visibleRange.value.start, visibleRange.value.end),
+)
+// 占位容器高度 = 全部选项总高（撑开滚动条；无论渲染多少 DOM 节点）
+const totalContentHeight = computed(
+  () => filteredOptions.value.length * ITEM_HEIGHT,
+)
+
+const onListScroll = (e) => {
+  scrollTop.value = e.target.scrollTop
+}
+
+// 选项集合变化（重新拉取 / 搜索关键字 / 级联收敛）时回到顶部，
+// 避免滚动位置停留在已不存在的区间；同时复位滚动容器避免 scrollTop 越界
+watch(filteredOptions, () => {
+  scrollTop.value = 0
+  if (listRef.value) listRef.value.scrollTop = 0
+})
+
 // 刷新选项（封装为可复用函数）：远程模式走接口，本地提取模式从全量数据计算
 const doFetchOptions = async () => {
   if (useRemote.value) {
@@ -168,24 +220,39 @@ watch(
 
     <div v-if="loading" class="filter-checkbox__empty">加载中...</div>
     <template v-else-if="hasOptions">
-      <div v-if="!noMatch" class="filter-checkbox__list">
-        <el-checkbox
-          v-model="allChecked"
-          :indeterminate="indeterminate"
-          class="filter-checkbox__all"
-        >
-          全选
-        </el-checkbox>
-        <el-checkbox-group v-model="selected" class="filter-checkbox__group">
-          <el-checkbox
-            v-for="o in filteredOptions"
-            :key="o.value"
-            :value="o.value"
-            :title="String(o.label ?? o.value)"
-          >
-            {{ o.label }}
+      <div
+        v-if="!noMatch"
+        ref="listRef"
+        class="filter-checkbox__list"
+        @scroll.passive="onListScroll"
+      >
+        <!-- 吸顶全选：作用于过滤后的全部项（与虚拟窗口无关） -->
+        <div class="filter-checkbox__list-header">
+          <el-checkbox v-model="allChecked" :indeterminate="indeterminate">
+            全选
           </el-checkbox>
-        </el-checkbox-group>
+        </div>
+        <!-- 占位容器按全部选项总高撑开滚动条 -->
+        <div
+          class="filter-checkbox__virtual"
+          :style="{ height: `${totalContentHeight}px` }"
+        >
+          <!-- 仅渲染窗口内节点，绝对定位 + transform 到各自行位置 -->
+          <el-checkbox-group v-model="selected" class="filter-checkbox__group">
+            <el-checkbox
+              v-for="(o, i) in visibleOptions"
+              :key="o.value"
+              :value="o.value"
+              :title="String(o.label ?? o.value)"
+              class="filter-checkbox__item"
+              :style="{
+                transform: `translateY(${(visibleRange.start + i) * ITEM_HEIGHT}px)`,
+              }"
+            >
+              {{ o.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </div>
       </div>
       <div v-else class="filter-checkbox__empty">无匹配数据</div>
     </template>
@@ -209,39 +276,57 @@ watch(
   &__list {
     flex: 1;
     min-height: 0;
+    // 单个滚动容器：吸顶全选行 + 虚拟占位区
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
+    position: relative;
   }
 
-  &__group {
-    display: flex;
-    flex-direction: column;
-    margin-top: 2px;
+  // 吸顶「全选」行：滚动时常驻列表顶部，需不透明显色盖住下方划过的选项
+  &__list-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    // 高度 = HEADER_HEIGHT（checkbox 22px + 下间距 2px），需与 virtualList.js 保持一致
+    padding-bottom: 2px;
+    background: var(--el-bg-color, #fff);
 
-    // 缩小 el-checkbox-group 内部每个 checkbox 之间的垂直间距
     :deep(.el-checkbox) {
       margin-right: 0;
-      margin-bottom: 0;
       height: 22px;
-      // 标签超长省略，hover 时通过 title 提示完整文本
-      .el-checkbox__label {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
     }
   }
 
-  &__all {
-    flex-shrink: 0;
-    margin-bottom: 2px;
+  // 占位容器：高度 = 全部选项总高，只负责撑开滚动条
+  &__virtual {
+    position: relative;
+    width: 100%;
   }
 
-  // 缩小「全选」checkbox 与下方 group 的视觉距离
-  :deep(.el-checkbox) {
+  // 绝对填充占位区，作为虚拟节点（absolute）的定位上下文
+  &__group {
+    position: absolute;
+    inset: 0;
+    display: block;
+  }
+
+  // 虚拟窗口内的单个选项：绝对定位（top 固定，translateY 决定行位置）
+  :deep(.filter-checkbox__item) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
     margin-right: 0;
+    // 行高固定 22px = ITEM_HEIGHT（定高虚拟滚动的前提，勿改为 auto）
     height: 22px;
+    display: flex;
+    align-items: center;
+
+    // 标签超长省略，hover 时通过 title 提示完整文本
+    .el-checkbox__label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 
   &__empty {

@@ -423,7 +423,8 @@ const genStaticData = () => {
   const surnames = ["张", "李", "王", "赵", "陈", "刘", "杨", "黄", "周", "吴"];
   const departments = ["技术部", "产品部", "市场部"];
   const list = [];
-  for (let i = 1; i <= 32; i++) {
+  const TOTAL = 32;
+  for (let i = 1; i <= TOTAL; i++) {
     list.push({
       id: i,
       username: `${surnames[i % surnames.length]}${i}号`,

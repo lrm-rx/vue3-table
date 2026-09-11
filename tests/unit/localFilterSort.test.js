@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { applyLocalFilterSort } from "../../src/components/tablePro/utils/localFilterSort.js";
+import {
+  applyLocalFilterSort,
+  extractCheckboxOptions,
+  bumpCheckboxOptionsCache,
+} from "../../src/components/tablePro/utils/localFilterSort.js";
 
 // 过滤项形状与 getFilterSortState 收集结果一致
 const filter = (field, type, data, active = true) => ({ field, type, data, active });
@@ -213,5 +217,243 @@ describe("过滤 + 排序组合", () => {
     const f = [filter("role", "FilterCheckbox", { values: ["admin"] })];
     const r = applyLocalFilterSort(rows, f, [sort("age", "desc")]);
     expect(r.map((x) => x.id)).toEqual([1, 3]);
+  });
+});
+
+// ========== FilterCheckbox 本地选项提取（单趟融合 + 记忆化）==========
+describe("extractCheckboxOptions 基础提取", () => {
+  it("空数据 / 非数组 / 无 field 返回 []", () => {
+    expect(extractCheckboxOptions([], "d", [])).toEqual([]);
+    expect(extractCheckboxOptions(null, "d", [])).toEqual([]);
+    expect(extractCheckboxOptions([{ a: 1 }], "", [])).toEqual([]);
+  });
+
+  it("去重 + 保持首次出现顺序 + value 保留原始类型", () => {
+    const data = [
+      { d: "技术部" },
+      { d: "产品部" },
+      { d: "技术部" },
+      { d: 1 },
+      { d: "1" }, // 数字 1 与字符串 "1" 按 String 去重，保留先出现的数字
+      { d: 2 },
+    ];
+    const opts = extractCheckboxOptions(data, "d", []);
+    expect(opts.map((o) => o.label)).toEqual(["技术部", "产品部", "1", "2"]);
+    expect(opts[2].value).toBe(1);
+    expect(typeof opts[2].value).toBe("number");
+  });
+
+  it("null/undefined/空字符串/对象/数组不生成选项，0 与 false 保留", () => {
+    const data = [
+      { d: null },
+      { d: undefined },
+      { d: "" },
+      { d: { x: 1 } },
+      { d: [1] },
+      { d: 0 },
+      { d: false },
+      { d: "正常" },
+    ];
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
+      "0",
+      "false",
+      "正常",
+    ]);
+  });
+
+  it("null/undefined 行被跳过", () => {
+    const data = [null, { d: "a" }, undefined, { d: "b" }];
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual(["a", "b"]);
+  });
+});
+
+describe("extractCheckboxOptions 过滤语义", () => {
+  it("自身列已确认过滤不叠加：确认后仍返回完整选项", () => {
+    const data = [
+      { d: "技术部", role: "a" },
+      { d: "产品部", role: "a" },
+      { d: "市场部", role: "b" },
+    ];
+    const filters = [filter("d", "FilterCheckbox", { values: ["技术部"], search: "" })];
+    expect(extractCheckboxOptions(data, "d", filters).map((o) => o.label)).toEqual([
+      "技术部",
+      "产品部",
+      "市场部",
+    ]);
+  });
+
+  it("未激活过滤 / 未知类型被忽略", () => {
+    const data = [{ d: "技术部", role: "a" }, { d: "产品部", role: "b" }];
+    expect(
+      extractCheckboxOptions(
+        data,
+        "d",
+        [filter("role", "FilterCheckbox", { values: ["a"] }, false)],
+      ).map((o) => o.label),
+    ).toEqual(["技术部", "产品部"]);
+    expect(
+      extractCheckboxOptions(data, "d", [{ field: "x", type: "Wat", active: true, data: {} }]).map(
+        (o) => o.label,
+      ),
+    ).toEqual(["技术部", "产品部"]);
+  });
+
+  it("其他列四种过滤类型级联生效", () => {
+    // FilterCheckbox
+    expect(
+      extractCheckboxOptions(
+        [
+          { d: "技术部", role: "a" },
+          { d: "产品部", role: "b" },
+          { d: "市场部", role: "a" },
+        ],
+        "d",
+        [filter("role", "FilterCheckbox", { values: ["a"], search: "" })],
+      ).map((o) => o.label),
+    ).toEqual(["技术部", "市场部"]);
+
+    // FilterInput（忽略大小写包含）
+    expect(
+      extractCheckboxOptions(
+        [{ d: "技术部", name: "ZhangSan" }, { d: "产品部", name: "李四" }],
+        "d",
+        [filter("name", "FilterInput", { value: "zhang" })],
+      ).map((o) => o.label),
+    ).toEqual(["技术部"]);
+
+    // FilterNumberRange（空值行不匹配）
+    expect(
+      extractCheckboxOptions(
+        [{ d: "技术部", age: 17 }, { d: "产品部", age: 25 }, { d: "市场部", age: null }],
+        "d",
+        [filter("age", "FilterNumberRange", { values: [18, null] })],
+      ).map((o) => o.label),
+    ).toEqual(["产品部"]);
+
+    // FilterDateRange（纯日期端点按整天）
+    expect(
+      extractCheckboxOptions(
+        [
+          { d: "技术部", t: "2024-01-01 10:00:00" },
+          { d: "产品部", t: "2024-06-15 09:00:00" },
+          { d: "市场部", t: "2024-12-31 23:00:00" },
+        ],
+        "d",
+        [filter("t", "FilterDateRange", { values: ["2024-06-01", "2024-06-30"] })],
+      ).map((o) => o.label),
+    ).toEqual(["产品部"]);
+  });
+
+  it("多列条件 AND", () => {
+    const data = [
+      { d: "技术部", role: "a", age: 25 },
+      { d: "产品部", role: "a", age: 10 },
+      { d: "市场部", role: "b", age: 30 },
+    ];
+    const filters = [
+      filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
+      filter("age", "FilterNumberRange", { values: [18, null] }),
+    ];
+    expect(extractCheckboxOptions(data, "d", filters).map((o) => o.label)).toEqual(["技术部"]);
+  });
+
+  it("与 applyLocalFilterSort 过滤阶段语义一致（1000 行伪随机数据对照）", () => {
+    const roles = ["a", "b", "c"];
+    const depts = ["x", "y", "z", "w"];
+    const data = [];
+    let seed = 42;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let i = 0; i < 1000; i += 1) {
+      const r = rand();
+      data.push({
+        id: i,
+        role: roles[Math.floor(r * 3)],
+        dept: r < 0.05 ? null : depts[Math.floor(rand() * 4)],
+        age: Math.floor(rand() * 60),
+      });
+    }
+    const other = [
+      filter("role", "FilterCheckbox", { values: ["a", "b"], search: "" }),
+      filter("age", "FilterNumberRange", { values: [20, 40] }),
+    ];
+    // 对照旧实现：先过滤再二次遍历去重
+    const rows = applyLocalFilterSort(data, other, []);
+    const seen = new Set();
+    const expectOpts = [];
+    rows.forEach((row) => {
+      const v = row.dept;
+      if (v == null || v === "" || typeof v === "object") return;
+      const k = String(v);
+      if (seen.has(k)) return;
+      seen.add(k);
+      expectOpts.push({ label: k, value: v });
+    });
+    expect(extractCheckboxOptions(data, "dept", other)).toEqual(expectOpts);
+  });
+});
+
+describe("extractCheckboxOptions 记忆化", () => {
+  it("相同输入返回同一引用；自身列勾选变化不影响缓存", () => {
+    const data = [{ d: "a" }, { d: "b" }];
+    const a = extractCheckboxOptions(data, "d", []);
+    expect(extractCheckboxOptions(data, "d", [])).toBe(a);
+    expect(
+      extractCheckboxOptions(data, "d", [
+        filter("d", "FilterCheckbox", { values: ["a"], search: "" }),
+      ]),
+    ).toBe(a);
+  });
+
+  it("其他列条件变化 → 重算；filters 顺序不同但语义相同 → 同缓存", () => {
+    const data = [{ d: "技术部", role: "a", age: 25 }, { d: "产品部", role: "b", age: 5 }];
+    const a = extractCheckboxOptions(data, "d", []);
+    const b = extractCheckboxOptions(data, "d", [
+      filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
+    ]);
+    expect(b).not.toBe(a);
+    expect(b.map((o) => o.label)).toEqual(["技术部"]);
+
+    const f1 = [
+      filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
+      filter("age", "FilterNumberRange", { values: [null, 30] }),
+    ];
+    const f2 = [
+      filter("age", "FilterNumberRange", { values: [null, 30] }),
+      filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
+    ];
+    expect(extractCheckboxOptions(data, "d", f1)).toBe(extractCheckboxOptions(data, "d", f2));
+  });
+
+  it("bumpCheckboxOptionsCache 后原地编辑的新值可被提取", () => {
+    const data = [{ d: "技术部" }, { d: "产品部" }];
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
+      "技术部",
+      "产品部",
+    ]);
+    data[1].d = "海外部"; // 原地修改（长度/引用均不变）
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
+      "技术部",
+      "产品部",
+    ]);
+    bumpCheckboxOptionsCache();
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
+      "技术部",
+      "海外部",
+    ]);
+  });
+
+  it("数据源数组替换 → 新缓存互不影响；增删行（length 变化）自动重算", () => {
+    const d1 = [{ d: "a" }];
+    const d2 = [{ d: "a" }, { d: "b" }];
+    expect(extractCheckboxOptions(d1, "d", [])).toHaveLength(1);
+    expect(extractCheckboxOptions(d2, "d", [])).toHaveLength(2);
+    expect(extractCheckboxOptions(d1, "d", [])).toHaveLength(1);
+
+    const d3 = [{ d: "a" }];
+    d3.push({ d: "b" });
+    expect(extractCheckboxOptions(d3, "d", [])).toHaveLength(2);
   });
 });
