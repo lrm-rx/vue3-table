@@ -342,7 +342,7 @@ describe("FilterCheckbox 远程分页 + 联想搜索", () => {
   });
 
   it("已选值跨页保持（未加载页中的值不丢失）；全选作用于所有已加载页", async () => {
-    const option = makeOption({ values: ["v30"] }); // v30 在第 2 页
+    const option = makeOption({ values: ["v30", "zz-未加载"] }); // v30 在第 2 页
     const fetch = vi.fn(async (f, q) => ({
       options: pagedRows(q.pageNum, q.pageSize),
       total: 35,
@@ -355,7 +355,9 @@ describe("FilterCheckbox 远程分页 + 联想搜索", () => {
     });
     await flushPromises();
     // v30 尚未加载：已选值必须原样保留；全选/半选不把未加载项算入
-    expect(option.data.values).toEqual(["v30"]);
+    expect(option.data.values).toEqual(["v30", "zz-未加载"]);
+    // 分页模式不做「已选值兜底合并」：列表成员完全由服务端决定，未加载值不注入
+    expect(labels(wrapper)).not.toContain("zz-未加载");
     expect(header(wrapper).classes()).not.toContain("is-checked");
     expect(isIndeterminate(header(wrapper))).toBe(false);
 
@@ -368,12 +370,14 @@ describe("FilterCheckbox 远程分页 + 联想搜索", () => {
     expect(checkedValues.map((w) => w.text())).toEqual(["v30"]);
     expect(isIndeterminate(header(wrapper))).toBe(true);
 
-    // 全选：跨已加载页（含虚拟窗口外节点），且不产生重复值
+    // 全选：跨已加载页（含虚拟窗口外节点），且不产生重复值；
+    // 未加载的 zz-未加载 仍保留（全选只增不删，32 项已加载 + v30 + zz）
     await toggle(header(wrapper));
-    expect(option.data.values).toHaveLength(35);
+    expect(option.data.values).toHaveLength(36);
     expect(option.data.values).toContain("v1");
     expect(option.data.values).toContain("v20");
     expect(option.data.values).toContain("v35");
+    expect(option.data.values).toContain("zz-未加载");
   });
 
   it("后端仍返回旧式数组：按单页处理（paged=false），显示没有更多且触底不追加", async () => {
@@ -399,5 +403,41 @@ describe("FilterCheckbox 远程分页 + 联想搜索", () => {
     const wrapper = mountFC({ ctx: makePagedCtx(fetch), renderOpts: pagedRender() });
     await flushPromises();
     expect(wrapper.find(".filter-checkbox__empty").text()).toBe("无匹配数据");
+  });
+});
+
+// ========== 已选值兜底（非分页模式） ==========
+// 选项源（本地提取收敛 / 后端契约外收缩）未包含已勾选值时，组件补回该值，
+// 保证已确认选项始终可见、可取消；分页模式不做合并（成员由服务端决定）。
+describe("FilterCheckbox 已选值兜底", () => {
+  it("本地提取模式：提取结果不含已勾选值时，补回合成选项且保持勾选", async () => {
+    // 模拟选项源异常收缩：只剩 A（如数据被上游过滤）
+    const counter = reactive({ f: 0 });
+    const ctx = {
+      getLocalCheckboxOptions: () => [{ label: "A", value: "A" }],
+      filterRefetchCounter: counter,
+    };
+    const option = makeOption({ values: ["A", "X"] });
+    const wrapper = mountFC({ option, field: "f", ctx });
+    await nextTick();
+    // A 来自选项源，X 为兜底合成（label = String(value)），两项均勾选
+    expect(labels(wrapper)).toEqual(["A", "X"]);
+    const checked = items(wrapper).filter((w) => w.classes().includes("is-checked"));
+    expect(checked).toHaveLength(2);
+    // 兜底项可正常取消勾选（写入 values）
+    await toggle(items(wrapper)[1], false);
+    expect(option.data.values).toEqual(["A"]);
+    // 取消后兜底项消失（不再选中即不再补回）
+    expect(labels(wrapper)).toEqual(["A"]);
+  });
+
+  it("静态选项模式：已勾选值缺失时同样兜底补回", async () => {
+    const option = makeOption({ values: ["gone"] });
+    const wrapper = mountFC({
+      option,
+      renderOpts: { props: { options: makeOpts(3) } },
+    });
+    expect(labels(wrapper)).toEqual(["选项-1", "选项-2", "选项-3", "gone"]);
+    expect(items(wrapper)[3].classes()).toContain("is-checked");
   });
 });

@@ -110,6 +110,23 @@ const options = computed(() => {
   return localOptions.value
 })
 
+// 已勾选值兜底（非分页模式）：选项源（后端 / 本地提取 / 级联收敛）未包含某个
+// 已勾选值时，以 { label: String(value), value } 补回 —— 保证已确认的选项始终
+// 可见、可取消，不会出现「勾了却看不到、无法取消」的死锁。
+// 分页模式不合并：列表成员完全由服务端（关键字 + 分页）决定，跨页已选值按设计
+// 不强制展示（勾选状态仍保留在 values 中，翻页加载到对应项时自动回显）。
+const resolvedOptions = computed(() => {
+  const base = options.value
+  if (pagedMode.value) return base
+  const sel = selected.value
+  if (!sel.length) return base
+  const present = new Set(base.map((o) => String(o.value ?? o.label)))
+  const missing = sel.filter((v) => !present.has(String(v)))
+  return missing.length
+    ? [...base, ...missing.map((v) => ({ label: String(v), value: v }))]
+    : base
+})
+
 const search = computed({
   get: () => props.option.data?.search ?? '',
   set: (v) => {
@@ -128,16 +145,16 @@ const selected = computed({
 //   - 分页远程模式：后端按关键字联想返回，前端不再本地过滤（否则只能搜到已加载页）
 //   - 其余模式（静态/本地提取/旧式全量远程）：前端按关键字实时过滤，保持原始顺序
 const filteredOptions = computed(() => {
-  if (pagedMode.value) return options.value
+  if (pagedMode.value) return resolvedOptions.value
   const kw = (search.value || '').toLowerCase()
-  if (!kw) return options.value
-  return options.value.filter((o) =>
+  if (!kw) return resolvedOptions.value
+  return resolvedOptions.value.filter((o) =>
     String(o.label ?? o.value).toLowerCase().includes(kw),
   )
 })
 
 // 是否存在已配置的选项
-const hasOptions = computed(() => options.value.length > 0)
+const hasOptions = computed(() => resolvedOptions.value.length > 0)
 const noMatch = computed(
   () => filteredOptions.value.length === 0,
 )

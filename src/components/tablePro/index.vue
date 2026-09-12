@@ -915,8 +915,11 @@ const resetAllFilter = () => {
 // FilterCheckbox 面板打开时调用 requestFilterAPI 获取选项，按 filterOptionKeys 映射为 { label, value }
 // requestFilterAPI 接收组合参数 { field, filters }（详细见 README）
 
-// 收集所有 FilterCheckbox 列当前过滤值，形成组合参数（支持多列级联过滤）
-const collectCheckboxFilterParams = () => {
+// 收集 FilterCheckbox 列当前过滤值，形成组合参数（支持多列级联过滤）
+// excludeField：排除指定列（拉取该列选项时传入自身 field）——
+//   选项源需按「其他列」条件级联，不能携带自身列已确认的勾选值，
+//   否则确认 A 后重开面板，后端按 { 自身列: ['A'] } 返回选项导致只剩 A
+const collectCheckboxFilterParams = (excludeField) => {
   const $table = gridRef.value;
   if (!$table || !$table.getColumns) return {};
   const cols = $table.getColumns();
@@ -924,6 +927,7 @@ const collectCheckboxFilterParams = () => {
   const fieldToParamKey = buildFieldToParamKeyMap();
   const params = {};
   cols.forEach((col) => {
+    if (excludeField && col.field === excludeField) return;
     const fName = col.filterRender && col.filterRender.name;
     if (fName !== "FilterCheckbox") return;
     const paramKey = fieldToParamKey.get(col.field) || col.field;
@@ -968,7 +972,9 @@ const fetchFilterOptions = async (field, query = null) => {
   if (props.localFilterSort) return null;
   if (typeof props.requestFilterAPI !== "function") return null;
   try {
-    const filters = collectCheckboxFilterParams();
+    // 排除当前列自身的过滤：选项按「其他列」条件级联（与本地提取语义一致），
+    // 自身已确认的勾选值不参与选项源过滤，确保确认后重开仍返回完整选项集合
+    const filters = collectCheckboxFilterParams(field);
     const apiParams = { field, filters };
     const isPagedCall = !!(query && query.pageNum != null);
     if (isPagedCall) {

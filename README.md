@@ -345,7 +345,7 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 />
 ```
 
-`requestFilterAPI` 接收 `{ field, filters }`，返回 Promise<选项数组>。FilterCheckbox 列打开过滤面板时自动拉取。
+`requestFilterAPI` 接收 `{ field, filters }`，返回 Promise<选项数组>。FilterCheckbox 列打开过滤面板时自动拉取（每次打开都会重新拉取）。`filters` 为**其他** FilterCheckbox 列已确认的勾选值（级联过滤），**不含当前列自身**——选项源按「除自身外」的 facet 语义返回，确保确认过滤后重开面板仍能看到完整选项集合（已选项呈勾选状态）。
 
 #### 大数据量：分页触底加载 + 搜索联想（按列开启）
 
@@ -367,7 +367,7 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 }
 ```
 
-- 请求参数：`{ field, filters, keyword, pageNum, pageSize }`；面板打开拉第 1 页（`keyword: ''`），列表滚到底部自动请求下一页并追加（按 value 去重），直到取满 `total`。
+- 请求参数：`{ field, filters, keyword, pageNum, pageSize }`（`filters` 同样不含当前列自身）；面板打开拉第 1 页（`keyword: ''`），列表滚到底部自动请求下一页并追加（按 value 去重），直到取满 `total`。
 - 搜索框输入走**后端联想**：防抖后以 `{ keyword, pageNum: 1, pageSize }` 重新请求首页（不在前端只过滤已加载页）；快速输入/重开面板时过期响应自动丢弃（请求序号竞态防护）。
 - 返回结构（任选其一，`total` 缺省按当前页条数兜底）：`{ list, total }` / `{ rows, total }` / `{ records, total }` / `{ data: [...], total }` / `{ data: { rows, total } }`。
 - **渐进兼容**：后端尚未分页时仍可直接返回数组，组件自动按单页处理（不再触底加载）；未配置 `paged` 的列行为与旧版完全一致（一次拉全量 + 前端搜索过滤）。
