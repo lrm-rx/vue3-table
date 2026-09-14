@@ -186,6 +186,9 @@ export const applyLocalFilterSort = (data, filters, sorts) => {
 // 提取去重值。语义与 applyLocalFilterSort 的过滤阶段完全一致：
 //   · 应用其他列「已确认」的过滤条件（列间 AND / 同列 OR）
 //   · 始终排除目标列自身的过滤 —— 确认过滤后再次打开仍显示完整选项集合
+//   · 同趟统计每个取值的行数并写入 label 前缀（如 "(10)是"）：
+//     行数为应用其他列过滤后的剩余行数，与面板数据口径一致；
+//     数字 1 与字符串 "1" 按 String 归并为同一选项，计数累加
 // 性能：
 //   1) 单趟扫描：行级过滤 + 目标列去重融合在一次循环内，
 //      不再先 applyLocalFilterSort 分配完整的过滤后中间数组（10 万行省时且省内存）；
@@ -219,7 +222,8 @@ const buildOtherFiltersSignature = (groups) => {
  * @param {Array} data 分页前全量数据（作为 WeakMap 缓存键，替换数据源自动换新缓存）
  * @param {string} field 目标列字段名
  * @param {Array} filters getFilterSortState 收集的全部列过滤状态
- * @returns {Array<{label:string, value:*}>} 去重选项（保持首次出现顺序与原始值类型）
+ * @returns {Array<{label:string, value:*}>} 去重选项（label 前缀 "(行数)"，
+ *   保持首次出现顺序与原始值类型）
  */
 export const extractCheckboxOptions = (data, field, filters) => {
   const source = Array.isArray(data) ? data : [];
@@ -251,10 +255,10 @@ export const extractCheckboxOptions = (data, field, filters) => {
   let cacheMap = checkboxOptionsCache.get(source);
   if (cacheMap && cacheMap.has(cacheKey)) return cacheMap.get(cacheKey);
 
-  // 单趟融合：其他列 AND（同列 OR）通过即提取目标列值并去重
+  // 单趟融合：其他列 AND（同列 OR）通过即提取目标列值，按 String 键归并计数
   const groupList = [...groups.values()];
-  const seen = new Set();
-  const result = [];
+  // String(v) → { value: 首次出现的原始值, count: 行数 }（Map 保持首次出现顺序）
+  const tally = new Map();
   for (let i = 0; i < source.length; i += 1) {
     const row = source[i];
     if (!row) continue;
@@ -277,12 +281,21 @@ export const extractCheckboxOptions = (data, field, filters) => {
     const v = row[field];
     // 空值与对象/数组类型不生成选项（无法按 String 宽松比较有效命中）
     if (v == null || v === "" || typeof v === "object") continue;
-    // 与 FilterCheckbox 匹配一致按 String 去重，保留首次出现的原始值
+    // 与 FilterCheckbox 匹配一致按 String 归并，保留首次出现的原始值并累计行数
     const k = String(v);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    result.push({ label: k, value: v });
+    const entry = tally.get(k);
+    if (entry) {
+      entry.count += 1;
+    } else {
+      tally.set(k, { value: v, count: 1 });
+    }
   }
+
+  // 计数写入 label 前缀：如 value=1 出现 10 次 → { label: "(10)1", value: 1 }
+  const result = [];
+  tally.forEach((entry, k) => {
+    result.push({ label: `(${entry.count})${k}`, value: entry.value });
+  });
 
   if (!cacheMap) {
     cacheMap = new Map();

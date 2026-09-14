@@ -387,7 +387,7 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 - `FilterDateRange`：`[start, end]` 日期区间；仅一端有值时只约束该端；纯日期字符串（`YYYY-MM-DD`，无时间部分）的端点按**整天**处理（start 当天 00:00 起 / end 当天末尾止）；无法解析为日期的字段值视为不匹配
 - `FilterNumberRange`：`[min, max]` 数值区间；仅一端有值时只约束该端；空值 / 非数值字段值视为不匹配（避免 `Number(null)=0` 误判）
 - 同列多个已确认过滤选项之间为「或」，不同列之间为「且」；过滤后分页 `total` 自动同步为过滤结果行数
-- 静态模式下 `FilterCheckbox` 的选项直接取自 `filterRender.props.options`（与远程模式不同：不会调用 `requestFilterAPI`）
+- 静态模式下 `FilterCheckbox` 的选项来源：优先取 `filterRender.props.options`（与远程模式不同：不会调用 `requestFilterAPI`）；未配置 options 时自动从全量数据**提取去重值，并在 label 前缀该取值的行数**（如 `(7)产品部`）——计数按「应用其他列过滤后」的剩余行统计，与面板数据口径一致，数字/字符串同值按 String 归并累加
 
 ```vue
 <TablePro

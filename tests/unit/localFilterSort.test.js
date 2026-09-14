@@ -238,7 +238,7 @@ describe("extractCheckboxOptions 基础提取", () => {
       { d: 2 },
     ];
     const opts = extractCheckboxOptions(data, "d", []);
-    expect(opts.map((o) => o.label)).toEqual(["技术部", "产品部", "1", "2"]);
+    expect(opts.map((o) => o.label)).toEqual(["(2)技术部", "(1)产品部", "(2)1", "(1)2"]);
     expect(opts[2].value).toBe(1);
     expect(typeof opts[2].value).toBe("number");
   });
@@ -255,15 +255,15 @@ describe("extractCheckboxOptions 基础提取", () => {
       { d: "正常" },
     ];
     expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
-      "0",
-      "false",
-      "正常",
+      "(1)0",
+      "(1)false",
+      "(1)正常",
     ]);
   });
 
   it("null/undefined 行被跳过", () => {
     const data = [null, { d: "a" }, undefined, { d: "b" }];
-    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual(["a", "b"]);
+    expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual(["(1)a", "(1)b"]);
   });
 });
 
@@ -276,9 +276,9 @@ describe("extractCheckboxOptions 过滤语义", () => {
     ];
     const filters = [filter("d", "FilterCheckbox", { values: ["技术部"], search: "" })];
     expect(extractCheckboxOptions(data, "d", filters).map((o) => o.label)).toEqual([
-      "技术部",
-      "产品部",
-      "市场部",
+      "(1)技术部",
+      "(1)产品部",
+      "(1)市场部",
     ]);
   });
 
@@ -290,12 +290,12 @@ describe("extractCheckboxOptions 过滤语义", () => {
         "d",
         [filter("role", "FilterCheckbox", { values: ["a"] }, false)],
       ).map((o) => o.label),
-    ).toEqual(["技术部", "产品部"]);
+    ).toEqual(["(1)技术部", "(1)产品部"]);
     expect(
       extractCheckboxOptions(data, "d", [{ field: "x", type: "Wat", active: true, data: {} }]).map(
         (o) => o.label,
       ),
-    ).toEqual(["技术部", "产品部"]);
+    ).toEqual(["(1)技术部", "(1)产品部"]);
   });
 
   it("其他列四种过滤类型级联生效", () => {
@@ -310,7 +310,7 @@ describe("extractCheckboxOptions 过滤语义", () => {
         "d",
         [filter("role", "FilterCheckbox", { values: ["a"], search: "" })],
       ).map((o) => o.label),
-    ).toEqual(["技术部", "市场部"]);
+    ).toEqual(["(1)技术部", "(1)市场部"]);
 
     // FilterInput（忽略大小写包含）
     expect(
@@ -319,7 +319,7 @@ describe("extractCheckboxOptions 过滤语义", () => {
         "d",
         [filter("name", "FilterInput", { value: "zhang" })],
       ).map((o) => o.label),
-    ).toEqual(["技术部"]);
+    ).toEqual(["(1)技术部"]);
 
     // FilterNumberRange（空值行不匹配）
     expect(
@@ -328,7 +328,7 @@ describe("extractCheckboxOptions 过滤语义", () => {
         "d",
         [filter("age", "FilterNumberRange", { values: [18, null] })],
       ).map((o) => o.label),
-    ).toEqual(["产品部"]);
+    ).toEqual(["(1)产品部"]);
 
     // FilterDateRange（纯日期端点按整天）
     expect(
@@ -341,7 +341,7 @@ describe("extractCheckboxOptions 过滤语义", () => {
         "d",
         [filter("t", "FilterDateRange", { values: ["2024-06-01", "2024-06-30"] })],
       ).map((o) => o.label),
-    ).toEqual(["产品部"]);
+    ).toEqual(["(1)产品部"]);
   });
 
   it("多列条件 AND", () => {
@@ -354,7 +354,21 @@ describe("extractCheckboxOptions 过滤语义", () => {
       filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
       filter("age", "FilterNumberRange", { values: [18, null] }),
     ];
-    expect(extractCheckboxOptions(data, "d", filters).map((o) => o.label)).toEqual(["技术部"]);
+    expect(extractCheckboxOptions(data, "d", filters).map((o) => o.label)).toEqual(["(1)技术部"]);
+  });
+
+  it("计数前缀：行数为应用其他列过滤后的剩余行数，同值跨类型归并累加", () => {
+    const data = [
+      { d: 1, role: "a" },
+      { d: "1", role: "a" }, // 与数字 1 按 String 归并，计数累加为 2
+      { d: 1, role: "b" }, // 被其他列过滤排除，不计数
+      { d: 2, role: "a" },
+    ];
+    const opts = extractCheckboxOptions(data, "d", [
+      filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
+    ]);
+    expect(opts.map((o) => o.label)).toEqual(["(2)1", "(1)2"]);
+    expect(opts[0].value).toBe(1); // 保留首次出现的原始类型
   });
 
   it("与 applyLocalFilterSort 过滤阶段语义一致（1000 行伪随机数据对照）", () => {
@@ -379,17 +393,23 @@ describe("extractCheckboxOptions 过滤语义", () => {
       filter("role", "FilterCheckbox", { values: ["a", "b"], search: "" }),
       filter("age", "FilterNumberRange", { values: [20, 40] }),
     ];
-    // 对照旧实现：先过滤再二次遍历去重
+    // 对照参考实现：先过滤再二次遍历归并计数（与新实现同语义）
     const rows = applyLocalFilterSort(data, other, []);
-    const seen = new Set();
-    const expectOpts = [];
+    const tally = new Map();
     rows.forEach((row) => {
       const v = row.dept;
       if (v == null || v === "" || typeof v === "object") return;
       const k = String(v);
-      if (seen.has(k)) return;
-      seen.add(k);
-      expectOpts.push({ label: k, value: v });
+      const e = tally.get(k);
+      if (e) {
+        e.count += 1;
+      } else {
+        tally.set(k, { value: v, count: 1 });
+      }
+    });
+    const expectOpts = [];
+    tally.forEach((e, k) => {
+      expectOpts.push({ label: `(${e.count})${k}`, value: e.value });
     });
     expect(extractCheckboxOptions(data, "dept", other)).toEqual(expectOpts);
   });
@@ -414,7 +434,7 @@ describe("extractCheckboxOptions 记忆化", () => {
       filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
     ]);
     expect(b).not.toBe(a);
-    expect(b.map((o) => o.label)).toEqual(["技术部"]);
+    expect(b.map((o) => o.label)).toEqual(["(1)技术部"]);
 
     const f1 = [
       filter("role", "FilterCheckbox", { values: ["a"], search: "" }),
@@ -430,18 +450,18 @@ describe("extractCheckboxOptions 记忆化", () => {
   it("bumpCheckboxOptionsCache 后原地编辑的新值可被提取", () => {
     const data = [{ d: "技术部" }, { d: "产品部" }];
     expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
-      "技术部",
-      "产品部",
+      "(1)技术部",
+      "(1)产品部",
     ]);
     data[1].d = "海外部"; // 原地修改（长度/引用均不变）
     expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
-      "技术部",
-      "产品部",
+      "(1)技术部",
+      "(1)产品部",
     ]);
     bumpCheckboxOptionsCache();
     expect(extractCheckboxOptions(data, "d", []).map((o) => o.label)).toEqual([
-      "技术部",
-      "海外部",
+      "(1)技术部",
+      "(1)海外部",
     ]);
   });
 
