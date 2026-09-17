@@ -12,6 +12,13 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
+    BaseButton: typeof import('./../components/comment/base/BaseButton.vue')['default']
+    BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
+    Comment: typeof import('./../components/comment/index.vue')['default']
+    CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
+    CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']
+    CommentItem: typeof import('./../components/comment/components/CommentItem.vue')['default']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElCheckboxGroup: typeof import('element-plus/es')['ElCheckboxGroup']
@@ -27,13 +34,23 @@ declare module 'vue' {
     FilterNumberRange: typeof import('./../components/tablePro/filters/FilterNumberRange.vue')['default']
     FilterPanel: typeof import('./../components/tablePro/filters/FilterPanel.vue')['default']
     Pagination: typeof import('./../components/tablePro/pagination/Pagination.vue')['default']
+    ReplyItem: typeof import('./../components/comment/components/ReplyItem.vue')['default']
+    ReplyList: typeof import('./../components/comment/components/ReplyList.vue')['default']
     TablePro: typeof import('./../components/tablePro/index.vue')['default']
     TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
+    VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
   }
 }
 
 // For TSX support
 declare global {
+  const BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
+  const BaseButton: typeof import('./../components/comment/base/BaseButton.vue')['default']
+  const BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
+  const Comment: typeof import('./../components/comment/index.vue')['default']
+  const CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
+  const CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']
+  const CommentItem: typeof import('./../components/comment/components/CommentItem.vue')['default']
   const ElButton: typeof import('element-plus/es')['ElButton']
   const ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
   const ElCheckboxGroup: typeof import('element-plus/es')['ElCheckboxGroup']
@@ -49,6 +66,9 @@ declare global {
   const FilterNumberRange: typeof import('./../components/tablePro/filters/FilterNumberRange.vue')['default']
   const FilterPanel: typeof import('./../components/tablePro/filters/FilterPanel.vue')['default']
   const Pagination: typeof import('./../components/tablePro/pagination/Pagination.vue')['default']
+  const ReplyItem: typeof import('./../components/comment/components/ReplyItem.vue')['default']
+  const ReplyList: typeof import('./../components/comment/components/ReplyList.vue')['default']
   const TablePro: typeof import('./../components/tablePro/index.vue')['default']
   const TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
+  const VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
 }
