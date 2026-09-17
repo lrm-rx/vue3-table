@@ -2,6 +2,10 @@
 import { ref } from "vue";
 import { ElMessage, ElTag, ElButton } from "element-plus";
 import { getUserListApi, getFilterOptionsApi } from "@/api";
+import CommentDemo from "@/views/CommentDemo.vue";
+
+// 顶层演示切换：comment=评论区（MockJS 数据）/ table=表格组件
+const activeDemo = ref("comment");
 
 // ========== 编辑控件预置选项（单独传递，不放在 columns 配置中）==========
 // 按列 field 索引，用于 ElSelect / ElRadio / ElCheckbox 等需要 options 的编辑组件
@@ -613,6 +617,17 @@ const onSubmit = async () => {
   <div
     style="padding: 20px; height: 100vh; box-sizing: border-box; overflow: auto"
   >
+    <!-- 演示切换 -->
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
+      <el-radio-group v-model="activeDemo" size="small">
+        <el-radio-button value="comment">评论区演示（MockJS）</el-radio-button>
+        <el-radio-button value="table">表格组件演示</el-radio-button>
+      </el-radio-group>
+    </div>
+
+    <CommentDemo v-if="activeDemo === 'comment'" />
+
+    <div v-show="activeDemo === 'table'">
     <!-- <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
       <el-tag type="success">
         演示：<b>filterType</b> 简化过滤配置 + 组件内置公共列配置
@@ -812,6 +827,7 @@ const onSubmit = async () => {
       style="height: 480px"
       @filter-confirm="onStaticFilterConfirm"
     />
+    </div>
   </div>
 </template>
 

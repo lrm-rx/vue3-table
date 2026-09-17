@@ -158,6 +158,25 @@ describe("CommentSection 虚拟滚动模式", () => {
     expect(wrapper.find(".bili-comment-item__floor").exists()).toBe(false);
   });
 
+  it("showFloorIndex=false：不渲染楼层序号列，楼层改由 CommentItem 行内展示", async () => {
+    const wrapper = mount(CommentSection, {
+      props: {
+        comments: makeMany(100),
+        currentUser: { id: "me", name: "我", avatar: "" },
+        virtualScroll: true,
+        listHeight: 600,
+        showFloorIndex: false,
+      },
+      global: globalConfig,
+    });
+    await prepareVirtual(wrapper);
+
+    expect(wrapper.find(".biz-virtual-list__index").exists()).toBe(false);
+    expect(wrapper.find(".bili-comment-item__floor").exists()).toBe(true);
+    // 时间倒序首项 floor=1 → 行内「第1楼」
+    expect(wrapper.find(".bili-comment-item__floor").text()).toContain("第1楼");
+  });
+
   it("默认关闭时行为不变：首屏切片 + 加载更多按钮", () => {
     const wrapper = mount(CommentSection, {
       props: {

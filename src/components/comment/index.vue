@@ -40,6 +40,8 @@ const props = defineProps({
   virtualScroll: { type: Boolean, default: false },
   // 虚拟滚动视口高度（number=px 或 CSS 字符串）
   listHeight: { type: [Number, String], default: 600 },
+  // 虚拟模式下是否显示楼层序号列（仅 virtualScroll=true 时生效，默认显示）
+  showFloorIndex: { type: Boolean, default: true },
 });
 
 const emit = defineEmits([
@@ -214,7 +216,7 @@ const handleDelete = ({ comment }) => {
       :items="sortedComments"
       :height="listHeight"
       item-key="id"
-      show-index
+      :show-index="showFloorIndex"
       index-field="floor"
     >
       <template #default="{ item }">
@@ -223,7 +225,7 @@ const handleDelete = ({ comment }) => {
           :current-user="currentUser"
           :preview-replies="previewReplies"
           :maxlength="maxlength"
-          :show-floor="false"
+          :show-floor="!showFloorIndex"
           @like="handleLike"
           @reply="handleReply"
           @delete="handleDelete"

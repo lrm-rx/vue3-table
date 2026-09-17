@@ -106,7 +106,7 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 - **高度来源**：已渲染项由 `ResizeObserver` 测量真实高度，按评论 id 缓存（切换排序后缓存仍可复用）；未渲染项使用估计高度 `estimateHeight`；
 - **定位**：基于高度前缀和 `offsets`，滚动位置通过二分查找定位窗口，只挂载「可视区 + 上下 overscan」内的条目，DOM 数量恒定；
 - **占位与位移**：phantom 层以总高度撑开真实滚动条，content 层 `translateY` 定位已渲染节点；
-- **楼层序号列**：开启 `showIndex` 后，每个条目左侧渲染「数字 + 楼」序号列，序号默认取条目 `floor` 字段（`indexField` 可配置；字段缺失时回退展示位置序号 index+1）；评论区虚拟模式默认开启该列，且 CommentItem 头部不再重复显示楼层；
+- **楼层序号列**：VirtualList 通过 `showIndex` 控制是否渲染「数字 + 楼」序号列，序号默认取条目 `floor` 字段（`indexField` 可配置；字段缺失时回退展示位置序号 index+1）；CommentSection 以业务属性 `showFloorIndex`（默认 `true`）控制该列：开启时 CommentItem 头部不再重复显示楼层，关闭时楼层改由 CommentItem 行内「第 n 楼」展示；
 - **滚动补偿**：视口上方的条目因楼中楼展开/新增回复而变高时，同步补偿 `scrollTop`，避免内容跳变；
 - **触底加载**：滚动接近底部时抛出 `load-more`，配合外部 `loading` 可对接增量接口（本地全量数据无需处理）；
 - 切换排序 / 发表评论后列表自动回到顶部。
@@ -188,6 +188,9 @@ const onDelete = ({ comment }) => {};
 | `loading` | Boolean | `false` | 列表加载态（预留远程加载） |
 | `virtualScroll` | Boolean | `false` | 是否开启评论列表虚拟滚动（显式开启；开启后不再显示「点击加载更多」，由列表内部承载全量数据） |
 | `listHeight` | Number \| String | `600` | 虚拟滚动视口高度，number 按 px；容器必须有确定高度 |
+| `showFloorIndex` | Boolean | `true` | 仅虚拟模式生效：是否以左侧序号列显示楼层；关闭后楼层改由 CommentItem 行内「第 n 楼」展示 |
+
+> 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 楼层序号列 / 视口高度。
 
 ### Emits
 
