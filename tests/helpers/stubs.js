@@ -10,7 +10,7 @@ export const createVxeGridStub = () => {
     columns: [],
     sorts: [],
     fullData: [],
-    calls: { sort: [], clearSort: 0, clearFilter: 0, exportData: 0 },
+    calls: { sort: [], clearSort: 0, clearFilter: 0, exportData: 0, clearValidate: 0 },
   };
 
   const stub = defineComponent({
@@ -44,7 +44,9 @@ export const createVxeGridStub = () => {
         scrollToRow: () => {},
         validate: () => null,
         fullValidate: () => null,
-        clearValidate: () => {},
+        clearValidate: () => {
+          mock.calls.clearValidate += 1;
+        },
       });
 
       return () => h("div", { class: "vxe-grid-stub" }, slots.default ? slots.default() : null);

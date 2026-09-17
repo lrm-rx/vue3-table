@@ -220,32 +220,36 @@ describe("editRender 分流", () => {
     $table: table,
   });
 
-  it("函数式 editRender：editable 开启则注入 slots.edit 并删除 editRender", () => {
+  it("函数式 editRender：editable 开启则注入 slots.edit 并保留对象式标记 editRender", () => {
     const userEdit = (params) => h("input", { value: params.cellValue });
     const { result } = run([{ field: "a", title: "A", editRender: userEdit }]);
     const col = result[0];
     expect(col.editable).toBe(true);
-    expect(col.editRender).toBeUndefined();
+    // vxe 仅凭 isEnableConf(column.editRender) 判定可编辑（点击激活/编辑图标/编辑插槽渲染），
+    // 函数会被替换为对象式标记（实际渲染由 slots.edit 接管），不能删除否则列不可编辑
+    expect(col.editRender).toEqual({ name: "TableProSlotEdit" });
     const vnode = col.slots.edit(scopeFor("a", { a: "x" }, "x"));
     expect(vnode.type).toBe("input");
   });
 
-  it("editable=false（权限控制）：函数式 editRender 不设 editable、不建 slots.edit", () => {
+  it("editable=false（权限控制）：函数式 editRender 不设 editable、不建 slots.edit、移除 editRender", () => {
     const { result } = run([{ field: "a", editRender: () => h("input") }], {
       editable: false,
     });
     expect(result[0].editable).toBeUndefined();
     expect(result[0].slots.edit).toBeUndefined();
+    expect(result[0].editRender).toBeUndefined();
   });
 
-  it("字符串式 editRender 命中插槽 → slots.edit 引用；未命中则仅删除配置", () => {
+  it("字符串式 editRender 命中插槽 → slots.edit 引用 + 对象式标记；未命中则移除配置", () => {
     const slotFn = () => null;
     const hit = run([{ field: "e", editRender: "edit_e" }], { slots: { edit_e: slotFn } });
     expect(hit.result[0].slots.edit).toBe("edit_e");
-    expect(hit.result[0].editRender).toBeUndefined();
+    expect(hit.result[0].editRender).toEqual({ name: "TableProSlotEdit" });
 
     const miss = run([{ field: "e", editRender: "edit_e" }], { slots: {} });
     expect(miss.result[0].slots.edit).toBeUndefined();
+    expect(miss.result[0].editRender).toBeUndefined();
   });
 
   it("对象式 editRender（ElInput）：slots.edit 渲染受控组件并同步编辑本地态", () => {

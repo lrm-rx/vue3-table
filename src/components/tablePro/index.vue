@@ -531,7 +531,12 @@ const renderData = computed(() => {
 });
 
 // 数据刷新时清空选中：vxe-grid reserve:false 会清除选中 UI，同步清空对外暴露的选中数据
-watch(renderData, () => clearSelection());
+// 同时清除校验状态：vxe 的 validErrorMaps 按 rowid:colid 保存，远程重新请求/本地过滤排序/
+// 翻页导致数据替换后旧错误不会自动清除，会残留在已合法（甚至已不存在）的单元格上
+watch(renderData, () => {
+  clearSelection();
+  gridRef.value?.clearValidate?.();
+});
 
 // 实际分页配置：远程用 useTable.pageable；静态+分页用 localPager（total 同步 data.length）；否则原样
 const currentPager = computed(() => {

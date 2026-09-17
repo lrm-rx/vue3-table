@@ -358,6 +358,17 @@ export const buildColumns = (config) => {
     }
   }
 
+  // 函数式/字符串式 editRender 的标记渲染器名：
+  // vxe 仅凭 isEnableConf(column.editRender)（truthy 且 enabled!==false）判定列可编辑
+  //   —— 点击激活（edit/hook.js handleEditActive）、编辑态渲染（cell.js runRenderer）、
+  //      表头编辑图标（cell.js renderEditHeader）全部以此为开关；
+  // 而 columnInfo 初始化对「truthy 但非对象」的 editRender 会抛 errProp 警告。
+  // 因此函数/字符串既不能原样保留，也不能直接删除（删除=列不可编辑：点击无反应、无图标），
+  // 统一替换为该标记对象：实际渲染完全由 col.slots.edit 接管
+  // （runRenderer 优先调用 edit 插槽，不会查 renderer 表）。
+  const SLOT_EDIT_RENDER_NAME = 'TableProSlotEdit'
+  const buildSlotEditRender = () => ({ name: SLOT_EDIT_RENDER_NAME })
+
   // 4a) 函数式 editRender → slots.edit（JSX 渲染）
   const applyFunctionEditRender = (col, field, editEnabled) => {
     if (editEnabled) {
@@ -383,24 +394,33 @@ export const buildColumns = (config) => {
           }
         })
       }
+      // 保留 vxe 合法的对象式 editRender 标记，列才可点击编辑 / 显示表头编辑图标
+      col.editRender = buildSlotEditRender()
+    } else {
+      // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
+      delete col.editRender
     }
-    // 函数式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
-    delete col.editRender
   }
 
   // 4b) 字符串式 editRender → 引用外部具名插槽
   const applyStringEditRender = (col, editEnabled) => {
     if (editEnabled) {
       if (col.editable == null) col.editable = true
-      if (!col.slots.edit) {
-        const slotName = col.editRender
-        if (typeof externalSlots[slotName] === 'function') {
-          col.slots.edit = slotName
-        }
+      const slotName = col.editRender
+      if (!col.slots.edit && typeof externalSlots[slotName] === 'function') {
+        col.slots.edit = slotName
       }
+      // 仅当插槽命中（slots.edit 已就绪）时保留可编辑标记；
+      // 插槽缺失时移除配置，避免出现「有编辑图标但点击无控件」的坏列
+      if (col.slots.edit) {
+        col.editRender = buildSlotEditRender()
+      } else {
+        delete col.editRender
+      }
+    } else {
+      // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
+      delete col.editRender
     }
-    // 字符串式非 vxe 标准对象，已被 slots.edit 接管渲染，删除以避免 vxe 校验警告
-    delete col.editRender
   }
 
   // 4c-1) 构建 Select/Radio/Checkbox 子项（options → VNode 数组）

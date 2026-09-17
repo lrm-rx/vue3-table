@@ -194,6 +194,19 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     expect(gridAttrs(wrapper).data).toHaveLength(3);
     expect(wrapper.findComponent(Pagination).exists()).toBe(false);
   });
+
+  it("数据刷新（data 变化）时清除 vxe 校验态，避免旧错误残留在新数据上", async () => {
+    const rows = makeRows(5);
+    const { wrapper, grid } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: rows,
+      pagination: false,
+    });
+    const before = grid.mock.calls.clearValidate;
+    await wrapper.setProps({ data: makeRows(3) });
+    await flushPromises();
+    expect(grid.mock.calls.clearValidate).toBeGreaterThan(before);
+  });
 });
 
 describe("TablePro 远程模式（requestApi）", () => {
@@ -281,6 +294,23 @@ describe("TablePro 远程模式（requestApi）", () => {
     expect(typeof vm.getFilterParams).toBe("function");
     expect(typeof vm.validate).toBe("function");
     expect(Array.isArray(vm.tableData)).toBe(true);
+  });
+
+  it("远程重新请求（getTableList）后清除 vxe 校验态，避免旧错误残留", async () => {
+    const api = vi.fn(async () => ({
+      list: [{ id: 1, role: "admin", age: 30 }],
+      total: 1,
+    }));
+    const { wrapper, grid } = await mountTablePro({
+      columns: makeColumns(),
+      requestApi: api,
+      requestAuto: true,
+      pagination: true,
+    });
+    const before = grid.mock.calls.clearValidate;
+    await wrapper.vm.getTableList();
+    await flushPromises();
+    expect(grid.mock.calls.clearValidate).toBeGreaterThan(before);
   });
 });
 
