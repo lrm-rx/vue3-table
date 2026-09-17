@@ -36,9 +36,13 @@ const props = defineProps({
   showIndex: { type: Boolean, default: false },
   // 楼层序号取值字段：item[indexField]；为空串或字段缺失时回退「展示位置 index + 1」
   indexField: { type: String, default: "floor" },
+  // 序号列是否显示可点击排序表头（sticky 吸附在视口顶部）
+  indexSortable: { type: Boolean, default: false },
+  // 序号列当前排序方向：'asc' | 'desc' | null（null=跟随外部默认排序，箭头不高亮）
+  indexSortOrder: { type: String, default: null },
 });
 
-const emit = defineEmits(["load-more", "scroll"]);
+const emit = defineEmits(["load-more", "scroll", "update:indexSortOrder", "index-sort"]);
 
 const viewportRef = ref(null);
 
@@ -120,6 +124,14 @@ watch(
     if (len > (oldLen ?? 0)) loadMoreArmed.value = true;
   },
 );
+
+// —— 序号列表头排序：三态循环 null（默认）→ asc（楼层升序）→ desc（楼层倒序）→ null ——
+const onIndexSortClick = () => {
+  const current = props.indexSortOrder;
+  const next = current == null ? "asc" : current === "asc" ? "desc" : null;
+  emit("update:indexSortOrder", next);
+  emit("index-sort", next);
+};
 
 // —— 滚动 ——
 const onScroll = (event) => {
@@ -252,6 +264,28 @@ onBeforeUnmount(() => {
     :style="viewportStyle"
     @scroll.passive="onScroll"
   >
+    <!-- 楼层序号列表头：sticky 吸附视口顶部；流内占位，内容行从其下方开始排布 -->
+    <div
+      v-if="showIndex && indexSortable"
+      class="biz-virtual-list__index-header"
+    >
+      <button
+        type="button"
+        class="biz-virtual-list__index-sort"
+        :class="{
+          'is-asc': indexSortOrder === 'asc',
+          'is-desc': indexSortOrder === 'desc',
+        }"
+        :title="'按楼层排序'"
+        :aria-label="'按楼层排序'"
+        @click="onIndexSortClick"
+      >
+        <span class="biz-virtual-list__caret biz-virtual-list__caret--up" />
+        <span class="biz-virtual-list__caret biz-virtual-list__caret--down" />
+      </button>
+      <div class="biz-virtual-list__index-header-body" />
+    </div>
+
     <!-- phantom：按总高度撑开真实滚动条 -->
     <div
       class="biz-virtual-list__phantom"
@@ -360,6 +394,72 @@ onBeforeUnmount(() => {
   &__index-body {
     flex: 1;
     min-width: 0;
+  }
+
+  // 楼层序号列表头（sticky 吸附）：列宽与每行 __index 对齐
+  &__index-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: flex-start;
+    height: 30px;
+    background-color: #fff;
+    border-bottom: 1px solid #f1f2f3;
+  }
+
+  &__index-header-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  // 排序按钮：上下双三角（固定槽位，切换状态时不产生布局位移）
+  &__index-sort {
+    flex: none;
+    width: 38px;
+    height: 30px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    cursor: pointer;
+
+    &:hover {
+      .biz-virtual-list__caret--up {
+        border-bottom-color: #9499a0;
+      }
+      .biz-virtual-list__caret--down {
+        border-top-color: #9499a0;
+      }
+    }
+
+    // 激活态置于 hover 规则之后：当前方向即使 hover 也保持主题色
+    &.is-asc .biz-virtual-list__caret--up {
+      border-bottom-color: #fb7299;
+    }
+    &.is-desc .biz-virtual-list__caret--down {
+      border-top-color: #fb7299;
+    }
+  }
+
+  &__caret {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+
+    &--up {
+      border-bottom: 5px solid #c9ccd0;
+    }
+
+    &--down {
+      border-top: 5px solid #c9ccd0;
+    }
   }
 }
 </style>

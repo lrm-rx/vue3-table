@@ -108,6 +108,21 @@ describe("sortRootComments 排序", () => {
     expect(sortRootComments(list, "hot").map((x) => x.id)).toEqual(["b", "d", "a"]);
   });
 
+  it("楼层：按 floor 升序，楼层相同按时间升序（不受点赞影响）", () => {
+    const list = [
+      { id: "a", createTime: 1000, likeCount: 9, floor: 3 },
+      { id: "b", createTime: 3000, likeCount: 0, floor: 1 },
+      { id: "d", createTime: 2000, likeCount: 5, floor: 2 },
+      { id: "e", createTime: 500, likeCount: 0, floor: 2 },
+    ];
+    expect(sortRootComments(list, "floor").map((x) => x.id)).toEqual([
+      "b",
+      "e",
+      "d",
+      "a",
+    ]);
+  });
+
   it("返回新数组，不修改原数组", () => {
     const list = [c("a", 1000, 1), c("b", 2000, 2)];
     expect(sortRootComments(list, "hot")).not.toBe(list);

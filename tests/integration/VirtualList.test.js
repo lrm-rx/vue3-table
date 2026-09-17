@@ -143,6 +143,55 @@ describe("VirtualList 窗口化渲染", () => {
     ).toEqual(["101", "202"]);
   });
 
+  it("indexSortable=false（默认）不渲染排序表头", async () => {
+    const wrapper = await mountList({ showIndex: true });
+    expect(wrapper.find(".biz-virtual-list__index-header").exists()).toBe(false);
+    expect(wrapper.find(".biz-virtual-list__index-sort").exists()).toBe(false);
+  });
+
+  it("showIndex + indexSortable 时渲染排序表头，默认无方向高亮", async () => {
+    const wrapper = await mountList({ showIndex: true, indexSortable: true });
+    const btn = wrapper.find(".biz-virtual-list__index-sort");
+    expect(btn.exists()).toBe(true);
+    expect(btn.attributes("aria-label")).toBe("按楼层排序");
+    expect(btn.classes()).not.toContain("is-asc");
+    expect(btn.classes()).not.toContain("is-desc");
+    expect(wrapper.findAll(".biz-virtual-list__caret")).toHaveLength(2);
+  });
+
+  it("点击表头三态循环 null → asc → desc → null 并抛出排序事件", async () => {
+    const wrapper = await mountList({ showIndex: true, indexSortable: true });
+    const btn = () => wrapper.find(".biz-virtual-list__index-sort");
+
+    await btn().trigger("click");
+    expect(wrapper.emitted("update:indexSortOrder")[0]).toEqual(["asc"]);
+    expect(wrapper.emitted("index-sort")[0]).toEqual(["asc"]);
+
+    await wrapper.setProps({ indexSortOrder: "asc" });
+    await btn().trigger("click");
+    expect(wrapper.emitted("index-sort")[1]).toEqual(["desc"]);
+
+    await wrapper.setProps({ indexSortOrder: "desc" });
+    await btn().trigger("click");
+    expect(wrapper.emitted("index-sort")[2]).toEqual([null]);
+  });
+
+  it("indexSortOrder 受控时高亮对应方向", async () => {
+    const asc = await mountList({
+      showIndex: true,
+      indexSortable: true,
+      indexSortOrder: "asc",
+    });
+    expect(asc.find(".biz-virtual-list__index-sort").classes()).toContain("is-asc");
+
+    const desc = await mountList({
+      showIndex: true,
+      indexSortable: true,
+      indexSortOrder: "desc",
+    });
+    expect(desc.find(".biz-virtual-list__index-sort").classes()).toContain("is-desc");
+  });
+
   it("视口高度未测量时（首帧）全量渲染兜底", async () => {
     const wrapper = mount(VirtualList, {
       props: { items: makeItems(5), height: 600 },

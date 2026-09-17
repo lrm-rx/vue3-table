@@ -177,6 +177,105 @@ describe("CommentSection 虚拟滚动模式", () => {
     expect(wrapper.find(".bili-comment-item__floor").text()).toContain("第1楼");
   });
 
+  // 排序联动专用数据：hot 首项 floor=3，floor 升序首项 floor=1，latest 首项 floor=3
+  const makeSortFixture = () => {
+    const now = Date.now();
+    const mk = (floor, likeCount, createTime) => ({
+      id: `c${floor}`,
+      floor,
+      author: { id: `u${floor}`, name: `用户${floor}`, avatar: "" },
+      content: `评论${floor}`,
+      createTime,
+      likeCount,
+      liked: false,
+      replies: [],
+    });
+    return [mk(1, 0, now - 3000), mk(2, 50, now - 2000), mk(3, 100, now - 1000)];
+  };
+
+  it("点击楼层序号列表头：hot → 楼层升序 → 最新(楼层倒序) → hot 三态联动", async () => {
+    const wrapper = mount(CommentSection, {
+      props: {
+        comments: makeSortFixture(),
+        currentUser: { id: "me", name: "我", avatar: "" },
+        virtualScroll: true,
+        listHeight: 600,
+      },
+      global: globalConfig,
+    });
+    await prepareVirtual(wrapper);
+    const sortBtn = () => wrapper.find(".biz-virtual-list__index-sort");
+    const firstFloor = () => wrapper.find(".biz-virtual-list__index-no").text();
+
+    // 初始最热：首项 floor=3，表头无高亮
+    expect(firstFloor()).toBe("3");
+    expect(sortBtn().classes()).not.toContain("is-asc");
+
+    // 第 1 次点击 → 楼层升序：首项 floor=1，上箭头高亮
+    await sortBtn().trigger("click");
+    expect(firstFloor()).toBe("1");
+    expect(sortBtn().classes()).toContain("is-asc");
+    expect(wrapper.emitted("update:sort").at(-1)).toEqual(["floor"]);
+
+    // 第 2 次点击 → 最新（楼层倒序）：首项 floor=3，下箭头高亮
+    await sortBtn().trigger("click");
+    expect(firstFloor()).toBe("3");
+    expect(sortBtn().classes()).toContain("is-desc");
+    expect(wrapper.emitted("update:sort").at(-1)).toEqual(["latest"]);
+
+    // 第 3 次点击 → 回到最热：首项 floor=3，无高亮
+    await sortBtn().trigger("click");
+    expect(firstFloor()).toBe("3");
+    expect(sortBtn().classes()).not.toContain("is-asc");
+    expect(sortBtn().classes()).not.toContain("is-desc");
+    expect(wrapper.emitted("update:sort").at(-1)).toEqual(["hot"]);
+  });
+
+  it("最热/最新 Tab 与楼层列表头箭头状态保持一致", async () => {
+    const wrapper = mount(CommentSection, {
+      props: {
+        comments: makeSortFixture(),
+        currentUser: { id: "me", name: "我", avatar: "" },
+        virtualScroll: true,
+        listHeight: 600,
+      },
+      global: globalConfig,
+    });
+    await prepareVirtual(wrapper);
+    const sortBtn = () => wrapper.find(".biz-virtual-list__index-sort");
+
+    // 点「最新」Tab → 下箭头高亮
+    await findButton(wrapper, "最新").trigger("click");
+    expect(sortBtn().classes()).toContain("is-desc");
+
+    // 点「最热」Tab → 无高亮
+    await findButton(wrapper, "最热").trigger("click");
+    expect(sortBtn().classes()).not.toContain("is-desc");
+  });
+
+  it("floorSortable=false：序号列保留但排序表头隐藏，重新开启后恢复", async () => {
+    const wrapper = mount(CommentSection, {
+      props: {
+        comments: makeSortFixture(),
+        currentUser: { id: "me", name: "我", avatar: "" },
+        virtualScroll: true,
+        listHeight: 600,
+        floorSortable: false,
+      },
+      global: globalConfig,
+    });
+    await prepareVirtual(wrapper);
+
+    // 序号列仍在，排序表头不渲染
+    expect(wrapper.find(".biz-virtual-list__index").exists()).toBe(true);
+    expect(wrapper.find(".biz-virtual-list__index-header").exists()).toBe(false);
+    expect(wrapper.find(".biz-virtual-list__index-sort").exists()).toBe(false);
+
+    // 重新开启：表头恢复
+    await wrapper.setProps({ floorSortable: true });
+    expect(wrapper.find(".biz-virtual-list__index-header").exists()).toBe(true);
+  });
+
   it("默认关闭时行为不变：首屏切片 + 加载更多按钮", () => {
     const wrapper = mount(CommentSection, {
       props: {

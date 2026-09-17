@@ -26,7 +26,7 @@ const props = defineProps({
   comments: { type: Array, default: null },
   // 当前登录用户
   currentUser: { type: Object, default: () => ({ ...mockCurrentUser }) },
-  // 排序：hot 最热 / latest 最新（v-model:sort）
+  // 排序：hot 最热 / latest 最新（楼层倒序）/ floor 楼层升序（v-model:sort）
   sort: { type: String, default: "hot" },
   // 首屏渲染条数
   pageSize: { type: Number, default: 20 },
@@ -42,6 +42,8 @@ const props = defineProps({
   listHeight: { type: [Number, String], default: 600 },
   // 虚拟模式下是否显示楼层序号列（仅 virtualScroll=true 时生效，默认显示）
   showFloorIndex: { type: Boolean, default: true },
+  // 是否开启楼层序号列表头的点击排序功能（需同时开启 showFloorIndex；默认开启）
+  floorSortable: { type: Boolean, default: true },
 });
 
 const emit = defineEmits([
@@ -72,7 +74,7 @@ const innerSort = ref("hot");
 watch(
   () => props.sort,
   (val) => {
-    if (val === "hot" || val === "latest") innerSort.value = val;
+    if (val === "hot" || val === "latest" || val === "floor") innerSort.value = val;
   },
   { immediate: true },
 );
@@ -98,6 +100,21 @@ watch(
 const sortedComments = computed(() =>
   sortRootComments(innerComments.value, innerSort.value),
 );
+
+// 虚拟列表楼层序号列头方向 ↔ 排序口径映射：
+// floor=楼层升序(↑) / latest=楼层倒序(↓) / hot=不高亮（跟随最热 Tab）
+const floorSortOrder = computed(() => {
+  if (innerSort.value === "floor") return "asc";
+  if (innerSort.value === "latest") return "desc";
+  return null;
+});
+
+// 序号列表头三态点击：asc→楼层升序，desc→最新（楼层倒序），null→回到最热
+const onFloorSort = (order) => {
+  if (order === "asc") changeSort("floor");
+  else if (order === "desc") changeSort("latest");
+  else changeSort("hot");
+};
 
 const visibleComments = computed(() =>
   sortedComments.value.slice(0, displayCount.value),
@@ -217,7 +234,10 @@ const handleDelete = ({ comment }) => {
       :height="listHeight"
       item-key="id"
       :show-index="showFloorIndex"
+      :index-sortable="showFloorIndex && floorSortable"
+      :index-sort-order="floorSortOrder"
       index-field="floor"
+      @index-sort="onFloorSort"
     >
       <template #default="{ item }">
         <CommentItem

@@ -19,6 +19,7 @@ const seed = ref(0);
 const loading = ref(false);
 const virtualScroll = ref(true);
 const showFloorIndex = ref(true);
+const floorSortable = ref(true);
 const listHeight = ref(600);
 
 // —— 评论数据（v-model:comments 与组件双向同步）——
@@ -81,6 +82,11 @@ onMounted(loadData);
           <el-switch v-model="virtualScroll" />
           <span class="comment-demo__label">楼层序号列</span>
           <el-switch v-model="showFloorIndex" :disabled="!virtualScroll" />
+          <span class="comment-demo__label">列头点击排序</span>
+          <el-switch
+            v-model="floorSortable"
+            :disabled="!virtualScroll || !showFloorIndex"
+          />
           <span class="comment-demo__label">视口高度</span>
           <el-select v-model="listHeight" size="small" style="width: 100px">
             <el-option :value="400" label="400px" />
@@ -107,6 +113,7 @@ onMounted(loadData);
         :virtual-scroll="virtualScroll"
         :list-height="listHeight"
         :show-floor-index="showFloorIndex"
+        :floor-sortable="floorSortable"
         @send="bump('send')"
         @reply="bump('reply')"
         @like="bump('like')"

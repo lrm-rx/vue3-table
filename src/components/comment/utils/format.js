@@ -86,13 +86,19 @@ export const getNextFloor = (comments) =>
 
 /**
  * 一级评论排序（返回新数组，不改原数组）
- *  - latest 最新：createTime 倒序
- *  - hot 最热：likeCount 倒序，相同点赞按 createTime 倒序
+ *  - latest 最新：createTime 倒序（等价于楼层倒序）
+ *  - floor 楼层：floor 升序（从第 1 楼开始），楼层相同按 createTime 升序
+ *  - hot 最热（默认）：likeCount 倒序，相同点赞按 createTime 倒序
  */
 export const sortRootComments = (comments, sort) =>
   [...(comments || [])].sort((a, b) => {
     if (sort === "latest") {
       return (b.createTime ?? 0) - (a.createTime ?? 0);
+    }
+    if (sort === "floor") {
+      const floorDiff = (a.floor ?? 0) - (b.floor ?? 0);
+      if (floorDiff !== 0) return floorDiff;
+      return (a.createTime ?? 0) - (b.createTime ?? 0);
     }
     const likeDiff = (b.likeCount ?? 0) - (a.likeCount ?? 0);
     if (likeDiff !== 0) return likeDiff;
