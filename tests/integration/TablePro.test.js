@@ -10,6 +10,8 @@ const mountTablePro = async (props = {}, grid = {}) => {
   const g = createVxeGridStub();
   if (grid.columns !== undefined) g.mock.columns = grid.columns;
   if (grid.sorts !== undefined) g.mock.sorts = grid.sorts;
+  if (grid.fullData !== undefined) g.mock.fullData = grid.fullData;
+  if (grid.recordset !== undefined) g.mock.recordset = grid.recordset;
   const wrapper = mount(TablePro, {
     props,
     global: {
@@ -311,6 +313,129 @@ describe("TablePro 远程模式（requestApi）", () => {
     await wrapper.vm.getTableList();
     await flushPromises();
     expect(grid.mock.calls.clearValidate).toBeGreaterThan(before);
+  });
+});
+
+// ========== 变更跟踪（v-model:cellChanged）==========
+describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
+  // 挂载并模拟 v-model 双向同步（监听 update:cellChanged 并回写 prop）
+  const mountTracking = async (rows) => {
+    let changed = false;
+    const { wrapper, grid } = await mountTablePro(
+      {
+        columns: STATIC_COLUMNS,
+        data: rows,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    return { wrapper, grid, getChanged: () => changed };
+  };
+
+  it("insertRow/removeRows 后同步 update:cellChanged（新增后再移除自动归净）", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+
+    // 桩不自动维护 recordset，测试手动驱动（真实环境由 vxe getRecordset 计算）
+    grid.mock.recordset = {
+      insertRecords: [{ id: "new-1" }],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    wrapper.vm.insertRow({ id: "new-1" });
+    await flushPromises();
+    expect(grid.mock.calls.insert).toHaveLength(1);
+    expect(getChanged()).toBe(true);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(true);
+
+    // 新增行再被移除 → 变更归净（脏→净时重新快照基线）
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    wrapper.vm.removeRows([grid.mock.fullData[0]]);
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(false);
+  });
+
+  it("edit-closed 提交后重算变更状态", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+    // 内部 handler 与转发 handler 被 Vue 合并为数组，逐个调用
+    const callHandler = (name, params) => {
+      const fn = attrs[name];
+      if (Array.isArray(fn)) fn.forEach((f) => f(params));
+      else fn?.(params);
+    };
+    const row = rows[0];
+    callHandler("onEditActivated", { row, column: { field: "name" } });
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [row],
+    };
+    callHandler("onEditClosed", { row, column: { field: "name" } });
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(true);
+  });
+
+  it("revertChanges：loadData 还原基线快照并复位变更状态", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    grid.mock.recordset = {
+      insertRecords: [{ id: "new-1" }],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    wrapper.vm.insertRow({ id: "new-1" });
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+
+    const ok = await wrapper.vm.revertChanges();
+    await flushPromises();
+    expect(ok).toBe(true);
+    expect(getChanged()).toBe(false);
+    // loadData 收到基线深拷贝：内容为挂载时的干净数据，且不是原数组引用
+    expect(grid.mock.calls.loadData).toHaveLength(1);
+    const restored = grid.mock.calls.loadData[0];
+    expect(restored.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(restored).not.toBe(rows);
+  });
+
+  it("markSaved：以当前数据为新基线并复位变更状态", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [rows[0]],
+      updateRecords: [],
+    };
+    wrapper.vm.removeRows([rows[0]]);
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+
+    // 保存：vxe loadData 重建源数据后 recordset 归净
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    await wrapper.vm.markSaved();
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+    expect(grid.mock.calls.loadData).toHaveLength(1);
+    // loadData 收到当前行数据副本（同内容、不同数组引用，行对象引用保持）；
+    // rows[0] 已被移除，当前数据只剩后两行
+    expect(grid.mock.calls.loadData[0]).toEqual([rows[1], rows[2]]);
+    expect(grid.mock.calls.loadData[0]).not.toBe(rows);
   });
 });
 

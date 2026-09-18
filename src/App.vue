@@ -537,6 +537,8 @@ const handleBeforePageChange = async ({ type, currentPage, pageSize }) => {
 const tableProRef = ref();
 const paginationEnabled = ref(true);
 const editableEnabled = ref(true);
+// 变更跟踪（v-model:cellChanged）：编辑/新增/移除后为 true，显示保存/取消按钮
+const cellChanged = ref(false);
 
 // 单元格编辑完成事件
 const onCellEditChange = (params) => {
@@ -584,10 +586,11 @@ const onCheckboxChange = () => {
 };
 
 // ========== 提交校验（触发 vxe-grid fullValidate 全表校验）==========
-const onSubmit = async () => {
+// 全表校验核心：返回是否通过（提交校验 / 保存共用）
+const doValidate = async () => {
   if (!tableProRef.value?.fullValidate) {
     ElMessage.warning("tablePro 未暴露 fullValidate 方法");
-    return;
+    return false;
   }
   try {
     // fullValidate 返回错误映射：null 表示校验通过
@@ -601,15 +604,51 @@ const onSubmit = async () => {
       if (firstErr?.row) tableProRef.value?.scrollToRow?.(firstErr.row);
       ElMessage.error(`校验未通过：${errCount} 个字段存在错误`);
       console.log("[fullValidate errorMap]", errMap);
+      return false;
     } else {
       const data = tableProRef.value?.getData?.() || [];
       ElMessage.success(`校验通过，提交 ${data.length} 条数据`);
       console.log("[submit data]", data);
+      return true;
     }
   } catch (err) {
     ElMessage.error(`校验异常：${err?.message || err}`);
     console.error("[fullValidate error]", err);
+    return false;
   }
+};
+
+const onSubmit = () => doValidate();
+
+// 保存：校验通过后以当前数据为新基线（cellChanged → false，保存/取消按钮隐藏）
+const onSaveChanges = async () => {
+  const ok = await doValidate();
+  if (!ok) return;
+  await tableProRef.value?.markSaved?.();
+  ElMessage.success("保存成功");
+};
+
+// 取消：还原为变更前数据（编辑值/新增行/移除行的位置与内容全部还原）
+const onCancelChanges = async () => {
+  const ok = await tableProRef.value?.revertChanges?.();
+  ElMessage[ok ? "success" : "info"](
+    ok ? "已还原为变更前数据" : "当前没有可还原的变更",
+  );
+};
+
+// 新增空行（vxe insert 封装，插入后 cellChanged → true）
+const onInsertRow = () => {
+  tableProRef.value?.insertRow?.({});
+};
+
+// 删除勾选行（vxe remove 封装，删除后 cellChanged → true）
+const onRemoveSelected = () => {
+  const rows = tableProRef.value?.getCheckboxRecords?.() || [];
+  if (!rows.length) {
+    ElMessage.warning("请先勾选要删除的行");
+    return;
+  }
+  tableProRef.value?.removeRows?.(rows);
 };
 </script>
 
@@ -701,6 +740,7 @@ const onSubmit = async () => {
       :pagination="paginationEnabled"
       :pager-config="{ pageSizes }"
       :editable="editableEnabled"
+      v-model:cellChanged="cellChanged"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"
       :edit-options="editOptions"
@@ -721,8 +761,15 @@ const onSubmit = async () => {
       @textarea-confirm="onTextareaConfirm"
     >
       <template #toolbarButtons>
+        <el-button type="primary" @click="onInsertRow">新增行</el-button>
+        <el-button type="danger" @click="onRemoveSelected">删除选中</el-button>
         <el-button type="primary">按钮1</el-button>
         <el-button type="primary">按钮2</el-button>
+        <!-- 变更跟踪：编辑/新增/移除后（cellChanged=true）显示保存/取消 -->
+        <el-button v-if="cellChanged" @click="onCancelChanges">取消</el-button>
+        <el-button v-if="cellChanged" type="success" @click="onSaveChanges">
+          保存
+        </el-button>
         <el-button type="success" @click="onSubmit">提交校验</el-button>
       </template>
 

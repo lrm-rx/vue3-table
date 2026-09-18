@@ -17,6 +17,7 @@ import {
   camelize,
   mergeProps,
 } from "vue";
+import { cloneDeep } from "lodash-es";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
 import { FILTER_DEFAULTS, isFilterActive } from "./filters/filter-config.js";
@@ -188,6 +189,12 @@ const props = defineProps({
   // 形如：{ remark: [{ required: true, message: '请输入备注', trigger: 'change' }] }
   // 配合暴露的 validate / fullValidate / clearValidate 方法在提交时触发
   editRules: { type: Object, default: () => ({}) },
+
+  // ========== 变更跟踪（v-model:cellChanged 双向绑定）==========
+  // 监听 vxe-grid 自带的三类本地操作（单元格编辑 / 新增行 / 移除行），
+  // 是否存在未保存变更；脏状态时父组件可显示保存/取消按钮
+  // （保存成功后调用暴露的 markSaved，取消时调用 revertChanges 还原基线）
+  cellChanged: { type: Boolean, default: false },
 });
 
 // 声明组件 emits：vxe-grid 透传事件 + TablePro 自身事件
@@ -307,7 +314,100 @@ const onEditClosed = (params) => {
       })
     }
   }
+  recomputeChanged();
 }
+
+// ========== 变更跟踪（v-model:cellChanged）==========
+// 监听 vxe-grid 自带的三类本地操作并对外双向绑定「是否存在未保存变更」：
+//   · 单元格编辑：edit-closed 提交后经 getRecordset().updateRecords 感知（keepSource 差异比对，
+//     改回原值会自动从差异中消失）；
+//   · 新增/移除行：暴露的 insertRow/insertRowAt/removeRows 封装（vxe 的 insert/remove 为方法调用
+//     无事件，必须经封装才能感知；直接调 gridRef 插槽方法不纳入跟踪）；
+//   · 数据被外部替换（翻页/过滤/刷新/重新请求）：vxe loadData 会重置插入/删除/修改三态，
+//     同步重置变更标记并以新数据为基线。
+// 基线快照：干净状态下对全量行数据深拷贝；取消（revertChanges）时 loadData 还原，
+//   行位置与行内值完全还原；保存（markSaved）时以当前数据为新基线。
+const internalChanged = ref(false);
+const baselineRows = ref(null);
+
+// 变更摘要：changed + vxe getRecordset 三类记录（供父组件展示/收集）
+const getChangeState = () => {
+  const rs = gridRef.value?.getRecordset?.() || {};
+  const insertRecords = rs.insertRecords || [];
+  const removeRecords = rs.removeRecords || [];
+  const updateRecords = rs.updateRecords || [];
+  return {
+    changed: !!(insertRecords.length || removeRecords.length || updateRecords.length),
+    insertRecords,
+    removeRecords,
+    updateRecords,
+  };
+};
+
+// 深拷贝当前全量行数据作为基线（lodash-es cloneDeep 处理嵌套对象/数组）
+const refreshBaseline = () => {
+  const fullData = gridRef.value?.getTableData?.()?.fullData;
+  baselineRows.value = fullData && fullData.length ? cloneDeep(fullData) : [];
+};
+
+const emitChanged = (val) => {
+  internalChanged.value = val;
+  if (props.cellChanged !== val) emit("update:cellChanged", val);
+};
+
+// 依据 vxe getRecordset 重算脏状态（编辑提交/新增/移除后调用）
+const recomputeChanged = () => {
+  if (!gridRef.value?.getRecordset) return;
+  const { changed } = getChangeState();
+  if (changed === internalChanged.value) return;
+  // 脏→净（如手动改回原值）：以当前干净数据重新快照基线
+  if (!changed) refreshBaseline();
+  emitChanged(changed);
+};
+
+// 保存成功后调用：以当前数据为新基线并清除变更标记
+//（loadData 重建 keepSource 源数据并清空插入/删除标记，行对象引用保持不变）
+const markSaved = async () => {
+  const fullData = gridRef.value?.getTableData?.()?.fullData;
+  await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
+  emitChanged(false);
+  await nextTick();
+  refreshBaseline();
+};
+
+// 取消：还原到最近一次干净基线（编辑值/新增行/移除行的位置与内容全部还原）
+const revertChanges = async () => {
+  if (!baselineRows.value || !internalChanged.value) return false;
+  await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
+  emitChanged(false);
+  await nextTick();
+  refreshBaseline();
+  return true;
+};
+
+// 父组件主动写 cellChanged=false（v-model 回写）视为保存语义：以当前数据为新基线
+watch(
+  () => props.cellChanged,
+  (val) => {
+    if (val === internalChanged.value) return;
+    if (!val) markSaved();
+    else recomputeChanged();
+  },
+);
+
+// ========== 新增/移除行封装（vxe 自带操作的包装，调用后自动同步变更状态）==========
+const afterChangeOp = (res) => {
+  nextTick(recomputeChanged);
+  return res;
+};
+// 顶部插入一行（record 缺省为空行，可携带初始值）
+const insertRow = (record = {}) =>
+  afterChangeOp(gridRef.value?.insert?.(record));
+// 指定位置插入（target 为行对象/行id）
+const insertRowAt = (records, target) =>
+  afterChangeOp(gridRef.value?.insertAt?.(records, target));
+// 移除行（数组或单行）
+const removeRows = (rows) => afterChangeOp(gridRef.value?.remove?.(rows));
 
 // FilterCheckbox 列的重新拉取计数器：面板每次打开 bump 一次，强制重新 fetch 避免数据串列
 const filterRefetchCounter = reactive({});
@@ -533,10 +633,21 @@ const renderData = computed(() => {
 // 数据刷新时清空选中：vxe-grid reserve:false 会清除选中 UI，同步清空对外暴露的选中数据
 // 同时清除校验状态：vxe 的 validErrorMaps 按 rowid:colid 保存，远程重新请求/本地过滤排序/
 // 翻页导致数据替换后旧错误不会自动清除，会残留在已合法（甚至已不存在）的单元格上
-watch(renderData, () => {
-  clearSelection();
-  gridRef.value?.clearValidate?.();
-});
+// 变更跟踪：数据被外部替换时 vxe loadData 重置插入/删除/修改三态 → 重算脏状态并刷新基线快照
+watch(
+  renderData,
+  () => {
+    clearSelection();
+    gridRef.value?.clearValidate?.();
+    // nextTick 等 vxe-grid 完成新数据装载后再取 fullData（否则拿到的是旧数据）
+    nextTick(() => {
+      if (!gridRef.value?.getRecordset) return;
+      emitChanged(getChangeState().changed);
+      refreshBaseline();
+    });
+  },
+  { immediate: true },
+);
 
 // 实际分页配置：远程用 useTable.pageable；静态+分页用 localPager（total 同步 data.length）；否则原样
 const currentPager = computed(() => {
@@ -707,6 +818,13 @@ onMounted(() => {
     tableHook.updatedTotalParam();
     tableHook.getTableList();
   }
+  // 变更跟踪：静态数据模式数据在挂载时即就位（renderData 不再变化、watch 不会触发），
+  // 挂载后初始化一次基线快照与脏状态
+  nextTick(() => {
+    if (!gridRef.value?.getRecordset) return;
+    emitChanged(getChangeState().changed);
+    refreshBaseline();
+  });
 });
 
 // requestApi 变化时（外部动态切换数据源）重新拉取数据
@@ -1397,6 +1515,18 @@ defineExpose({
   validate: (...args) => gridRef.value?.validate?.(...args),
   fullValidate: (...args) => gridRef.value?.fullValidate?.(...args),
   clearValidate: (...args) => gridRef.value?.clearValidate?.(...args),
+  // ========== 变更跟踪（v-model:cellChanged 配套方法）==========
+  // insertRow/insertRowAt/removeRows：vxe 自带 insert/insertAt/remove 的封装，
+  //   调用后自动同步 cellChanged；直接调 gridRef 的 insert/remove 不纳入跟踪
+  insertRow,
+  insertRowAt,
+  removeRows,
+  // 变更摘要：{ changed, insertRecords, removeRecords, updateRecords }
+  getChangeState,
+  // 保存成功后调用：以当前数据为新基线并清除变更标记（cellChanged → false）
+  markSaved,
+  // 取消：还原到最近一次干净基线（编辑/新增/移除全部还原，返回是否执行了还原）
+  revertChanges,
 });
 </script>
 

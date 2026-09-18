@@ -6,11 +6,21 @@ import { defineComponent, h, ref } from "vue";
  */
 export const createVxeGridStub = () => {
   const mock = {
-    // 模拟 vxe 内部列状态 / 排序状态 / 表格数据
+    // 模拟 vxe 内部列状态 / 排序状态 / 表格数据 / 变更记录集（getRecordset 返回值）
     columns: [],
     sorts: [],
     fullData: [],
-    calls: { sort: [], clearSort: 0, clearFilter: 0, exportData: 0, clearValidate: 0 },
+    recordset: { insertRecords: [], removeRecords: [], updateRecords: [] },
+    calls: {
+      sort: [],
+      clearSort: 0,
+      clearFilter: 0,
+      exportData: 0,
+      clearValidate: 0,
+      insert: [],
+      remove: [],
+      loadData: [],
+    },
   };
 
   const stub = defineComponent({
@@ -46,6 +56,32 @@ export const createVxeGridStub = () => {
         fullValidate: () => null,
         clearValidate: () => {
           mock.calls.clearValidate += 1;
+        },
+        // ========== 变更跟踪相关（vxe insert/remove/getRecordset/loadData）==========
+        getRecordset: () => mock.recordset,
+        insert: (record) => {
+          mock.calls.insert.push(record);
+          mock.fullData = [{ ...record }, ...mock.fullData];
+          return Promise.resolve({ status: true });
+        },
+        insertAt: (records, target) => {
+          mock.calls.insert.push({ records, target });
+          const list = Array.isArray(records) ? [...records] : [records];
+          const idx = target ? mock.fullData.indexOf(target) : -1;
+          if (idx < 0) mock.fullData = [...mock.fullData, ...list];
+          else mock.fullData.splice(idx, 0, ...list);
+          return Promise.resolve({ status: true });
+        },
+        remove: (rows) => {
+          mock.calls.remove.push(rows);
+          const del = Array.isArray(rows) ? rows : [rows];
+          mock.fullData = mock.fullData.filter((r) => !del.includes(r));
+          return Promise.resolve({ status: true });
+        },
+        loadData: (data) => {
+          mock.calls.loadData.push(data);
+          mock.fullData = data;
+          return Promise.resolve();
         },
       });
 

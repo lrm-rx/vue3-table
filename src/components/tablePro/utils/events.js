@@ -76,6 +76,8 @@ export const TABLE_PRO_EVENTS = [
   "cell-click", "cell-dblclick", "row-click", "row-dblclick",
   "filter-confirm", "filter-reset", "filter-reset-all", "reset-filter",
   "cell-edit-change",
+  // 变更跟踪（v-model:cellChanged）：编辑/新增/移除导致表格数据存在未保存变更
+  "update:cellChanged",
   // TextareaPopoverEdit 三按钮事件（携带 { row, column, field, value }）
   "textarea-clear", "textarea-cancel", "textarea-confirm",
 ];
