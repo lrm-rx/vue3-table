@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
+import { reactive, h } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import TablePro from "../../src/components/tablePro/index.vue";
 import Pagination from "../../src/components/tablePro/pagination/Pagination.vue";
@@ -325,6 +326,7 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
       {
         columns: STATIC_COLUMNS,
         data: rows,
+        editable: true,
         cellChanged: false,
         "onUpdate:cellChanged": (v) => {
           changed = v;
@@ -436,6 +438,570 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
     // rows[0] 已被移除，当前数据只剩后两行
     expect(grid.mock.calls.loadData[0]).toEqual([rows[1], rows[2]]);
     expect(grid.mock.calls.loadData[0]).not.toBe(rows);
+  });
+
+  // 内部 handler 与转发 handler 被 Vue 合并为数组，逐个调用
+  const callAttrsHandler = (attrs, name, params) => {
+    const fn = attrs[name];
+    if (Array.isArray(fn)) fn.forEach((f) => f(params));
+    else fn?.(params);
+  };
+
+  it("对象式编辑器：输入当下立即标记脏，改回原值当下归净（无需 edit-closed/失焦）", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+    const row = rows[0];
+    const deptCol = attrs.columns.find((c) => c.field === "dept");
+    expect(deptCol.slots.edit).toEqual(expect.any(Function));
+
+    // 激活 dept（ElSelect 对象式编辑）
+    callAttrsHandler(attrs, "onEditActivated", { row, column: { field: "dept" } });
+    // 渲染编辑 vnode（等价 vxe 编辑态渲染），直接取 v-model 回调模拟下拉选择
+    const vnode = deptCol.slots.edit({
+      row,
+      cellValue: "dev",
+      column: deptCol,
+      $table: {},
+      $rowIndex: 0,
+      $columnIndex: 3,
+    });
+    const setModelValue = vnode.props["onUpdate:modelValue"];
+    expect(setModelValue).toEqual(expect.any(Function));
+
+    // 选择新值：同步翻转 true（未调 onEditClosed、未失焦、面板未关闭）
+    setModelValue("hr");
+    expect(getChanged()).toBe(true);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(true);
+
+    // 改回原值：同步归净 false（编辑中即可取消按钮隐藏）
+    setModelValue("dev");
+    expect(getChanged()).toBe(false);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(false);
+
+    // 再次改值后关闭编辑态：交由 recordset 接管（updateRecords 命中 → 保持脏）
+    setModelValue("hr");
+    expect(getChanged()).toBe(true);
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [row],
+    };
+    callAttrsHandler(attrs, "onEditClosed", { row, column: { field: "dept" } });
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+    // 对象式在 edit-closed 统一写回 row
+    expect(row.dept).toBe("hr");
+  });
+
+  it("对象式编辑器：数组值改回相同内容（不同引用）即归净（深度比对，非引用比对）", async () => {
+    const rows = [{ id: 1, tags: ["a"] }, { id: 2, tags: [] }];
+    let changed = false;
+    const { wrapper, grid } = await mountTablePro(
+      {
+        columns: [
+          { field: "id", title: "ID" },
+          {
+            field: "tags",
+            title: "标签",
+            editRender: {
+              name: "ElCheckbox",
+              options: [
+                { label: "A", value: "a" },
+                { label: "B", value: "b" },
+              ],
+            },
+          },
+        ],
+        data: rows,
+        pagination: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    const attrs = gridAttrs(wrapper);
+    const row = rows[0];
+    const tagsCol = attrs.columns.find((c) => c.field === "tags");
+    callAttrsHandler(attrs, "onEditActivated", { row, column: { field: "tags" } });
+    const vnode = tagsCol.slots.edit({
+      row,
+      cellValue: ["a"],
+      column: tagsCol,
+      $table: {},
+      $rowIndex: 0,
+      $columnIndex: 1,
+    });
+    const setModelValue = vnode.props["onUpdate:modelValue"];
+
+    setModelValue(["b"]);
+    expect(changed).toBe(true);
+    // 新数组引用但内容与原值深度一致 → 归净
+    setModelValue(["a"]);
+    expect(changed).toBe(false);
+  });
+
+  it("函数式编辑器：用户插槽直接改 row[field] 也即时标记/归净", async () => {
+    const rows = reactive([
+      { id: 1, name: "name-0" },
+      { id: 2, name: "name-1" },
+    ]);
+    let changed = false;
+    const { wrapper, grid } = await mountTablePro(
+      {
+        columns: [
+          { field: "id", title: "ID" },
+          {
+            field: "name",
+            title: "姓名",
+            // 函数式 editRender：用户自行把 v-model 绑到 row[field]
+            editRender: (params) => h("input", { value: params.cellValue }),
+          },
+        ],
+        data: rows,
+        pagination: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    const attrs = gridAttrs(wrapper);
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "name" },
+    });
+
+    // 直接修改行数据（模拟用户输入）：同步翻转，无需 edit-closed
+    rows[0].name = "changed";
+    expect(changed).toBe(true);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(true);
+
+    // 改回原值：同步归净
+    rows[0].name = "name-0";
+    expect(changed).toBe(false);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(false);
+
+    // 关闭后由 recordset 接管：改动 + 关闭（无 recordset 差异）→ 仍为净
+    rows[0].name = "changed";
+    expect(changed).toBe(true);
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    callAttrsHandler(attrs, "onEditClosed", {
+      row: rows[0],
+      column: { field: "name" },
+    });
+    await flushPromises();
+    expect(changed).toBe(false);
+  });
+
+  // 渲染某可编辑列的编辑 vnode 并返回 v-model 写值函数（等价 vxe 编辑态渲染 + 用户输入）
+  const renderEditSetter = (wrapper, field, scope = {}) => {
+    const attrs0 = gridAttrs(wrapper);
+    const col = attrs0.columns.find((c) => c.field === field);
+    const vnode = col.slots.edit({
+      row: scope.row,
+      cellValue: scope.cellValue,
+      column: col,
+      $table: {},
+      $rowIndex: scope.$rowIndex ?? 0,
+      $columnIndex: scope.$columnIndex ?? 0,
+    });
+    return vnode.props["onUpdate:modelValue"];
+  };
+
+  const emptyRecordset = () => ({
+    insertRecords: [],
+    removeRecords: [],
+    updateRecords: [],
+  });
+
+  it("连续接力编辑两个单元格：旧会话 watcher 已拆除，互不串扰", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    // 单元格 A：编辑 → 脏 → 关闭（recordset 无差异）→ 净
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("hr");
+    expect(getChanged()).toBe(true);
+    grid.mock.recordset = emptyRecordset();
+    callAttrsHandler(attrs, "onEditClosed", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+
+    // 单元格 B（第二行 dept，不同 stateKey）：新会话独立工作；
+    // A 的 watcher 已停（其 editLocalState key 已删除，残留 watcher 会读到 undefined 误报，
+    // 整个序列保持预期翻转即证明旧 watcher 已拆除）
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[1],
+      column: { field: "dept" },
+    });
+    const setB = renderEditSetter(wrapper, "dept", {
+      row: rows[1],
+      cellValue: "dev",
+    });
+    setB("hr");
+    expect(getChanged()).toBe(true);
+    setB("dev");
+    expect(getChanged()).toBe(false);
+
+    grid.mock.recordset = emptyRecordset();
+    callAttrsHandler(attrs, "onEditClosed", {
+      row: rows[1],
+      column: { field: "dept" },
+    });
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+  });
+
+  it("OR 语义：编辑中插入行保持脏；编辑值还原但插入未撤销仍脏；插入撤销后归净", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    // 编辑中 → 脏
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("hr");
+    expect(getChanged()).toBe(true);
+
+    // 编辑未提交时插入行（recordset 出现 insertRecords）→ 仍为脏（不产生额外翻转事件）
+    grid.mock.recordset = {
+      insertRecords: [{ id: "new-1" }],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    wrapper.vm.insertRow({ id: "new-1" });
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+
+    // 编辑值改回原值（编辑源归净），但插入行仍在 → 合并脏态保持 true
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("dev");
+    expect(getChanged()).toBe(true);
+
+    // 插入撤销（recordset 清空）后关闭编辑态走 recompute 通道 → 归净
+    grid.mock.recordset = emptyRecordset();
+    callAttrsHandler(attrs, "onEditClosed", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+  });
+
+  it("编辑中 markSaved：拆除会话并复位；之后再次编辑以当前值为新基线", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("hr");
+    expect(getChanged()).toBe(true);
+
+    // 编辑未关闭直接保存：会话被拆除、cellChanged 复位（编辑控件的本地草稿随之失效，
+    // 行数据保持原值 dev）
+    grid.mock.recordset = emptyRecordset();
+    await wrapper.vm.markSaved();
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+    expect(grid.mock.calls.loadData.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0].dept).toBe("dev");
+
+    // 再次激活同一单元格：新会话以当前值 dev 为原值，改成 hr 才脏，dev→dev 不脏
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    const setAgain = renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    });
+    setAgain("dev");
+    expect(getChanged()).toBe(false);
+    setAgain("hr");
+    expect(getChanged()).toBe(true);
+  });
+
+  it("编辑中 revertChanges：会话拆除、状态复位，残留本地草稿变化不再产生事件", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    const setVal = renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    });
+    setVal("hr");
+    expect(getChanged()).toBe(true);
+
+    // 即将还原：记录此刻事件数
+    const lenBeforeRevert =
+      wrapper.emitted("update:cellChanged")?.length ?? 0;
+    const ok = await wrapper.vm.revertChanges();
+    await flushPromises();
+    expect(ok).toBe(true);
+    expect(getChanged()).toBe(false);
+    // revert 仅产生一次 false 沿
+    const afterRevert = wrapper.emitted("update:cellChanged") || [];
+    expect(afterRevert.length).toBe(lenBeforeRevert + 1);
+    expect(afterRevert.at(-1)[0]).toBe(false);
+
+    // watcher 已停：再写草稿值不翻转状态、不发事件
+    setVal("hr-again");
+    expect(getChanged()).toBe(false);
+    const emitsAfter = wrapper.emitted("update:cellChanged") || [];
+    expect(emitsAfter.length).toBe(lenBeforeRevert + 1);
+  });
+
+  it("编辑中数据被外部替换（data prop 变化）：会话自动拆除，脏态复位", async () => {
+    const rows = makeRows(3);
+    let changed = false;
+    const { wrapper } = await mountTablePro(
+      {
+        columns: STATIC_COLUMNS,
+        data: rows,
+        pagination: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    const attrs = gridAttrs(wrapper);
+
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("hr");
+    expect(changed).toBe(true);
+
+    // 外部替换数据（翻页/刷新场景）：renderData watcher 在 nextTick 清会话 + 重算
+    const nextRows = makeRows(2).map((r, i) => ({
+      ...r,
+      id: 100 + i,
+      dept: "finance",
+    }));
+    wrapper.setProps({ data: nextRows });
+    await flushPromises();
+    expect(changed).toBe(false);
+  });
+
+  it("同一单元格重复激活（漏收 closed 安全网）：不残留脏标记、不重复计数", async () => {
+    const rows = makeRows(3);
+    const { wrapper, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    // 第一次激活并改脏
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    })("hr");
+    expect(getChanged()).toBe(true);
+
+    // 未收到 closed 又激活同一单元格：旧会话被拆（行尚未提交，原值仍为 dev）→ 归净，
+    // 新会话以 dev 为原值
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+
+    // 新会话：等于原值不脏，不同才脏
+    const setVal = renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    });
+    setVal("dev");
+    expect(getChanged()).toBe(false);
+    setVal("finance");
+    expect(getChanged()).toBe(true);
+    // 每次翻转只发一次事件（无 watcher 重复触发）
+    const trueEmits = (wrapper.emitted("update:cellChanged") || []).filter(
+      (e) => e[0] === true,
+    );
+    const falseEmits = (wrapper.emitted("update:cellChanged") || []).filter(
+      (e) => e[0] === false,
+    );
+    expect(trueEmits.length).toBe(2);
+    expect(falseEmits.length).toBe(1);
+  });
+
+  it("嵌套对象值：按内容深度比对，快照隔离不受原对象后续突变影响", async () => {
+    const rows = reactive([{ id: 1, profile: { role: "dev", level: 2 } }]);
+    let changed = false;
+    const { wrapper } = await mountTablePro(
+      {
+        columns: [
+          {
+            field: "profile",
+            title: "档案",
+            editRender: { name: "ElInput" }, // 仅借用对象式 v-model 通道
+          },
+        ],
+        data: rows,
+        pagination: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    const attrs = gridAttrs(wrapper);
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "profile" },
+    });
+    const setVal = renderEditSetter(wrapper, "profile", {
+      row: rows[0],
+      cellValue: rows[0].profile,
+    });
+
+    // 内容相同、引用不同 → 不脏
+    setVal({ role: "dev", level: 2 });
+    expect(changed).toBe(false);
+    // 嵌套字段变化 → 脏
+    setVal({ role: "dev", level: 3 });
+    expect(changed).toBe(true);
+    // 恢复内容 → 净
+    setVal({ role: "dev", level: 2 });
+    expect(changed).toBe(false);
+  });
+
+  it("数字类型严格比较：0→1 脏；字符串 '0' 不等于数字 0", async () => {
+    const rows = [{ id: 1, age: 0 }];
+    let changed = false;
+    const { wrapper } = await mountTablePro(
+      {
+        columns: [
+          { field: "id", title: "ID" },
+          { field: "age", title: "年龄", editRender: { name: "ElInputNumber" } },
+        ],
+        data: rows,
+        pagination: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      { fullData: rows },
+    );
+    const attrs = gridAttrs(wrapper);
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "age" },
+    });
+    const setAge = renderEditSetter(wrapper, "age", {
+      row: rows[0],
+      cellValue: 0,
+    });
+    setAge(1);
+    expect(changed).toBe(true);
+    setAge(0);
+    expect(changed).toBe(false);
+    // 类型不同视为变更（避免数字/字符串误归净导致漏提交）
+    setAge("0");
+    expect(changed).toBe(true);
+  });
+
+  it("edit-closed 无对应激活态（异常序列）：不抛错并重算", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    grid.mock.recordset = emptyRecordset();
+    expect(() =>
+      callAttrsHandler(attrs, "onEditClosed", {
+        row: rows[0],
+        column: { field: "age" },
+      }),
+    ).not.toThrow();
+    await flushPromises();
+    expect(getChanged()).toBe(false);
+  });
+
+  it("改回原值后关闭：不产生 cell-edit-change 事件（值未变化）", async () => {
+    const rows = makeRows(3);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const attrs = gridAttrs(wrapper);
+
+    callAttrsHandler(attrs, "onEditActivated", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    const setVal = renderEditSetter(wrapper, "dept", {
+      row: rows[0],
+      cellValue: "dev",
+    });
+    setVal("hr");
+    expect(getChanged()).toBe(true);
+    setVal("dev");
+    expect(getChanged()).toBe(false);
+
+    const before = wrapper.emitted("cell-edit-change")?.length ?? 0;
+    grid.mock.recordset = emptyRecordset();
+    callAttrsHandler(attrs, "onEditClosed", {
+      row: rows[0],
+      column: { field: "dept" },
+    });
+    await flushPromises();
+    const after = wrapper.emitted("cell-edit-change")?.length ?? 0;
+    expect(after).toBe(before);
+    expect(rows[0].dept).toBe("dev");
   });
 });
 

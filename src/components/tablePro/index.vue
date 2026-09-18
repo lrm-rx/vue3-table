@@ -17,7 +17,7 @@ import {
   camelize,
   mergeProps,
 } from "vue";
-import { cloneDeep } from "lodash-es";
+import { cloneDeep, isEqual } from "lodash-es";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
 import { FILTER_DEFAULTS, isFilterActive } from "./filters/filter-config.js";
@@ -194,6 +194,9 @@ const props = defineProps({
   // 监听 vxe-grid 自带的三类本地操作（单元格编辑 / 新增行 / 移除行），
   // 是否存在未保存变更；脏状态时父组件可显示保存/取消按钮
   // （保存成功后调用暴露的 markSaved，取消时调用 revertChanges 还原基线）
+  // 即时性：单元格处于编辑态时，每次输入/选择与原值不一致即立刻翻为 true，
+  // 改回原值立刻翻回 false —— 不等待失焦 / edit-closed / 下拉面板关闭
+  // （编辑中按单值 O(1) 比对；edit-closed 提交后才交由 vxe getRecordset 全表 diff 接管）
   cellChanged: { type: Boolean, default: false },
 });
 
@@ -259,14 +262,87 @@ const resolveEditStateKey = (row, field) => {
     : `auto:${(row[ROW_ID_KEY] = ++_rowAutoIdSeq)}`
   return `${prefix}:${String(field)}`
 }
-// 进入编辑态：用 row[field] 初始化本地值
+
+// ========== 编辑中即时脏态会话 ==========
+// 目标：编辑期间（尚未 edit-closed）cellChanged 也能随每次输入/选择即时翻转，
+// 不必等失焦或下拉面板关闭。
+// 性能：每次按键只做「单值 vs 进入时原值」的 isEqual 比对（O(1)），
+// 绝不调用 getRecordset（那是全表 rows×fields 的深 diff，只允许在提交/增删/换数据时跑）。
+// 容器刻意用普通 Map/Set（热路径无响应式代理开销），仅暴露一个 editingDirty 布尔 ref。
+const editingWatchers = new Map(); // stateKey → watcher stop 句柄
+const editingDirtyKeys = new Set(); // 当前值 ≠ 原值的会话 key
+const editingDirty = ref(false); // 是否存在编辑中的脏会话（与 recordset 脏态取或）
+
+// 原值快照：引用类型深拷贝隔离，防止编辑器原地突变污染比对基准
+const snapshotEditOriginal = (v) =>
+  v !== null && typeof v === "object" ? cloneDeep(v) : v;
+
+// 仅重算布尔值、不发事件（供 onEditClosed 在提交前后静默拆除会话，
+// 避免「先 false 后 true」的闪烁 emit；提交完成后由 recomputeChanged 统一裁决）
+const refreshEditingDirtySilent = () => {
+  editingDirty.value = editingDirtyKeys.size > 0;
+};
+
+// 拆除单个编辑会话：停 watcher（必须在 delete editLocalState 之前，
+// 否则 source 变为 undefined 会让 sync watcher 再误触发一次）
+// silent=true 仅用于 onEditClosed：提交尚未完成、recordset 尚未接管，
+// 此刻 applyChanged 会先发 false 再发 true 造成闪烁，故交由提交后的 recomputeChanged 统一裁决
+const teardownEditSession = (key, silent = false) => {
+  const stop = editingWatchers.get(key);
+  if (stop) {
+    stop();
+    editingWatchers.delete(key);
+  }
+  editingDirtyKeys.delete(key);
+  if (silent) {
+    refreshEditingDirtySilent();
+  } else {
+    // 重复激活（漏收 closed）等安全网路径：拆除后立即重新裁决，避免残留脏标记
+    applyChanged();
+  }
+};
+// 拆除全部会话（数据被外部替换 / 保存 / 取消时，编辑态随之销毁）
+const clearEditSessions = () => {
+  editingWatchers.forEach((stop) => stop());
+  editingWatchers.clear();
+  editingDirtyKeys.clear();
+  refreshEditingDirtySilent();
+};
+
+// 进入编辑态：用 row[field] 初始化本地值 + 注册即时脏态 watcher
 // 自动弹出由 utils/columns.js 中 buildObjectEditSlotFn 的 onVnodeMounted 钩子处理（更可靠）
 const onEditActivated = (params) => {
   const row = params && params.row
   const field = params && params.column && params.column.field
   if (!row || !field) return
   const key = resolveEditStateKey(row, field)
-  editLocalState[key] = row[field]
+  const original = row[field]
+  editLocalState[key] = original
+  // 异常情况下同 key 重复激活（漏收 closed）：先拆旧会话再注册
+  teardownEditSession(key)
+  const originalSnapshot = snapshotEditOriginal(original)
+  // 对象式 editRender 的 v-model 绑 editLocalState[key]；
+  // 函数式/字符串式（customEditFields）由用户插槽直接绑 row[field]
+  const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
+  const source = isCustomEdit
+    ? () => row[field]
+    : () => editLocalState[key]
+  // flush:sync → 输入事件当拍翻转，不等 nextTick；自定义插槽监听单字段用 deep 兜底原地突变
+  const stop = watch(
+    source,
+    (cur) => {
+      if (!isEqual(cur, originalSnapshot)) editingDirtyKeys.add(key)
+      else editingDirtyKeys.delete(key)
+      const hasDirty = editingDirtyKeys.size > 0
+      if (hasDirty !== editingDirty.value) {
+        editingDirty.value = hasDirty
+        // applyChanged 定义在下方变更跟踪区（运行期调用，无 TDZ 问题）
+        applyChanged()
+      }
+    },
+    { flush: "sync", deep: isCustomEdit },
+  )
+  editingWatchers.set(key, stop)
 }
 // 退出编辑态：写回 row + 发射 cell-edit-change + 清理本地态
 // 分流：对象式 editLocalState 存新值 → 写回 row；
@@ -277,7 +353,13 @@ const onEditClosed = (params) => {
   const field = col && col.field
   if (!row || !field) return
   const key = resolveEditStateKey(row, field)
-  if (!(key in editLocalState)) return
+  // 静默拆除即时脏态会话（不发事件）；提交完成后由末尾 recomputeChanged 统一裁决，
+  // 此时 vxe recordset 成为唯一事实来源，避免编辑态与 recordset 交接瞬间的闪烁 emit
+  teardownEditSession(key, true)
+  if (!(key in editLocalState)) {
+    recomputeChanged()
+    return
+  }
 
   const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
   let newValue, oldValue
@@ -319,16 +401,21 @@ const onEditClosed = (params) => {
 
 // ========== 变更跟踪（v-model:cellChanged）==========
 // 监听 vxe-grid 自带的三类本地操作并对外双向绑定「是否存在未保存变更」：
-//   · 单元格编辑：edit-closed 提交后经 getRecordset().updateRecords 感知（keepSource 差异比对，
+//   · 单元格编辑中：编辑会话即时比对（单值 isEqual，O(1)），输入/选择当下即翻转，
+//     改回原值当下归净 —— 不等待 edit-closed；
+//   · 单元格编辑提交后：经 getRecordset().updateRecords 感知（keepSource 全表深 diff，
 //     改回原值会自动从差异中消失）；
 //   · 新增/移除行：暴露的 insertRow/insertRowAt/removeRows 封装（vxe 的 insert/remove 为方法调用
 //     无事件，必须经封装才能感知；直接调 gridRef 插槽方法不纳入跟踪）；
 //   · 数据被外部替换（翻页/过滤/刷新/重新请求）：vxe loadData 会重置插入/删除/修改三态，
-//     同步重置变更标记并以新数据为基线。
+//     同步拆除编辑会话、重置变更标记并以新数据为基线。
+// 最终脏态 = recordset 脏态（全表深 diff 的缓存结果） || 编辑中脏态（单值比对）。
 // 基线快照：干净状态下对全量行数据深拷贝；取消（revertChanges）时 loadData 还原，
 //   行位置与行内值完全还原；保存（markSaved）时以当前数据为新基线。
 const internalChanged = ref(false);
 const baselineRows = ref(null);
+// 最近一次 getRecordset 全表 diff 的缓存结果（仅在提交/增删/换数据时刷新，热路径不重算）
+const recordChanged = ref(false);
 
 // 变更摘要：changed + vxe getRecordset 三类记录（供父组件展示/收集）
 const getChangeState = () => {
@@ -350,24 +437,40 @@ const refreshBaseline = () => {
   baselineRows.value = fullData && fullData.length ? cloneDeep(fullData) : [];
 };
 
+// 沿 lastEmitted 去重而非仅比 props.cellChanged：sync watcher 支持同一拍内
+// true→false 连翻（程序式连续赋值），此时父组件 v-model 回写尚未刷新 prop，
+// 只比 prop 会漏掉 false 沿；内部状态每次实际翻转都必须通知父组件
+let lastEmittedChanged = props.cellChanged;
 const emitChanged = (val) => {
   internalChanged.value = val;
-  if (props.cellChanged !== val) emit("update:cellChanged", val);
+  if (val !== lastEmittedChanged || val !== props.cellChanged) {
+    lastEmittedChanged = val;
+    emit("update:cellChanged", val);
+  }
 };
 
-// 依据 vxe getRecordset 重算脏状态（编辑提交/新增/移除后调用）
-const recomputeChanged = () => {
-  if (!gridRef.value?.getRecordset) return;
-  const { changed } = getChangeState();
+// 汇总裁决：recordset 脏态 || 编辑中脏态；仅在翻转沿发事件（脏→净时刷新基线）
+const applyChanged = () => {
+  const changed = recordChanged.value || editingDirty.value;
   if (changed === internalChanged.value) return;
   // 脏→净（如手动改回原值）：以当前干净数据重新快照基线
   if (!changed) refreshBaseline();
   emitChanged(changed);
 };
 
+// 依据 vxe getRecordset 重算脏状态（编辑提交/新增/移除后调用；全表深 diff，非热路径）
+const recomputeChanged = () => {
+  if (!gridRef.value?.getRecordset) return;
+  recordChanged.value = getChangeState().changed;
+  applyChanged();
+};
+
 // 保存成功后调用：以当前数据为新基线并清除变更标记
 //（loadData 重建 keepSource 源数据并清空插入/删除标记，行对象引用保持不变）
 const markSaved = async () => {
+  // loadData 会销毁编辑态：同步拆除编辑会话，避免残留脏标记
+  clearEditSessions();
+  recordChanged.value = false;
   const fullData = gridRef.value?.getTableData?.()?.fullData;
   await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
   emitChanged(false);
@@ -378,6 +481,8 @@ const markSaved = async () => {
 // 取消：还原到最近一次干净基线（编辑值/新增行/移除行的位置与内容全部还原）
 const revertChanges = async () => {
   if (!baselineRows.value || !internalChanged.value) return false;
+  clearEditSessions();
+  recordChanged.value = false;
   await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
   emitChanged(false);
   await nextTick();
@@ -642,7 +747,9 @@ watch(
     // nextTick 等 vxe-grid 完成新数据装载后再取 fullData（否则拿到的是旧数据）
     nextTick(() => {
       if (!gridRef.value?.getRecordset) return;
-      emitChanged(getChangeState().changed);
+      // 数据替换会销毁所有编辑态：拆除编辑会话，由 recordset 单独裁决
+      clearEditSessions();
+      recomputeChanged();
       refreshBaseline();
     });
   },
@@ -822,7 +929,8 @@ onMounted(() => {
   // 挂载后初始化一次基线快照与脏状态
   nextTick(() => {
     if (!gridRef.value?.getRecordset) return;
-    emitChanged(getChangeState().changed);
+    clearEditSessions();
+    recomputeChanged();
     refreshBaseline();
   });
 });
