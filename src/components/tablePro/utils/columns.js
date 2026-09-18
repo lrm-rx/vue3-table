@@ -367,7 +367,11 @@ export const buildColumns = (config) => {
   // 统一替换为该标记对象：实际渲染完全由 col.slots.edit 接管
   // （runRenderer 优先调用 edit 插槽，不会查 renderer 表）。
   const SLOT_EDIT_RENDER_NAME = 'TableProSlotEdit'
-  const buildSlotEditRender = () => ({ name: SLOT_EDIT_RENDER_NAME })
+  // autofocus: true → vxe 编辑激活后（handleFocus，默认 editConfig.autoFocus=true）
+  // 自动匹配 cell 内第一个 input/textarea 并聚焦；
+  // 函数式/字符串式的 slots.edit 是用户自定义控件、无注册 renderer 可提供
+  // tableAutoFocus，必须显式声明 autofocus 才能点击后自动聚焦
+  const buildSlotEditRender = () => ({ name: SLOT_EDIT_RENDER_NAME, autofocus: true })
 
   // 4a) 函数式 editRender → slots.edit（JSX 渲染）
   const applyFunctionEditRender = (col, field, editEnabled) => {

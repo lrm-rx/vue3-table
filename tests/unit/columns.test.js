@@ -227,7 +227,8 @@ describe("editRender 分流", () => {
     expect(col.editable).toBe(true);
     // vxe 仅凭 isEnableConf(column.editRender) 判定可编辑（点击激活/编辑图标/编辑插槽渲染），
     // 函数会被替换为对象式标记（实际渲染由 slots.edit 接管），不能删除否则列不可编辑
-    expect(col.editRender).toEqual({ name: "TableProSlotEdit" });
+    // autofocus: true 让 vxe handleFocus 在编辑激活后自动聚焦 cell 内第一个 input/textarea
+    expect(col.editRender).toEqual({ name: "TableProSlotEdit", autofocus: true });
     const vnode = col.slots.edit(scopeFor("a", { a: "x" }, "x"));
     expect(vnode.type).toBe("input");
   });
@@ -245,7 +246,7 @@ describe("editRender 分流", () => {
     const slotFn = () => null;
     const hit = run([{ field: "e", editRender: "edit_e" }], { slots: { edit_e: slotFn } });
     expect(hit.result[0].slots.edit).toBe("edit_e");
-    expect(hit.result[0].editRender).toEqual({ name: "TableProSlotEdit" });
+    expect(hit.result[0].editRender).toEqual({ name: "TableProSlotEdit", autofocus: true });
 
     const miss = run([{ field: "e", editRender: "edit_e" }], { slots: {} });
     expect(miss.result[0].slots.edit).toBeUndefined();
