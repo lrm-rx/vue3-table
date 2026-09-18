@@ -106,8 +106,7 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 - **高度来源**：已渲染项由 `ResizeObserver` 测量真实高度，按评论 id 缓存（切换排序后缓存仍可复用）；未渲染项使用估计高度 `estimateHeight`；
 - **定位**：基于高度前缀和 `offsets`，滚动位置通过二分查找定位窗口，只挂载「可视区 + 上下 overscan」内的条目，DOM 数量恒定；
 - **占位与位移**：phantom 层以总高度撑开真实滚动条，content 层 `translateY` 定位已渲染节点；
-- **楼层序号列**：VirtualList 通过 `showIndex` 控制是否渲染「数字 + 楼」序号列，序号默认取条目 `floor` 字段（`indexField` 可配置；字段缺失时回退展示位置序号 index+1）；CommentSection 以业务属性 `showFloorIndex`（默认 `true`）控制该列：开启时 CommentItem 头部不再重复显示楼层，关闭时楼层改由 CommentItem 行内「第 n 楼」展示；
-- **点击楼层排序**：序号列顶部为 sticky 吸附的可点击表头（上下双三角），由属性 `floorSortable`（默认 `true`）控制是否开启（需同时开启 `showFloorIndex`）。开启后三态循环：默认（跟随最热 Tab，箭头不高亮）→ `floor` 楼层升序（上三角高亮，从第 1 楼开始）→ `latest` 楼层倒序（下三角高亮，等同「最新」Tab）→ 回到默认；表头与「最热 / 最新」Tab 状态双向一致；关闭 `floorSortable` 时仅隐藏表头，序号列与当前排序不受影响；
+- **楼层展示**：楼层统一由 CommentItem 渲染在昵称行右端——左侧昵称 + UP 标识成组、右侧「第 n 楼」，flex 两端对齐；两种滚动模式表现一致，排序切换后楼层保持固定编号。VirtualList 另保留通用的 `showIndex` 序号列能力（「数字 + 楼」+ sticky 排序表头，`indexField` 可配置），评论区默认不启用；
 - **滚动补偿**：视口上方的条目因楼中楼展开/新增回复而变高时，同步补偿 `scrollTop`，避免内容跳变；
 - **触底加载**：滚动接近底部时抛出 `load-more`，配合外部 `loading` 可对接增量接口（本地全量数据无需处理）；
 - 切换排序 / 发表评论后列表自动回到顶部。
@@ -189,10 +188,8 @@ const onDelete = ({ comment }) => {};
 | `loading` | Boolean | `false` | 列表加载态（预留远程加载） |
 | `virtualScroll` | Boolean | `false` | 是否开启评论列表虚拟滚动（显式开启；开启后不再显示「点击加载更多」，由列表内部承载全量数据） |
 | `listHeight` | Number \| String | `600` | 虚拟滚动视口高度，number 按 px；容器必须有确定高度 |
-| `showFloorIndex` | Boolean | `true` | 仅虚拟模式生效：是否以左侧序号列显示楼层；关闭后楼层改由 CommentItem 行内「第 n 楼」展示 |
-| `floorSortable` | Boolean | `true` | 是否开启序号列表头点击排序（需同时开启 `showFloorIndex`）；关闭时仅隐藏表头 |
 
-> 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 楼层序号列 / 列头点击排序 / 视口高度。
+> 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 视口高度。
 
 ### Emits
 

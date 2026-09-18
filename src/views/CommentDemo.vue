@@ -1,7 +1,7 @@
 <script setup>
 /**
  * 评论区演示页：通过 MockJS（vite-plugin-mock → /mock-api/comment/list）
- * 批量生成评论数据，实测 CommentSection 的虚拟滚动与楼层序号列。
+ * 批量生成评论数据，实测 CommentSection 的虚拟滚动与楼中楼交互。
  * 页面层负责取数与状态，CommentSection 只接收 props / 抛出事件。
  */
 import { ref, onMounted } from "vue";
@@ -18,8 +18,6 @@ const count = ref(500);
 const seed = ref(0);
 const loading = ref(false);
 const virtualScroll = ref(true);
-const showFloorIndex = ref(true);
-const floorSortable = ref(true);
 const listHeight = ref(600);
 
 // —— 评论数据（v-model:comments 与组件双向同步）——
@@ -80,13 +78,6 @@ onMounted(loadData);
 
           <span class="comment-demo__label">虚拟滚动</span>
           <el-switch v-model="virtualScroll" />
-          <span class="comment-demo__label">楼层序号列</span>
-          <el-switch v-model="showFloorIndex" :disabled="!virtualScroll" />
-          <span class="comment-demo__label">列头点击排序</span>
-          <el-switch
-            v-model="floorSortable"
-            :disabled="!virtualScroll || !showFloorIndex"
-          />
           <span class="comment-demo__label">视口高度</span>
           <el-select v-model="listHeight" size="small" style="width: 100px">
             <el-option :value="400" label="400px" />
@@ -102,7 +93,7 @@ onMounted(loadData);
         点赞 <b>{{ eventCount.like }}</b> · 删除
         <b>{{ eventCount.delete }}</b>
         <span class="comment-demo__tip">
-          （楼层为按发帖时间固定的编号，切换最热/最新排序后序号列仍显示原始楼层）
+          （楼层为按发帖时间固定的编号，显示在每条评论昵称行右端，切换最热/最新排序后保持原始楼层）
         </span>
       </div>
 
@@ -112,8 +103,6 @@ onMounted(loadData);
         :loading="loading"
         :virtual-scroll="virtualScroll"
         :list-height="listHeight"
-        :show-floor-index="showFloorIndex"
-        :floor-sortable="floorSortable"
         @send="bump('send')"
         @reply="bump('reply')"
         @like="bump('like')"

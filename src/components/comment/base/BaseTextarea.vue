@@ -4,9 +4,12 @@
  * 基于 element-plus ElInput（type=textarea）二次封装：
  *  - 自适应高度（autosize）
  *  - 字数统计（show-word-limit）
- *  - 统一圆角边框与聚焦高亮
+ *  - 统一圆角与聚焦高亮
+ * 注意：EP 2.x 的 textarea 边框是用 inset box-shadow 实现的（border:none），
+ * 因此描边必须覆盖 box-shadow；inset 阴影绘制在 border-box 内侧，
+ * 不会被父级 overflow 裁剪，虚拟列表内也不会出现「右边框被遮挡」。
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 
 const props = defineProps({
   // 输入值（v-model）
@@ -47,12 +50,41 @@ const onKeydown = (event) => {
   emit("keydown", event);
 };
 
+// 取到底层原生 textarea（EP 实例属性在不同小版本间有差异，$el 查询兜底）
+const getNativeEl = () => {
+  const inst = inputRef.value;
+  return (
+    inst?.textarea ??
+    inst?.input ??
+    inst?.ref ??
+    inst?.$el?.querySelector?.("textarea") ??
+    null
+  );
+};
+
 // 透传 focus 给父组件（回复框展开后自动聚焦）
 const focus = () => {
   inputRef.value?.focus?.();
 };
 
-defineExpose({ focus });
+// 在光标处插入文本（表情 / @），插入后恢复光标并保持聚焦
+const insertText = async (snippet) => {
+  const el = getNativeEl();
+  if (!el) {
+    emit("update:modelValue", `${props.modelValue}${snippet}`);
+    return;
+  }
+  el.focus();
+  const start = el.selectionStart ?? props.modelValue.length;
+  const end = el.selectionEnd ?? props.modelValue.length;
+  const next = props.modelValue.slice(0, start) + snippet + props.modelValue.slice(end);
+  emit("update:modelValue", next);
+  await nextTick();
+  const pos = start + snippet.length;
+  el.setSelectionRange?.(pos, pos);
+};
+
+defineExpose({ focus, insertText });
 </script>
 
 <template>
@@ -77,37 +109,39 @@ defineExpose({ focus });
 .biz-textarea {
   :deep(.el-textarea__inner) {
     border-radius: 8px;
-    border-color: #e3e5e7;
     background-color: #f6f7f8;
     color: #18191c;
     font-size: 13px;
     line-height: 1.6;
-    box-shadow: none;
+    // EP textarea 的 1px 描边由 inset 环实现（border 为 none），覆盖默认环
+    box-shadow: 0 0 0 1px #e3e5e7 inset;
+    // autosize 已自动撑高，禁用原生拖拽柄（会盖住右下角描边）
+    resize: none;
     transition:
-      border-color 0.2s ease,
-      background-color 0.2s ease,
-      box-shadow 0.2s ease;
+      box-shadow 0.2s ease,
+      background-color 0.2s ease;
 
     &::placeholder {
       color: #9499a0;
     }
 
     &:hover {
-      border-color: #c9ccd0;
       background-color: #fff;
+      box-shadow: 0 0 0 1px #c9ccd0 inset;
     }
 
     &:focus {
-      border-color: #fb7299;
       background-color: #fff;
-      box-shadow: 0 0 0 2px rgba(251, 114, 153, 0.12);
+      outline: none;
+      box-shadow: 0 0 0 1px #fb7299 inset;
     }
   }
 
-  // 字数统计颜色
+  // 字数统计颜色（贴在输入框内右下角）
   :deep(.el-input__count) {
     color: #9499a0;
     font-size: 12px;
+    background: transparent;
   }
 }
 </style>
