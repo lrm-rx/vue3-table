@@ -32,6 +32,8 @@ const emit = defineEmits(["like", "reply", "delete"]);
 // —— 内联回复态 ——
 const replying = ref(false);
 const replyTarget = ref(null);
+// 编辑器锚点：回复某条回复时记录该条的 id（用于编辑器就近插入）；回复楼主为 null
+const replyAnchorId = ref(null);
 
 // —— 删除权限：本人 或 管理员 ——
 const isAdmin = computed(() => props.currentUser?.role === "admin");
@@ -53,6 +55,7 @@ const replyPlaceholder = computed(() =>
 // reply 为 null → 直接回复楼主；否则回复某条回复的作者
 const startReply = (reply = null) => {
   replyTarget.value = reply ? { id: reply.author?.id, name: reply.author?.name } : null;
+  replyAnchorId.value = reply?.id ?? null;
   replying.value = true;
 };
 
@@ -64,11 +67,13 @@ const onEditorSend = (content) => {
   });
   replying.value = false;
   replyTarget.value = null;
+  replyAnchorId.value = null;
 };
 
 const onEditorCancel = () => {
   replying.value = false;
   replyTarget.value = null;
+  replyAnchorId.value = null;
 };
 
 // —— 点赞 ——
@@ -168,6 +173,8 @@ const onReplyDelete = async (reply) => {
         :current-user="currentUser"
         :preview-count="previewReplies"
         :bare="!hasReplies"
+        :replying="replying"
+        :editor-reply-id="replyAnchorId"
         @like="onReplyLike"
         @reply="startReply"
         @delete="onReplyDelete"

@@ -139,6 +139,52 @@ const confirmMessageBox = async () => {
   await flushPromises();
 };
 
+describe("CommentSection 回复框就近展开", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("点根评论回复：编辑器出现在楼中楼卡片顶部（首条回复之前）", async () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    // 初始不渲染编辑器
+    expect(wrapper.findAll(".bili-reply-list__editor")).toHaveLength(0);
+
+    // 一级评论操作条上的「回复(1)」
+    await findButton(wrapper, "回复(1)").trigger("click");
+    await flushPromises();
+
+    const list = wrapper.find(".bili-reply-list");
+    const first = list.element.children[0];
+    expect(first.classList.contains("bili-reply-list__editor")).toBe(true);
+    expect(first.querySelector("textarea").getAttribute("placeholder")).toContain(
+      "回复 @张三",
+    );
+  });
+
+  it("点某条回复的回复：编辑器插在该条回复正下方", async () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    // 楼中楼内纯文本「回复」按钮（r1 的）
+    const replyBtns = wrapper
+      .findAll(".bili-reply-item .el-button")
+      .filter((b) => b.text().trim() === "回复");
+    await replyBtns[0].trigger("click");
+    await flushPromises();
+
+    const items = wrapper.findAll(".bili-reply-item");
+    const editorEl = items[0].element.nextElementSibling;
+    expect(editorEl).toBeTruthy();
+    expect(editorEl.classList.contains("bili-reply-list__editor")).toBe(true);
+    expect(editorEl.querySelector("textarea").getAttribute("placeholder")).toContain(
+      "回复 @李四",
+    );
+    // 卡片顶部不出现编辑器（第一个子元素是回复行，不是编辑器）
+    const list = wrapper.find(".bili-reply-list");
+    expect(
+      list.element.children[0].classList.contains("bili-reply-list__editor"),
+    ).toBe(false);
+  });
+});
+
 describe("CommentSection 操作条文本按钮与计数", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -379,5 +425,40 @@ describe("CommentSection 虚拟滚动模式", () => {
       "虚拟滚动下的新评论",
     );
     expect(firstRow.find(".bili-comment-item__floor").text()).toBe("第101楼");
+  });
+
+  it("虚拟模式下发布并删除自己的一级评论：行移除且 delete 事件上抛", async () => {
+    const wrapper = mount(CommentSection, {
+      props: {
+        comments: makeMany(100),
+        currentUser: { id: "me", name: "我", avatar: "", role: "admin" },
+        virtualScroll: true,
+        listHeight: 600,
+      },
+      global: globalConfig,
+    });
+    await prepareVirtual(wrapper);
+
+    // 发布新评论（自动切 latest，出现在窗口顶部）
+    await wrapper.find(".bili-comment-editor__collapse").trigger("click");
+    await wrapper.find("textarea").setValue("待删除的回归评论");
+    await findButton(wrapper, "发布").trigger("click");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(wrapper.text()).toContain("待删除的回归评论");
+
+    // 点第一条评论的「删除」→ 确认弹窗
+    await wrapper.find(".bili-comment-item__delete").trigger("click");
+    await confirmMessageBox();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // 行已移除、事件上抛、虚拟列表仍正常渲染
+    expect(wrapper.text()).not.toContain("待删除的回归评论");
+    const deleteEvents = wrapper.emitted("delete");
+    expect(deleteEvents).toHaveLength(1);
+    expect(deleteEvents[0][0]).toMatchObject({
+      comment: { content: "待删除的回归评论" },
+      reply: null,
+    });
+    expect(wrapper.findAll(".bili-comment-item").length).toBeGreaterThan(0);
   });
 });

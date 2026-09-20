@@ -25,6 +25,73 @@ const mountEditor = (props = {}) =>
 const emojiActive = (wrapper) =>
   wrapper.find(".bili-comment-editor__tool[title='表情']").classes("is-active");
 
+describe("CommentEditor 提交与工具栏", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("Ctrl/⌘+Enter 快捷提交并清空；纯空格与普通 Enter 不提交", async () => {
+    const wrapper = mountEditor();
+    const ta = wrapper.find("textarea");
+
+    // 纯空格：Ctrl+Enter 也不提交
+    await ta.setValue("   ");
+    await ta.trigger("keydown", { key: "Enter", ctrlKey: true });
+    expect(wrapper.emitted("send")).toBeFalsy();
+
+    // 普通 Enter 不提交
+    await ta.setValue("快捷键评论");
+    await ta.trigger("keydown", { key: "Enter" });
+    expect(wrapper.emitted("send")).toBeFalsy();
+
+    // Ctrl+Enter 提交，提交后清空
+    await ta.trigger("keydown", { key: "Enter", ctrlKey: true });
+    expect(wrapper.emitted("send")?.[0]).toEqual(["快捷键评论"]);
+    expect(ta.element.value).toBe("");
+
+    // ⌘（metaKey）同样触发
+    await ta.setValue("meta 提交");
+    await ta.trigger("keydown", { key: "Enter", metaKey: true });
+    expect(wrapper.emitted("send")?.[1]).toEqual(["meta 提交"]);
+
+    await flushPromises(); // 等 EP autosize 的 nextTick 回调落地，避免卸载后访问 DOM
+    wrapper.unmount();
+  });
+
+  it("@ 按钮在光标处插入 @ 并关闭已打开的表情面板", async () => {
+    const wrapper = mountEditor();
+    await wrapper.find(".bili-comment-editor__tool[title='表情']").trigger("click");
+    await flushPromises();
+    expect(emojiActive(wrapper)).toBe(true);
+
+    const ta = wrapper.find("textarea");
+    await ta.setValue("ab");
+    // 光标定位到中间再插入
+    ta.element.setSelectionRange(1, 1);
+    await wrapper.find(".bili-comment-editor__tool--at").trigger("click");
+    await flushPromises();
+
+    expect(ta.element.value).toBe("a@b");
+    expect(emojiActive(wrapper)).toBe(false);
+
+    await flushPromises();
+    wrapper.unmount();
+  });
+
+  it("maxlength 透传到 textarea，show-word-limit 字数统计可用", async () => {
+    const wrapper = mountEditor({ maxlength: 5 });
+    const ta = wrapper.find("textarea");
+    // maxlength 由 EP 透传为原生属性（真实浏览器中用户键入超限时由平台截断）
+    expect(ta.attributes("maxlength")).toBe("5");
+    // 字数统计节点存在（EP 格式为「n / max」）
+    expect(wrapper.find(".el-input__count").exists()).toBe(true);
+    expect(wrapper.find(".el-input__count").text().replace(/\s/g, "")).toBe("0/5");
+
+    await flushPromises();
+    wrapper.unmount();
+  });
+});
+
 describe("CommentEditor 表情面板", () => {
   afterEach(() => {
     document.body.innerHTML = "";
