@@ -13,8 +13,8 @@ const MINUTE_UNIT = 60 * 1000;
 const HOUR_UNIT = 60 * MINUTE_UNIT;
 const DAY_UNIT = 24 * HOUR_UNIT;
 
-// 演示用当前登录用户（自己的评论展示删除入口）
-export const mockCurrentUser = { id: "me", name: "我", avatar: "" };
+// 演示用当前登录用户（role: 'admin' → 管理员，可删除任意评论/回复）
+export const mockCurrentUser = { id: "me", name: "我", avatar: "", role: "admin" };
 
 const user = (id, name) => ({ id, name, avatar: "" });
 

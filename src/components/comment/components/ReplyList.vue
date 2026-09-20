@@ -5,7 +5,7 @@
  *  - 超出后展示「查看全部 n 条回复」，就地展开全部；展开后可收起
  *  - editor 插槽：内联回复框渲染在卡片底部（与 B 站一致）
  *  - bare 模式（无回复仅展示回复框）：无灰底/内边距
- *  - 事件（like / reply）统一上抛给 CommentItem
+ *  - 事件（like / reply / delete）统一上抛给 CommentItem
  */
 import { computed, ref } from "vue";
 import BaseButton from "../base/BaseButton.vue";
@@ -14,13 +14,15 @@ import ReplyItem from "./ReplyItem.vue";
 const props = defineProps({
   // 扁平回复数组
   replies: { type: Array, default: () => [] },
+  // 当前登录用户（透传给 ReplyItem 判断删除权限；role === 'admin' 为管理员）
+  currentUser: { type: Object, default: () => ({}) },
   // 预览条数
   previewCount: { type: Number, default: 2 },
   // 朴素模式：无回复数据、仅承载回复框时不显示灰卡背景
   bare: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["like", "reply"]);
+const emit = defineEmits(["like", "reply", "delete"]);
 
 const expanded = ref(false);
 
@@ -43,6 +45,10 @@ const onLike = (reply) => {
 const onReply = (reply) => {
   emit("reply", reply);
 };
+
+const onDelete = (reply) => {
+  emit("delete", reply);
+};
 </script>
 
 <template>
@@ -51,8 +57,10 @@ const onReply = (reply) => {
       v-for="reply in visibleReplies"
       :key="reply.id"
       :reply="reply"
+      :current-user="currentUser"
       @like="onLike"
       @reply="onReply"
+      @delete="onDelete"
     />
     <BaseButton
       v-if="showToggle"

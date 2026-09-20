@@ -100,12 +100,149 @@ describe("CommentSection 点赞", () => {
       },
     ];
     const wrapper = mountSection({ comments });
-    await wrapper.find(".bili-comment-item__rate-like").trigger("click");
+    await wrapper.find(".bili-comment-item__like").trigger("click");
 
     const likeEvents = wrapper.emitted("like");
     expect(likeEvents).toHaveLength(1);
     expect(likeEvents[0][0].liked).toBe(true);
-    expect(wrapper.text()).toContain("4");
+    expect(wrapper.text()).toContain("点赞(4)");
+  });
+});
+
+// —— 操作条文本按钮 / 计数 / 删除权限 ——
+const makeFixture = () => ({
+  id: "c1",
+  author: { id: "u1", name: "张三", avatar: "" },
+  content: "求点赞",
+  createTime: Date.now(),
+  likeCount: 3,
+  liked: false,
+  replies: [
+    {
+      id: "r1",
+      author: { id: "u2", name: "李四", avatar: "" },
+      content: "帮顶",
+      createTime: Date.now(),
+      likeCount: 2,
+      liked: false,
+      replyTo: null,
+    },
+  ],
+});
+
+// 确认 ElMessageBox 弹窗（删除流程第二步）
+const confirmMessageBox = async () => {
+  await flushPromises();
+  const btn = document.querySelector(".el-message-box__btns .el-button--primary");
+  expect(btn).toBeTruthy();
+  btn.click();
+  await flushPromises();
+};
+
+describe("CommentSection 操作条文本按钮与计数", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("点赞/回复为文本按钮并展示计数，无点踩", () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    expect(wrapper.text()).toContain("点赞(3)");
+    expect(wrapper.text()).toContain("回复(1)");
+    expect(wrapper.text()).not.toContain("点踩");
+  });
+
+  it("楼中楼点赞展示计数并上抛 like 事件（携带 reply）", async () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    await wrapper.find(".bili-reply-item__like").trigger("click");
+
+    const likeEvents = wrapper.emitted("like");
+    expect(likeEvents).toHaveLength(1);
+    expect(likeEvents[0][0].reply.id).toBe("r1");
+    expect(likeEvents[0][0].liked).toBe(true);
+    expect(wrapper.find(".bili-reply-item__like").text()).toBe("点赞(3)");
+  });
+});
+
+describe("CommentSection 删除", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("自己的评论显示删除按钮，确认后移除并抛出 delete 事件", async () => {
+    const comment = {
+      id: "c1",
+      author: { id: "me", name: "我", avatar: "" },
+      content: "我发的评论",
+      createTime: Date.now(),
+      likeCount: 1,
+      liked: false,
+      replies: [],
+    };
+    const wrapper = mountSection({ comments: [comment] });
+    await findButton(wrapper, "删除").trigger("click");
+    await confirmMessageBox();
+
+    const deleteEvents = wrapper.emitted("delete");
+    expect(deleteEvents).toHaveLength(1);
+    expect(deleteEvents[0][0].comment.id).toBe("c1");
+    expect(deleteEvents[0][0].reply).toBe(null);
+    expect(wrapper.text()).not.toContain("我发的评论");
+  });
+
+  it("非本人且非管理员：不显示删除按钮", () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    expect(findButton(wrapper, "删除")).toBeUndefined();
+  });
+
+  it("管理员（role=admin）可删除他人评论", async () => {
+    const wrapper = mountSection({
+      comments: [makeFixture()],
+      currentUser: { id: "me", name: "我", avatar: "", role: "admin" },
+    });
+    await findButton(wrapper, "删除").trigger("click");
+    await confirmMessageBox();
+
+    expect(wrapper.emitted("delete")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("求点赞");
+  });
+
+  it("管理员可删除楼中楼他人回复：计数减一并抛出 reply", async () => {
+    const comment = makeFixture();
+    comment.replies = [
+      {
+        id: "r2",
+        author: { id: "u2", name: "李四", avatar: "" },
+        content: "帮我抢的楼",
+        createTime: Date.now(),
+        likeCount: 1,
+        liked: false,
+        replyTo: null,
+      },
+      {
+        id: "r3",
+        author: { id: "u3", name: "王五", avatar: "" },
+        content: "帮顶",
+        createTime: Date.now(),
+        likeCount: 2,
+        liked: false,
+        replyTo: null,
+      },
+    ];
+    const wrapper = mountSection({
+      comments: [comment],
+      currentUser: { id: "me", name: "我", avatar: "", role: "admin" },
+    });
+    // 一级评论非本人 → 本身无删除按钮，仅管理员可见
+    expect(findButton(wrapper, "删除").text()).toContain("删除");
+    // 楼中楼删除按钮：ReplyItem 层每个回复各一个
+    await wrapper.findAll(".bili-reply-item__delete")[0].trigger("click");
+    await confirmMessageBox();
+
+    const deleteEvents = wrapper.emitted("delete");
+    expect(deleteEvents).toHaveLength(1);
+    expect(deleteEvents[0][0].reply.id).toBe("r2");
+    expect(wrapper.text()).not.toContain("帮我抢的楼");
+    expect(wrapper.text()).toContain("回复(1)");
   });
 });
 

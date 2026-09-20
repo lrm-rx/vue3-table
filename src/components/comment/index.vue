@@ -172,11 +172,20 @@ const handleLike = ({ comment, reply }) => {
   emit("like", { comment, reply, liked: target.liked });
 };
 
-// —— 删除自己的一级评论（确认弹窗在 CommentItem 内）——
-const handleDelete = ({ comment }) => {
-  innerComments.value = innerComments.value.filter((c) => c.id !== comment.id);
+// —— 删除评论 / 回复（确认弹窗在 CommentItem 内；reply 为 null 表示删一级评论）——
+const handleDelete = ({ comment, reply }) => {
+  if (reply) {
+    // 删除楼中楼回复：从所属一级评论的 replies 中移除
+    const target = innerComments.value.find((c) => c.id === comment.id);
+    if (!target) return;
+    target.replies = (target.replies ?? []).filter((r) => r.id !== reply.id);
+    innerComments.value = [...innerComments.value];
+  } else {
+    // 删除一级评论：整条移除（楼层号不重新编号）
+    innerComments.value = innerComments.value.filter((c) => c.id !== comment.id);
+  }
   syncComments();
-  emit("delete", { comment });
+  emit("delete", { comment, reply });
 };
 </script>
 
