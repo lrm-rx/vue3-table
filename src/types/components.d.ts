@@ -13,7 +13,6 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
-    BaseButton: typeof import('./../components/comment/base/BaseButton.vue')['default']
     BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
     Comment: typeof import('./../components/comment/index.vue')['default']
     CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
@@ -57,7 +56,6 @@ declare module 'vue' {
 // For TSX support
 declare global {
   const BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
-  const BaseButton: typeof import('./../components/comment/base/BaseButton.vue')['default']
   const BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
   const Comment: typeof import('./../components/comment/index.vue')['default']
   const CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']

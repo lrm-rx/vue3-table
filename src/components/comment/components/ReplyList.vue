@@ -8,7 +8,6 @@
  *  - 事件（like / reply / delete）统一上抛给 CommentItem
  */
 import { computed, ref } from "vue";
-import BaseButton from "../base/BaseButton.vue";
 import ReplyItem from "./ReplyItem.vue";
 
 const props = defineProps({
@@ -62,8 +61,10 @@ const onDelete = (reply) => {
       @reply="onReply"
       @delete="onDelete"
     />
-    <BaseButton
+    <el-button
       v-if="showToggle"
+      text
+      size="small"
       class="bili-reply-list__toggle"
       @click="toggle"
     >
@@ -84,7 +85,7 @@ const onDelete = (reply) => {
       >
         <path d="M9 6l6 6-6 6" />
       </svg>
-    </BaseButton>
+    </el-button>
 
     <!-- 内联回复框（由 CommentItem 注入） -->
     <div v-if="$slots.editor" class="bili-reply-list__editor">

@@ -8,7 +8,6 @@
  * 不传 comments 时使用内置 mock 数据，开箱即用。
  */
 import { computed, ref, watch } from "vue";
-import BaseButton from "./base/BaseButton.vue";
 import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
@@ -253,7 +252,7 @@ const handleDelete = ({ comment, reply }) => {
       />
 
       <div v-if="hasMore" class="bili-comment__more">
-        <BaseButton :text="false" @click="loadMore">点击加载更多评论</BaseButton>
+        <el-button size="small" @click="loadMore">点击加载更多评论</el-button>
       </div>
     </div>
   </div>

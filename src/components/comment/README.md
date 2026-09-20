@@ -121,7 +121,7 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 
 ## 二、组件拆分
 
-所有基础控件均来自 Element Plus（ElAvatar / ElButton / ElInput / ElEmpty / ElMessage / ElMessageBox），并先封装为本模块内部的基础组件，业务组件只引用封装层。
+基础控件来自 Element Plus（ElAvatar / ElButton / ElInput / ElEmpty / ElMessage / ElMessageBox）：头像与文本域封装为 BaseAvatar / BaseTextarea，按钮直接使用 ElButton（EP 默认风格），业务组件不引用其他封装层。
 
 ```
 src/components/comment/
@@ -130,7 +130,6 @@ src/components/comment/
 ├─ mock.js                   # 内置演示数据（不传 comments 时使用）
 ├─ base/                     # —— 基于 Element Plus 的基础组件封装 ——
 │  ├─ BaseAvatar.vue         # ElAvatar 封装：加载失败兜底为「昵称首字 + 色块」
-│  ├─ BaseButton.vue         # ElButton 封装：评论区操作按钮（点赞/回复/Tab/发布）
 │  └─ BaseTextarea.vue       # ElInput(textarea) 封装：字数统计 + 自适应高度
 ├─ components/
 │  ├─ CommentHeader.vue      # 头部：评论总数 + 最热/最新 切换

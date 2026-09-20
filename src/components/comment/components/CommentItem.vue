@@ -10,7 +10,6 @@
 import { computed, ref } from "vue";
 import { ElMessageBox } from "element-plus";
 import BaseAvatar from "../base/BaseAvatar.vue";
-import BaseButton from "../base/BaseButton.vue";
 import CommentEditor from "./CommentEditor.vue";
 import ReplyList from "./ReplyList.vue";
 import { formatCount, floorLabel, formatRelativeTime } from "../utils/format.js";
@@ -132,24 +131,33 @@ const onReplyDelete = async (reply) => {
       <div class="bili-comment-item__actions">
         <span class="bili-comment-item__time">{{ formatRelativeTime(comment.createTime) }}</span>
         <div class="bili-comment-item__buttons">
-          <!-- 点赞 / 回复 / 删除：纯文本按钮，点赞与回复展示计数 -->
-          <BaseButton
+          <!-- 点赞 / 回复 / 删除：纯文本按钮（EP 默认风格），点赞与回复展示计数 -->
+          <el-button
+            text
+            size="small"
             class="bili-comment-item__action bili-comment-item__like"
-            :active="comment.liked"
+            :type="comment.liked ? 'primary' : ''"
             @click="onLike"
           >
             点赞({{ formatCount(comment.likeCount) }})
-          </BaseButton>
-          <BaseButton class="bili-comment-item__action" @click="startReply()">
+          </el-button>
+          <el-button
+            text
+            size="small"
+            class="bili-comment-item__action"
+            @click="startReply()"
+          >
             回复({{ formatCount(replyCount) }})
-          </BaseButton>
-          <BaseButton
+          </el-button>
+          <el-button
             v-if="canDelete"
+            text
+            size="small"
             class="bili-comment-item__action bili-comment-item__delete"
             @click="onDelete"
           >
             删除
-          </BaseButton>
+          </el-button>
         </div>
       </div>
 
@@ -263,18 +271,12 @@ const onReplyDelete = async (reply) => {
     gap: 12px;
   }
 
-  // 点赞 / 回复 / 删除：纯文本按钮
+  // 点赞 / 回复 / 删除：纯文本按钮（紧凑布局，颜色用 EP 默认主题）
   &__action {
     padding: 0;
     height: auto;
     min-height: 0;
     font-size: 12px;
-  }
-
-  // 删除按钮 hover 使用危险色
-  &__delete {
-    --el-button-text-color: #61666d;
-    --el-button-hover-text-color: #f34c4c;
   }
 }
 </style>

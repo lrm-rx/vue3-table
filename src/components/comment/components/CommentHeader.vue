@@ -4,8 +4,6 @@
  * 左侧「评论 + 总数」，右侧排序切换（最热 / 最新）。
  * 排序值通过 v-model 双向同步。
  */
-import BaseButton from "../base/BaseButton.vue";
-
 const props = defineProps({
   // 评论总数
   total: { type: Number, default: 0 },
@@ -33,16 +31,19 @@ const changeSort = (value) => {
       <span class="bili-comment-header__total">{{ total }}</span>
     </div>
     <div class="bili-comment-header__tabs">
-      <BaseButton
+      <el-button
         v-for="tab in tabs"
         :key="tab.value"
+        text
+        size="small"
         class="bili-comment-header__tab"
         :class="{ 'is-active': modelValue === tab.value }"
+        :type="modelValue === tab.value ? 'primary' : ''"
         @click="changeSort(tab.value)"
       >
         {{ tab.label }}
         <span v-if="modelValue === tab.value" class="bili-comment-header__indicator" />
-      </BaseButton>
+      </el-button>
     </div>
   </div>
 </template>
@@ -82,15 +83,13 @@ const changeSort = (value) => {
     position: relative;
     font-size: 14px;
     padding: 2px 0;
-    color: #61666d;
 
     &.is-active {
       font-weight: 600;
-      color: #18191c;
     }
   }
 
-  // Tab 下划线指示器
+  // Tab 下划线指示器（EP 主色）
   &__indicator {
     position: absolute;
     left: 50%;
@@ -99,7 +98,7 @@ const changeSort = (value) => {
     width: 18px;
     height: 3px;
     border-radius: 2px;
-    background-color: #fb7299;
+    background-color: var(--el-color-primary);
   }
 }
 </style>

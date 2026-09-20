@@ -4,13 +4,12 @@
  * 两种模式复用同一组件：
  *  - 顶部发表一级评论（collapsible：未聚焦时折叠为灰色输入条，点击展开 / 失焦自动收起）
  *  - 评论项内联回复（collapsible=false / minRows=2 / 提交「回复」，挂载自动聚焦）
- * 基于封装组件 BaseTextarea（ElInput）与 BaseButton（ElButton）。
+ * 基于封装组件 BaseTextarea（ElInput），按钮直接使用 ElButton（EP 默认风格）。
  * 工具栏：表情（光标处插入）、@；快捷键 Ctrl / ⌘ + Enter 提交，纯空格不可发送。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onClickOutside } from "@vueuse/core";
 import BaseAvatar from "../base/BaseAvatar.vue";
-import BaseButton from "../base/BaseButton.vue";
 import BaseTextarea from "../base/BaseTextarea.vue";
 
 // 表情弹层实例标识（页面上可能同时存在多个编辑器：顶部 + 若干回复框）
@@ -262,10 +261,9 @@ watch(expanded, (val) => {
         </div>
 
         <div class="bili-comment-editor__actions">
-          <BaseButton v-if="showCancel" @click="cancel">取消</BaseButton>
-          <BaseButton
+          <el-button v-if="showCancel" text size="small" @click="cancel">取消</el-button>
+          <el-button
             class="bili-comment-editor__submit"
-            :text="false"
             type="primary"
             size="default"
             :disabled="!canSend"
@@ -273,7 +271,7 @@ watch(expanded, (val) => {
             @click="submit"
           >
             {{ submitText }}
-          </BaseButton>
+          </el-button>
         </div>
       </div>
     </div>
@@ -375,7 +373,7 @@ watch(expanded, (val) => {
     gap: 8px;
   }
 
-  // 发布 / 回复主按钮：B 站粉、小圆角
+  // 发布 / 回复主按钮：EP 默认 primary，小圆角
   &__submit {
     border-radius: 6px;
     padding-left: 18px;

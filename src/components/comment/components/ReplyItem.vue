@@ -9,7 +9,6 @@
  */
 import { computed } from "vue";
 import BaseAvatar from "../base/BaseAvatar.vue";
-import BaseButton from "../base/BaseButton.vue";
 import { formatCount, formatRelativeTime } from "../utils/format.js";
 
 const props = defineProps({
@@ -61,21 +60,27 @@ const onDelete = () => {
       </p>
       <div class="bili-reply-item__meta">
         <span class="bili-reply-item__time">{{ formatRelativeTime(reply.createTime) }}</span>
-        <BaseButton
+        <el-button
+          text
+          size="small"
           class="bili-reply-item__action bili-reply-item__like"
-          :active="reply.liked"
+          :type="reply.liked ? 'primary' : ''"
           @click="onLike"
         >
           点赞({{ formatCount(reply.likeCount) }})
-        </BaseButton>
-        <BaseButton class="bili-reply-item__action" @click="onReply">回复</BaseButton>
-        <BaseButton
+        </el-button>
+        <el-button text size="small" class="bili-reply-item__action" @click="onReply">
+          回复
+        </el-button>
+        <el-button
           v-if="canDelete"
+          text
+          size="small"
           class="bili-reply-item__action bili-reply-item__delete"
           @click="onDelete"
         >
           删除
-        </BaseButton>
+        </el-button>
       </div>
     </div>
   </div>
@@ -133,18 +138,12 @@ const onDelete = () => {
     color: #9499a0;
   }
 
+  // 点赞 / 回复 / 删除：纯文本按钮（紧凑布局，颜色用 EP 默认主题）
   &__action {
-    gap: 3px;
     font-size: 12px;
     padding: 0;
     height: auto;
     min-height: 0;
-  }
-
-  // 删除按钮 hover 使用危险色
-  &__delete {
-    --el-button-text-color: #61666d;
-    --el-button-hover-text-color: #f34c4c;
   }
 }
 </style>
