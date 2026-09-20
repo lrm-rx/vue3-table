@@ -317,6 +317,11 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <!-- 底部状态插槽（远程模式：加载中 / 没有更多），紧跟 phantom 之后排在列表最底 -->
+    <div v-if="$slots.footer" class="biz-virtual-list__footer">
+      <slot name="footer" />
+    </div>
   </div>
 </template>
 
@@ -445,6 +450,15 @@ onBeforeUnmount(() => {
     &.is-desc .biz-virtual-list__caret--down {
       border-top-color: #fb7299;
     }
+  }
+
+  &__footer {
+    position: relative;
+    width: 100%;
+    text-align: center;
+    padding: 8px 0;
+    color: #9499a0;
+    font-size: 13px;
   }
 
   &__caret {

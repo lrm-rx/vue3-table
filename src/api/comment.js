@@ -6,3 +6,10 @@ import { request } from '@/utils/request'
  * @returns {Promise<{ list: Array, total: number }>}
  */
 export const getCommentListApi = (params) => request.get('/comment/list', params)
+
+/**
+ * 分页获取评论列表（远程无限滚动模式：触底后请求下一页）
+ * @param {Object} params - { pageSize: 每页条数, pageNum: 页码(从1开始), seed: 数据批次 }
+ * @returns {Promise<{ list: Array, total: number, pageNum: number, pageSize: number, hasMore: boolean }>}
+ */
+export const getCommentPageApi = (params) => request.get('/comment/page', params)

@@ -1,14 +1,17 @@
 <script setup>
 /**
- * 评论区演示页：通过 MockJS（vite-plugin-mock → /mock-api/comment/list）
+ * 评论区演示页：通过 MockJS（vite-plugin-mock → /mock-api/comment/*）
  * 批量生成评论数据，实测 CommentSection 的虚拟滚动与楼中楼交互。
+ * 支持两种数据模式：
+ *  - 全量模式：一次拉取 N 条（/comment/list），客户端切片/虚拟滚动承载
+ *  - 远程模式：分页拉取（/comment/page），触底自动加载下一页，到底提示「没有更多评论了」
  * 页面层负责取数与状态，CommentSection 只接收 props / 抛出事件。
  */
 import { ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import CommentSection from "@/components/comment/index.vue";
 import { mockCurrentUser } from "@/components/comment/mock.js";
-import { getCommentListApi } from "@/api/comment";
+import { getCommentListApi, getCommentPageApi } from "@/api/comment";
 
 const currentUser = { ...mockCurrentUser };
 
@@ -19,9 +22,16 @@ const seed = ref(0);
 const loading = ref(false);
 const virtualScroll = ref(true);
 const listHeight = ref(600);
+// 数据模式：local 全量拉取 + 本地切片；remote 分页触底加载
+const dataMode = ref("local");
 
 // —— 评论数据（v-model:comments 与组件双向同步）——
 const comments = ref([]);
+
+// —— 远程模式状态 ——
+const remoteHasMore = ref(true);
+const pageNum = ref(1);
+const remotePageSize = 20;
 
 // —— 组件事件计数（验证交互回调）——
 const eventCount = ref({ send: 0, reply: 0, like: 0, delete: 0 });
@@ -29,6 +39,7 @@ const bump = (key) => {
   eventCount.value[key] += 1;
 };
 
+// 全量模式：一次性拉取
 const loadData = async () => {
   loading.value = true;
   try {
@@ -44,10 +55,68 @@ const loadData = async () => {
   }
 };
 
+// 远程模式：拉取首页
+const loadFirstPage = async () => {
+  loading.value = true;
+  remoteHasMore.value = true;
+  pageNum.value = 1;
+  try {
+    const data = await getCommentPageApi({
+      pageSize: remotePageSize,
+      pageNum: 1,
+      seed: seed.value,
+    });
+    comments.value = data.list;
+    remoteHasMore.value = data.hasMore;
+  } catch (err) {
+    ElMessage.error(`评论数据加载失败：${err?.message || err}`);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 远程模式：触底加载下一页
+const loadNextPage = async () => {
+  if (loading.value || !remoteHasMore.value) return;
+  loading.value = true;
+  try {
+    const next = pageNum.value + 1;
+    const data = await getCommentPageApi({
+      pageSize: remotePageSize,
+      pageNum: next,
+      seed: seed.value,
+    });
+    comments.value = [...comments.value, ...data.list];
+    pageNum.value = next;
+    remoteHasMore.value = data.hasMore;
+  } catch (err) {
+    ElMessage.error(`加载更多失败：${err?.message || err}`);
+  } finally {
+    loading.value = false;
+  }
+};
+
 // 更换 seed → mock 侧击穿缓存，重新生成一批全新数据
 const regenerate = () => {
   seed.value += 1;
-  loadData();
+  if (dataMode.value === "remote") {
+    loadFirstPage();
+  } else {
+    loadData();
+  }
+};
+
+// 切换数据模式
+const onModeChange = () => {
+  if (dataMode.value === "remote") {
+    loadFirstPage();
+  } else {
+    loadData();
+  }
+};
+
+const onLoadMore = () => {
+  if (dataMode.value === "remote") loadNextPage();
 };
 
 onMounted(loadData);
@@ -58,20 +127,29 @@ onMounted(loadData);
     <el-card shadow="never" class="comment-demo__panel">
       <template #header>
         <div class="comment-demo__toolbar">
-          <span class="comment-demo__label">MockJS 数据量</span>
-          <el-select
-            v-model="count"
-            size="small"
-            style="width: 120px"
-            @change="loadData"
-          >
-            <el-option
-              v-for="n in countOptions"
-              :key="n"
-              :label="`${n} 条评论`"
-              :value="n"
-            />
-          </el-select>
+          <span class="comment-demo__label">数据模式</span>
+          <el-radio-group v-model="dataMode" size="small" @change="onModeChange">
+            <el-radio-button value="local">全量</el-radio-button>
+            <el-radio-button value="remote">远程分页</el-radio-button>
+          </el-radio-group>
+
+          <template v-if="dataMode === 'local'">
+            <span class="comment-demo__label">MockJS 数据量</span>
+            <el-select
+              v-model="count"
+              size="small"
+              style="width: 120px"
+              @change="loadData"
+            >
+              <el-option
+                v-for="n in countOptions"
+                :key="n"
+                :label="`${n} 条评论`"
+                :value="n"
+              />
+            </el-select>
+          </template>
+
           <el-button size="small" @click="regenerate">重新生成一批</el-button>
 
           <el-divider direction="vertical" />
@@ -92,7 +170,10 @@ onMounted(loadData);
         <b>{{ eventCount.send }}</b> · 回复 <b>{{ eventCount.reply }}</b> ·
         点赞 <b>{{ eventCount.like }}</b> · 删除
         <b>{{ eventCount.delete }}</b>
-        <span class="comment-demo__tip">
+        <span v-if="dataMode === 'remote'" class="comment-demo__tip">
+          （远程分页：已加载 {{ comments.length }} 条 · 第 {{ pageNum }} 页）
+        </span>
+        <span v-else class="comment-demo__tip">
           （楼层为按发帖时间固定的编号，显示在每条评论昵称行右端，切换最热/最新排序后保持原始楼层）
         </span>
       </div>
@@ -103,10 +184,13 @@ onMounted(loadData);
         :loading="loading"
         :virtual-scroll="virtualScroll"
         :list-height="listHeight"
+        :remote="dataMode === 'remote'"
+        :remote-has-more="remoteHasMore"
         @send="bump('send')"
         @reply="bump('reply')"
         @like="bump('like')"
         @delete="bump('delete')"
+        @load-more="onLoadMore"
       />
     </el-card>
   </div>

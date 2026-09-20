@@ -246,4 +246,33 @@ export default [
       }
     },
   },
+  // 分页拉取评论（远程无限滚动模式：触底后请求下一页）
+  // query: pageSize=20 每页条数；pageNum=1 页码（从1开始）；seed 数据批次
+  // 返回当前页切片 + total（全量总数，用于判断是否还有更多）
+  {
+    url: '/mock-api/comment/page',
+    method: 'get',
+    timeout: 300,
+    response: ({ query }) => {
+      const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 100)
+      const pageNum = Math.max(Number(query.pageNum) || 1, 1)
+      const seed = String(query.seed || 'default')
+      // 以 pageSize*100 为全量规模生成数据集（足够触发多页加载）
+      const total = pageSize * 100
+      const list = getDataset(total, seed)
+      const start = (pageNum - 1) * pageSize
+      const pageList = list.slice(start, start + pageSize)
+      return {
+        code: 200,
+        message: 'success',
+        data: {
+          list: pageList,
+          total,
+          pageNum,
+          pageSize,
+          hasMore: start + pageSize < total,
+        },
+      }
+    },
+  },
 ]

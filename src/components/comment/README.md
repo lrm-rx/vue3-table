@@ -187,12 +187,15 @@ const onDelete = ({ comment }) => {};
 | `comments` | Array \| null | `null` | 评论列表；`null` 时使用内置 mock 演示数据，支持 `v-model:comments` |
 | `currentUser` | Object | 内置「我」 | 当前登录用户 `{ id, name, avatar, role? }`；自己的评论/回复可删除，`role: 'admin'` 为管理员可删除任意内容 |
 | `sort` | `'hot' \| 'latest' \| 'floor'` | `'hot'` | 排序方式：最热 / 最新（楼层倒序）/ 楼层升序；支持 `v-model:sort` |
-| `pageSize` | Number | `20` | 首屏渲染条数，超出后显示「点击加载更多评论」 |
+| `pageSize` | Number | `20` | 首屏渲染条数，超出后显示「点击加载更多评论」（仅本地模式） |
 | `previewReplies` | Number | `2` | 楼中楼默认预览条数 |
 | `maxlength` | Number | `1000` | 评论最大字数 |
-| `loading` | Boolean | `false` | 列表加载态（预留远程加载） |
+| `loading` | Boolean | `false` | 列表加载态（远程模式抑制重复 `load-more`） |
 | `virtualScroll` | Boolean | `false` | 是否开启评论列表虚拟滚动（显式开启；开启后不再显示「点击加载更多」，由列表内部承载全量数据） |
 | `listHeight` | Number \| String | `600` | 虚拟滚动视口高度，number 按 px；容器必须有确定高度 |
+| `remote` | Boolean | `false` | 远程加载模式：触底时 emit `load-more` 由父组件取数并 append；不启用时保留本地切片 + 「点击加载更多」按钮 |
+| `remoteHasMore` | Boolean | `true` | 远程模式：是否还有更多数据（父组件根据接口返回控制）；`false` 时显示「没有更多评论了」 |
+| `bottomDistance` | Number | `200` | 非虚拟远程模式触底提前量（px），哨兵进入视口 rootMargin 时触发 `load-more` |
 
 > 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 视口高度。
 
@@ -206,3 +209,4 @@ const onDelete = ({ comment }) => {};
 | `reply` | `{ commentId, content, replyTo }` | 发表回复（本地已插入） |
 | `like` | `{ comment, reply, liked }` | 点赞/取消（本地已翻转，失败可回滚） |
 | `delete` | `{ comment, reply }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除 |
+| `load-more` | — | 远程模式触底时触发（虚拟模式由 VirtualList `isNearBottom` 检测，非虚拟模式由 IntersectionObserver 哨兵检测）；父组件取数后 append 到 `comments` 并更新 `remoteHasMore` |

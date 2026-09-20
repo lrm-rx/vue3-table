@@ -7,7 +7,7 @@
  *  - 与父组件同步：v-model:comments / v-model:sort + send/reply/like/delete 事件
  * 不传 comments 时使用内置 mock 数据，开箱即用。
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
@@ -39,6 +39,12 @@ const props = defineProps({
   virtualScroll: { type: Boolean, default: false },
   // 虚拟滚动视口高度（number=px 或 CSS 字符串）
   listHeight: { type: [Number, String], default: 600 },
+  // 远程加载模式：触底时 emit load-more 由父组件取数并 append（默认关闭，保留本地切片）
+  remote: { type: Boolean, default: false },
+  // 远程模式：是否还有更多数据（父组件根据接口 hasMore 控制；false 时显示「没有更多评论了」）
+  remoteHasMore: { type: Boolean, default: true },
+  // 非虚拟模式触底提前量（px）：哨兵进入视口 rootMargin 时触发 load-more
+  bottomDistance: { type: Number, default: 200 },
 });
 
 const emit = defineEmits([
@@ -48,6 +54,7 @@ const emit = defineEmits([
   "reply",
   "like",
   "delete",
+  "load-more",
 ]);
 
 // —— 虚拟列表实例（virtualScroll=true 时使用）——
@@ -83,7 +90,7 @@ const changeSort = (value) => {
   emit("update:sort", value);
 };
 
-// —— 展示条数（加载更多，仅非虚拟模式）——
+// —— 展示条数（加载更多，仅非虚拟且本地模式使用）——
 const displayCount = ref(props.pageSize);
 watch(
   () => props.pageSize,
@@ -96,15 +103,66 @@ const sortedComments = computed(() =>
   sortRootComments(innerComments.value, innerSort.value),
 );
 
+// 远程模式直接渲染全量已加载数据（父组件负责分页取数 append）；
+// 本地模式按 displayCount 切片
 const visibleComments = computed(() =>
-  sortedComments.value.slice(0, displayCount.value),
+  props.remote
+    ? sortedComments.value
+    : sortedComments.value.slice(0, displayCount.value),
 );
 
-const hasMore = computed(() => innerComments.value.length > displayCount.value);
+// 是否还有更多：远程模式看 remoteHasMore；本地模式看切片剩余
+const hasMore = computed(() =>
+  props.remote
+    ? props.remoteHasMore
+    : innerComments.value.length > displayCount.value,
+);
 
+// 触底 / 点击更多：远程模式 emit load-more（父组件取数）；本地模式扩容 displayCount
 const loadMore = () => {
+  if (props.remote) {
+    if (!props.loading && props.remoteHasMore) emit("load-more");
+    return;
+  }
   displayCount.value += props.pageSize;
 };
+
+// —— 非虚拟模式哨兵触底检测（IntersectionObserver）——
+// 页面级滚动时哨兵进入视口（含 rootMargin 提前量）即触发 load-more
+const sentinelRef = ref(null);
+let io = null;
+const setupSentinel = () => {
+  if (io) io.disconnect();
+  // 仅非虚拟 + 远程模式才需要哨兵（本地模式有「点击加载更多」按钮）
+  if (!props.remote || props.virtualScroll) return;
+  if (!sentinelRef.value) return;
+  io = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMore();
+    },
+    { rootMargin: `${props.bottomDistance}px 0px` },
+  );
+  io.observe(sentinelRef.value);
+};
+
+watch(
+  () => [props.remote, props.virtualScroll],
+  () => {
+    // 模式切换后 nextTick 重建哨兵（DOM 可能刚挂载/卸载）
+    requestAnimationFrame(setupSentinel);
+  },
+);
+
+// remoteHasMore 变 false 时不再需要观察哨兵
+watch(
+  () => props.remoteHasMore,
+  (hasMore) => {
+    if (io) {
+      if (hasMore && sentinelRef.value) io.observe(sentinelRef.value);
+      else io.disconnect();
+    }
+  },
+);
 
 // 任意变更后向父组件同步列表
 const syncComments = () => {
@@ -186,6 +244,21 @@ const handleDelete = ({ comment, reply }) => {
   syncComments();
   emit("delete", { comment, reply });
 };
+
+// —— 生命周期：哨兵初始化与清理 ——
+onMounted(() => {
+  // 非虚拟 + 远程模式：DOM 就绪后建立哨兵观察
+  if (props.remote && !props.virtualScroll) {
+    requestAnimationFrame(setupSentinel);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (io) {
+    io.disconnect();
+    io = null;
+  }
+});
 </script>
 
 <template>
@@ -223,6 +296,8 @@ const handleDelete = ({ comment, reply }) => {
       :items="sortedComments"
       :height="listHeight"
       item-key="id"
+      :loading="loading"
+      @load-more="loadMore"
     >
       <template #default="{ item }">
         <CommentItem
@@ -235,9 +310,16 @@ const handleDelete = ({ comment, reply }) => {
           @delete="handleDelete"
         />
       </template>
+      <!-- 虚拟模式底部状态：加载中 / 没有更多 -->
+      <template v-if="remote" #footer>
+        <div class="bili-comment__status">
+          <span v-if="loading">加载中...</span>
+          <span v-else-if="!hasMore">没有更多评论了</span>
+        </div>
+      </template>
     </VirtualList>
 
-    <!-- 默认模式：首屏切片 + 点击加载更多 -->
+    <!-- 默认模式：首屏切片 + 点击加载更多 / 远程触底自动加载 -->
     <div v-else v-loading="loading" class="bili-comment__list">
       <CommentItem
         v-for="comment in visibleComments"
@@ -251,8 +333,30 @@ const handleDelete = ({ comment, reply }) => {
         @delete="handleDelete"
       />
 
-      <div v-if="hasMore" class="bili-comment__more">
-        <el-button size="small" @click="loadMore">点击加载更多评论</el-button>
+      <!-- 非虚拟远程模式：哨兵元素（IntersectionObserver 观察目标，不占可见高度） -->
+      <div
+        v-if="remote && hasMore"
+        ref="sentinelRef"
+        class="bili-comment__sentinel"
+      />
+
+      <!-- 底部状态条 -->
+      <div class="bili-comment__more">
+        <!-- 加载中（远程模式） -->
+        <span v-if="remote && loading" class="bili-comment__status-text">
+          加载中...
+        </span>
+        <!-- 没有更多（远程模式到底） -->
+        <span
+          v-else-if="remote && !hasMore"
+          class="bili-comment__status-text"
+        >
+          没有更多评论了
+        </span>
+        <!-- 点击加载更多（仅本地模式，保留原有交互） -->
+        <el-button v-else-if="!remote && hasMore" size="small" @click="loadMore">
+          点击加载更多评论
+        </el-button>
       </div>
     </div>
   </div>
@@ -280,7 +384,28 @@ const handleDelete = ({ comment, reply }) => {
   &__more {
     display: flex;
     justify-content: center;
+    align-items: center;
     padding: 8px 0 4px;
+  }
+
+  // 哨兵元素：不占可见高度，仅作 IntersectionObserver 观察目标
+  &__sentinel {
+    height: 1px;
+    width: 100%;
+    pointer-events: none;
+  }
+
+  // 底部状态文本（加载中 / 没有更多）
+  &__status-text {
+    color: #9499a0;
+    font-size: 13px;
+  }
+
+  &__status {
+    text-align: center;
+    padding: 4px 0;
+    color: #9499a0;
+    font-size: 13px;
   }
 }
 </style>

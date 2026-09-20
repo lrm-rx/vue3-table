@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
@@ -25,6 +25,16 @@ const mountSection = (props = {}) =>
 
 const findButton = (wrapper, text) =>
   wrapper.findAll("button").find((b) => b.text().includes(text));
+
+// jsdom 不布局：模拟虚拟列表视口高度并等待测量/重渲染
+const prepareVirtual = async (wrapper) => {
+  Object.defineProperty(wrapper.find(".biz-virtual-list").element, "clientHeight", {
+    configurable: true,
+    value: 600,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
 
 describe("CommentSection 基础渲染", () => {
   it("空列表展示 ElEmpty 引导文案", () => {
@@ -301,16 +311,6 @@ describe("CommentSection 虚拟滚动模式", () => {
     delete global.ResizeObserver;
   });
 
-  // jsdom 不布局：模拟视口高度并等待测量/重渲染
-  const prepareVirtual = async (wrapper) => {
-    Object.defineProperty(wrapper.find(".biz-virtual-list").element, "clientHeight", {
-      configurable: true,
-      value: 600,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  };
-
   const makeMany = (n) =>
     Array.from({ length: n }, (_, i) => ({
       id: `c${i + 1}`,
@@ -460,5 +460,156 @@ describe("CommentSection 虚拟滚动模式", () => {
       reply: null,
     });
     expect(wrapper.findAll(".bili-comment-item").length).toBeGreaterThan(0);
+  });
+});
+
+describe("CommentSection 远程加载模式", () => {
+  beforeEach(() => {
+    const roEnv = createResizeObserverMock(200);
+    global.ResizeObserver = roEnv.ResizeObserverMock;
+    vi.stubGlobal("IntersectionObserver", createIntersectionObserverMock());
+  });
+  afterEach(() => {
+    delete global.ResizeObserver;
+    vi.unstubAllGlobals();
+    document.body.innerHTML = "";
+  });
+
+  // 可控制的 IntersectionObserver mock：通过 trigger 手动让哨兵「进入视口」
+  const createIntersectionObserverMock = () => {
+    let callback = null;
+    const instances = [];
+    const Mock = class {
+      constructor(cb) {
+        callback = cb;
+        this.observe = () => {};
+        this.unobserve = () => {};
+        this.disconnect = () => {};
+        instances.push(this);
+      }
+    };
+    Mock.trigger = () => {
+      if (callback) callback([{ isIntersecting: true }]);
+    };
+    return Mock;
+  };
+
+  const makeComments = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `c${i + 1}`,
+      floor: i + 1,
+      author: { id: "u", name: `用户${i + 1}`, avatar: "" },
+      content: `内容${i + 1}`,
+      createTime: Date.now() - i * 60000,
+      likeCount: 0,
+      liked: false,
+      replies: [],
+    }));
+
+  it("远程模式不显示「点击加载更多」按钮，而是渲染哨兵元素", () => {
+    const wrapper = mountSection({
+      comments: makeComments(5),
+      remote: true,
+      remoteHasMore: true,
+    });
+    expect(wrapper.find(".bili-comment__sentinel").exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("点击加载更多评论");
+  });
+
+  it("哨兵进入视口时 emit load-more（非虚拟模式）", async () => {
+    const MockIO = createIntersectionObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({
+      comments: makeComments(5),
+      remote: true,
+      remoteHasMore: true,
+    });
+    // onMounted 用 requestAnimationFrame 延迟建立哨兵观察，等 rAF 落地
+    await new Promise((r) => requestAnimationFrame(r));
+    MockIO.trigger();
+    expect(wrapper.emitted("load-more")).toBeTruthy();
+    expect(wrapper.emitted("load-more").length).toBe(1);
+  });
+
+  it("loading 为 true 时不重复 emit load-more", async () => {
+    const MockIO = createIntersectionObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({
+      comments: makeComments(5),
+      remote: true,
+      remoteHasMore: true,
+      loading: true,
+    });
+    await new Promise((r) => requestAnimationFrame(r));
+    MockIO.trigger();
+    expect(wrapper.emitted("load-more")).toBeFalsy();
+  });
+
+  it("remoteHasMore=false 时显示「没有更多评论了」且不再 emit load-more", async () => {
+    const MockIO = createIntersectionObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({
+      comments: makeComments(5),
+      remote: true,
+      remoteHasMore: false,
+    });
+    await new Promise((r) => requestAnimationFrame(r));
+    expect(wrapper.text()).toContain("没有更多评论了");
+    MockIO.trigger();
+    expect(wrapper.emitted("load-more")).toBeFalsy();
+  });
+
+  it("远程模式直接渲染全量已加载数据（不做 displayCount 切片）", () => {
+    const data = makeComments(30);
+    const wrapper = mountSection({
+      comments: data,
+      remote: true,
+      remoteHasMore: true,
+      pageSize: 10, // 本地模式只会显示 10 条
+    });
+    expect(wrapper.findAll(".bili-comment-item").length).toBe(30);
+  });
+
+  it("本地模式（remote=false）不受影响：仍显示切片 + 点击加载更多按钮", () => {
+    const wrapper = mountSection({
+      comments: makeComments(30),
+      remote: false,
+      pageSize: 10,
+    });
+    expect(wrapper.findAll(".bili-comment-item").length).toBe(10);
+    expect(wrapper.text()).toContain("点击加载更多评论");
+    expect(wrapper.find(".bili-comment__sentinel").exists()).toBe(false);
+  });
+
+  it("虚拟模式转发 VirtualList 的 load-more 事件", async () => {
+    const data = makeComments(200);
+    const wrapper = mountSection({
+      comments: data,
+      remote: true,
+      remoteHasMore: true,
+      virtualScroll: true,
+      listHeight: 400,
+    });
+    await prepareVirtual(wrapper);
+    // VirtualList 触底时 emit load-more → CommentSection 转发
+    const vl = wrapper.findComponent({ name: "VirtualList" });
+    vl.vm.$emit("load-more");
+    await flushPromises();
+    expect(wrapper.emitted("load-more")).toBeTruthy();
+  });
+
+  it("虚拟模式 remoteHasMore=false 时 footer 显示「没有更多评论了」", async () => {
+    const data = makeComments(200);
+    const wrapper = mountSection({
+      comments: data,
+      remote: true,
+      remoteHasMore: false,
+      virtualScroll: true,
+      listHeight: 400,
+    });
+    await prepareVirtual(wrapper);
+    expect(wrapper.find(".biz-virtual-list__footer").text()).toContain(
+      "没有更多评论了",
+    );
   });
 });
