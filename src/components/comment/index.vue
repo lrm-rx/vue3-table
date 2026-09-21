@@ -5,7 +5,7 @@
  *  - 评论/回复的发送（楼层取号）、点赞乐观翻转、删除
  *  - 最热 / 最新排序、首屏条数 + 「点击加载更多评论」
  *  - 与父组件同步：v-model:comments / v-model:sort + send/reply/like/delete 事件
- * 不传 comments 时使用内置 mock 数据，开箱即用。
+ * 组件为纯受控数据组件，内部不内置任何 mock 数据，评论列表由业务侧传入。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useIntersectionObserver } from "@vueuse/core";
@@ -13,7 +13,6 @@ import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
 import VirtualList from "./components/VirtualList.vue";
-import buildMockComments, { mockCurrentUser } from "./mock.js";
 import {
   assignFloors,
   createId,
@@ -22,10 +21,10 @@ import {
 } from "./utils/format.js";
 
 const props = defineProps({
-  // 评论列表；null 时使用内置 mock 数据（v-model:comments）
-  comments: { type: Array, default: null },
-  // 当前登录用户
-  currentUser: { type: Object, default: () => ({ ...mockCurrentUser }) },
+  // 评论列表（v-model:comments），由业务侧传入
+  comments: { type: Array, default: () => [] },
+  // 当前登录用户（头像/昵称展示、发布署名、删除权限判断）
+  currentUser: { type: Object, default: () => ({ id: "", name: "", avatar: "" }) },
   // 排序：hot 最热 / latest 最新（楼层倒序）/ floor 楼层升序（v-model:sort）
   sort: { type: String, default: "hot" },
   // 首屏渲染条数
@@ -78,13 +77,12 @@ useIntersectionObserver(
   { threshold: 0 },
 );
 
-// —— 列表数据：受控优先，否则使用内置 mock ——
+// —— 列表数据：纯受控，业务侧传入后统一分配楼层 ——
 const innerComments = ref([]);
 watch(
   () => props.comments,
   (val) => {
-    const source = val == null ? buildMockComments() : val;
-    innerComments.value = assignFloors(source);
+    innerComments.value = assignFloors(val ?? []);
   },
   { immediate: true },
 );

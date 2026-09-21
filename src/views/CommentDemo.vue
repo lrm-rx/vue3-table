@@ -10,10 +10,10 @@
 import { ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import CommentSection from "@/components/comment/index.vue";
-import { mockCurrentUser } from "@/components/comment/mock.js";
 import { getCommentListApi, getCommentPageApi } from "@/api/comment";
 
-const currentUser = { ...mockCurrentUser };
+// 演示当前用户（id=me 的评论展示删除入口，与 mock 数据作者对齐）
+const currentUser = { id: "me", name: "我", avatar: "", role: "admin" };
 
 // —— 演示控制项 ——
 const countOptions = [50, 200, 500, 1000, 5000];

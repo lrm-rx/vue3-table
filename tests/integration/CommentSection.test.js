@@ -59,12 +59,9 @@ describe("CommentSection 基础渲染", () => {
     expect(wrapper.text()).toContain("张三");
   });
 
-  it("不传 comments 时使用内置 mock：楼中楼展示「查看全部 24 条回复」", async () => {
+  it("完全不传 comments（undefined 走默认值）时展示空状态引导", () => {
     const wrapper = mount(CommentSection, { global: globalConfig });
-    await flushPromises();
-    expect(wrapper.text()).toContain("查看全部 24 条回复");
-    // 新版头部：「评论 12」（标签 + 总数）
-    expect(wrapper.text()).toMatch(/评论\s*12/);
+    expect(wrapper.text()).toContain("还没有评论，快来抢沙发吧");
   });
 });
 

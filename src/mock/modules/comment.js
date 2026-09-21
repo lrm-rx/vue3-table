@@ -16,7 +16,7 @@ const DAY = 24 * HOUR
 
 const now = Date.now()
 
-// UP 主与「我」（与组件内置 mockCurrentUser 对齐：id=me 的评论展示删除入口）
+// UP 主与「我」（与 CommentDemo 演示 currentUser 对齐：id=me 的评论展示删除入口）
 const UP_USER = { id: 'up_main', name: '干货UP主', avatar: '', isUp: true }
 const ME_USER = { id: 'me', name: '我', avatar: '' }
 

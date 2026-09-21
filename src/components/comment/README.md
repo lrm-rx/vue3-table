@@ -141,7 +141,7 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 src/components/comment/
 ├─ README.md                 # 本设计文档
 ├─ index.vue                 # CommentSection 评论区主容器（状态中枢）
-├─ mock.js                   # 内置演示数据（不传 comments 时使用）
+├─ utils/format.js            # assignFloors 楼层分配、createId、排序等纯函数
 ├─ base/                     # —— 基于 Element Plus 的基础组件封装 ——
 │  ├─ BaseAvatar.vue         # ElAvatar 封装：加载失败兜底为「昵称首字 + 色块」
 │  └─ BaseTextarea.vue       # ElInput(textarea) 封装：字数统计 + 自适应高度
@@ -170,7 +170,7 @@ src/components/comment/
 import CommentSection from "@/components/comment/index.vue";
 import { ref } from "vue";
 
-const comments = ref([]); // 不传时组件使用内置 mock 数据，开箱即用
+const comments = ref([]); // 评论列表由业务侧传入并双向同步
 const currentUser = ref({ id: "me", name: "我", avatar: "" });
 
 const onSend = (content) => {
@@ -198,8 +198,8 @@ const onDelete = ({ comment }) => {};
 
 | prop | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `comments` | Array \| null | `null` | 评论列表；`null` 时使用内置 mock 演示数据，支持 `v-model:comments` |
-| `currentUser` | Object | 内置「我」 | 当前登录用户 `{ id, name, avatar, role? }`；自己的评论/回复可删除，`role: 'admin'` 为管理员可删除任意内容 |
+| `comments` | Array | `[]` | 评论列表（业务侧传入，组件内不内置 mock 数据），支持 `v-model:comments` |
+| `currentUser` | Object | `{ id: '', name: '', avatar: '' }` | 当前登录用户 `{ id, name, avatar, role? }`（业务侧传入）；自己的评论/回复可删除，`role: 'admin'` 为管理员可删除任意内容 |
 | `sort` | `'hot' \| 'latest' \| 'floor'` | `'hot'` | 排序方式：最热 / 最新（楼层倒序）/ 楼层升序；支持 `v-model:sort` |
 | `pageSize` | Number | `20` | 首屏渲染条数，超出后显示「点击加载更多评论」（仅本地模式） |
 | `previewReplies` | Number | `2` | 楼中楼默认预览条数 |
