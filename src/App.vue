@@ -3,8 +3,9 @@ import { ref } from "vue";
 import { ElMessage, ElTag, ElButton } from "element-plus";
 import { getUserListApi, getFilterOptionsApi } from "@/api";
 import CommentDemo from "@/views/CommentDemo.vue";
+import MdEditorDemo from "@/views/MdEditorDemo.vue";
 
-// 顶层演示切换：comment=评论区（MockJS 数据）/ table=表格组件
+// 顶层演示切换：comment=评论区（MockJS 数据）/ table=表格组件 / md=Markdown 编辑器
 const activeDemo = ref("comment");
 
 // ========== 编辑控件预置选项（单独传递，不放在 columns 配置中）==========
@@ -661,10 +662,12 @@ const onRemoveSelected = () => {
       <el-radio-group v-model="activeDemo" size="small">
         <el-radio-button value="comment">评论区演示（MockJS）</el-radio-button>
         <el-radio-button value="table">表格组件演示</el-radio-button>
+        <el-radio-button value="md">Markdown 编辑器演示</el-radio-button>
       </el-radio-group>
     </div>
 
     <CommentDemo v-if="activeDemo === 'comment'" />
+    <MdEditorDemo v-else-if="activeDemo === 'md'" />
 
     <div v-show="activeDemo === 'table'">
     <!-- <div style="margin-bottom: 12px; display: flex; gap: 8px; flex-wrap: wrap">
