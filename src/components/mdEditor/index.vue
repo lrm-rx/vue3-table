@@ -1,9 +1,25 @@
 <script setup>
-import { computed, ref, useAttrs } from 'vue'
-import { MdEditor } from 'md-editor-v3'
+import { computed, ref, useAttrs, watch } from 'vue'
+defineOptions({ inheritAttrs: false })
+import { MdEditor, MdPreview, config, allToolbar } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
+import 'md-editor-v3/lib/preview.css'
 import { ElMessage } from 'element-plus'
+import { Mark, Emoji, PreviewThemeSwitch } from '@vavt/v3-extension'
+import '@vavt/v3-extension/lib/asset/Mark.css'
+import '@vavt/v3-extension/lib/asset/Emoji.css'
+import '@vavt/v3-extension/lib/asset/PreviewThemeSwitch.css'
+import MarkExtension from 'markdown-it-mark'
 import { fileToBase64, isImageFile } from './utils'
+import Time from './extensions/Time.vue'
+import DateTimeFooter from './extensions/DateTimeFooter.vue'
+
+// 注册 markdown-it-mark 扩展（==文本== → <mark>文本</mark>）
+config({
+  markdownItConfig: (md) => {
+    md.use(MarkExtension)
+  },
+})
 
 /**
  * BaseMdEditor —— md-editor-v3 的二次封装
@@ -12,7 +28,8 @@ import { fileToBase64, isImageFile } from './utils'
  * 1. 图片默认以 base64 内联（支持工具栏上传 / 拖拽 / 截图粘贴）
  * 2. 可选自定义上传函数（上传到后端返回 URL）
  * 3. 中文语言、默认预览主题等开箱即用
- * 4. 透传所有原生 props 与事件
+ * 4. 集成 4 个工具栏扩展：Mark（高亮）、Emoji（表情）、PreviewThemeSwitch（预览主题切换）、Time（插入时间）
+ * 5. 透传所有原生 props 与事件
  */
 
 const props = defineProps({
@@ -30,6 +47,11 @@ const props = defineProps({
   theme: {
     type: String,
     default: 'light',
+  },
+  // 是否显示预览栏（默认不显示，用户可通过工具栏的预览按钮切换）
+  preview: {
+    type: Boolean,
+    default: false,
   },
   // 预览主题
   previewTheme: {
@@ -56,10 +78,22 @@ const props = defineProps({
     type: Array,
     default: () => ['github'],
   },
+  // 页脚配置：默认 [字数, 日期时间, =, 同步滚动]
+  // 数字 0 引用 defFooters 中的第一个自定义页脚组件（DateTimeFooter）
+  // 布局：左侧字数统计 | 右侧 日期时间 + 同步滚动
+  footers: {
+    type: Array,
+    default: () => ['markdownTotal', '=', 0, 'scrollSwitch'],
+  },
   // 高度
   height: {
     type: [String, Number],
     default: undefined,
+  },
+  // 只读模式：渲染为纯预览组件（无工具栏、无边框），适用于文章发布后查看
+  readOnly: {
+    type: Boolean,
+    default: false,
   },
   // 是否禁用
   disabled: {
@@ -84,10 +118,35 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'update:previewTheme'])
+
+// 预览主题本地状态（供 PreviewThemeSwitch 切换），与 prop 双向同步
+const previewThemeRef = ref(props.previewTheme)
+watch(
+  () => props.previewTheme,
+  (v) => {
+    previewThemeRef.value = v
+  },
+)
+watch(previewThemeRef, (v) => {
+  emit('update:previewTheme', v)
+})
 
 // 透传原生事件给 MdEditor（除了 update:modelValue 与 onUploadImg 由本组件处理）
 const attrs = useAttrs()
+
+// 扩展组件在 defToolbars 中的数量，用于追加数字索引到 toolbars
+const EXTENSION_COUNT = 4
+
+// 最终的工具栏列表：在用户/默认 toolbars 末尾追加 [0..N-1] 引用 defToolbars 中的扩展
+// 移除默认的 "=" 分隔符，让所有按钮在同一组内流动排列，避免窄容器换行后留白
+// md-editor-v3 的 toolbars 数组用数字索引引用 defToolbars 里的自定义 VNode
+const resolvedToolbars = computed(() => {
+  const base = props.toolbars || allToolbar
+  const filtered = base.filter((item) => item !== '=')
+  const indices = Array.from({ length: EXTENSION_COUNT }, (_, i) => i)
+  return [...filtered, ...indices]
+})
 
 // 合并后的 props（供 MdEditor 使用），排除本组件自定义的 props
 const mergedProps = computed(() => {
@@ -151,26 +210,74 @@ defineExpose({
 </script>
 
 <template>
+  <!-- 只读模式：纯预览，无工具栏无边框 -->
+  <MdPreview
+    v-if="readOnly"
+    :model-value="modelValue"
+    :theme="theme"
+    :preview-theme="previewThemeRef"
+    :code-theme="codeTheme"
+    :language="language"
+  />
+  <!-- 编辑模式 -->
   <MdEditor
+    v-else
     ref="mdEditorRef"
     v-bind="mergedProps"
     :model-value="modelValue"
     :placeholder="placeholder"
     :theme="theme"
-    :preview-theme="previewTheme"
+    :preview="preview"
+    :preview-theme="previewThemeRef"
     :code-theme="codeTheme"
     :language="language"
-    :toolbars="toolbars"
+    :toolbars="resolvedToolbars"
     :toolbars-exclude="toolbarsExclude"
+    :footers="footers"
     :height="height"
     :disabled="disabled"
     :on-upload-img="handleUploadImg"
     @update:model-value="handleChange"
-  />
+  >
+    <template #defToolbars>
+      <Mark />
+      <Emoji />
+      <PreviewThemeSwitch v-model="previewThemeRef" />
+      <Time />
+    </template>
+    <template #defFooters>
+      <DateTimeFooter />
+    </template>
+  </MdEditor>
 </template>
 
 <style scoped lang="scss">
-:deep(.md-editor) {
+// .md-editor 是根元素，直接带 data-v 属性，用普通 scoped 选择器即可
+.md-editor {
   border-radius: 4px;
+}
+
+// 工具栏自动换行（容器宽度较小时避免按钮被截断）
+// 注意：不能用 :deep(.md-editor) 嵌套，因为 .md-editor 就是带 scope 的根元素
+:deep(.md-editor-toolbar-wrapper) {
+  overflow: visible !important;
+  overflow-x: visible !important;
+  overflow-y: visible !important;
+}
+
+:deep(.md-editor-toolbar) {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  // 覆盖默认 space-between，避免窄容器换行后第一行右侧留白
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+:deep(.md-editor-toolbar-left),
+:deep(.md-editor-toolbar-right) {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  // 允许 flex 子项收缩到内容宽度以下，使内部按钮能换行
+  min-width: 0;
 }
 </style>

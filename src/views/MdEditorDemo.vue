@@ -3,7 +3,9 @@
  * MdEditor 演示页：展示二次封装后的 Markdown 编辑器
  *  - 默认 base64 图片内联（支持工具栏上传 / 拖拽 / 截图粘贴）
  *  - 可切换 custom 上传模式（模拟后端上传，返回伪 URL）
- *  - 主题 / 预览主题 / 代码主题切换
+ *  - 主题 / 代码主题切换
+ *  - 工具栏集成 4 个扩展：Mark 高亮 · Emoji 表情 · 预览主题切换 · 插入时间
+ *  - 支持 read-only 只读模式（文章发布后查看）
  *  - 实时展示原始 Markdown 内容
  */
 import { ref, computed } from 'vue'
@@ -15,6 +17,21 @@ import { fileToBase64 } from '@/components/mdEditor/utils'
 const content = ref(`# MdEditor 演示
 
 这是 **md-editor-v3** 二次封装组件的使用示例。
+
+## 工具栏扩展
+
+编辑器工具栏右侧集成了 4 个扩展按钮：
+
+| 扩展 | 用法 |
+| --- | --- |
+| **Mark 高亮** | 选中文字后点击，或输入 \`==高亮文本==\` |
+| **Emoji 表情** | 点击弹出表情面板，选择插入 |
+| **预览主题切换** | 下拉切换 default / github / vuepress / mk-cute 等 |
+| **插入时间** | 点击即插入当前日期时间 |
+
+## Mark 高亮示例
+
+==这是一段被高亮标记的文字==，也可以 ==这样标记==。
 
 ## 图片支持
 
@@ -37,6 +54,28 @@ console.log(hello)
 2. 第二项
 - 无序列表 A
 - 无序列表 B
+
+---
+
+## 😲 md-editor-v3
+
+Markdown Editor for Vue3, developed in jsx and typescript, support different themes、beautify content by prettier.
+
+### 🤖 Base
+
+** **bold** ** , <u>underline</u>, _italic_, ~~line-through~~, superscript^26^, subscript~1~, \`inline code\`, [link](https://github.com/imzbf)
+
+> quote: I Have a Dream
+
+1. So even though we face the difficulties of today and tomorrow, I still have a dream.
+2. It is a dream deeply rooted in the American dream.
+3. I have a dream that one day this nation will rise up.
+
+- [ ] Friday
+- [ ] Saturday
+- [x] Sunday
+
+![Picture](https://imzbf.github.io/md-editor-rt/imgs/mark_emoji.gif)
 `)
 
 // 图片处理方式
@@ -45,16 +84,8 @@ const uploadType = ref('base64')
 const maxImageSize = ref(10)
 // 编辑器主题
 const theme = ref('light')
-// 预览主题
-const previewTheme = ref('default')
-const previewThemeOptions = [
-  { label: 'default', value: 'default' },
-  { label: 'github', value: 'github' },
-  { label: 'vuepress', value: 'vuepress' },
-  { label: 'mk-cute', value: 'mk-cute' },
-  { label: 'smart-blue', value: 'smart-blue' },
-  { label: 'cyanosis', value: 'cyanosis' },
-]
+// 只读模式
+const readOnly = ref(false)
 // 代码高亮主题
 const codeTheme = ref('atom')
 const codeThemeOptions = [
@@ -119,15 +150,8 @@ const clearContent = () => {
             inactive-text="浅色"
           />
 
-          <span class="md-demo__label">预览主题</span>
-          <el-select v-model="previewTheme" size="small" style="width: 120px">
-            <el-option
-              v-for="opt in previewThemeOptions"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
+          <span class="md-demo__label">只读</span>
+          <el-switch v-model="readOnly" active-text="预览" inactive-text="编辑" />
 
           <span class="md-demo__label">代码主题</span>
           <el-select v-model="codeTheme" size="small" style="width: 130px">
@@ -144,18 +168,19 @@ const clearContent = () => {
       <div class="md-demo__tip">
         <el-icon><InfoFilled /></el-icon>
         <span>
-          图片支持三种方式：工具栏上传 · 拖拽到编辑区 ·
-          <b>截图后 Ctrl+V 粘贴</b>（自动转为 base64 内联到 Markdown）
+          工具栏集成了 <b>Mark 高亮</b> · <b>Emoji 表情</b> · <b>预览主题切换</b> · <b>插入时间</b> 扩展；
+          支持 <b>只读模式</b>（切换「只读」开关查看效果）；
+          图片支持工具栏上传 · 拖拽 · <b>截图粘贴</b>（自动转 base64）
         </span>
       </div>
 
       <MdEditor
         v-model="content"
+        :read-only="readOnly"
         :upload-type="uploadType"
         :custom-upload="uploadType === 'custom' ? customUpload : null"
         :max-image-size="maxImageSize"
         :theme="theme"
-        :preview-theme="previewTheme"
         :code-theme="codeTheme"
         style="height: 560px"
       />

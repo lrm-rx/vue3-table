@@ -38,22 +38,65 @@ vi.mock('md-editor-v3', async () => {
       onUploadImg: { type: Function, default: null },
       placeholder: { type: String, default: '' },
       theme: { type: String, default: '' },
+      preview: { type: Boolean, default: true },
       previewTheme: { type: String, default: '' },
       codeTheme: { type: String, default: '' },
       language: { type: String, default: '' },
       toolbars: { type: Array, default: undefined },
       toolbarsExclude: { type: Array, default: () => [] },
+      footers: { type: Array, default: () => [] },
+      defFooters: { type: Object, default: undefined },
       height: { type: [String, Number], default: undefined },
       disabled: { type: Boolean, default: false },
     },
     emits: ['update:modelValue'],
-    setup(props) {
-      return () => h('div', { class: 'md-editor-stub' }, props.modelValue)
+    setup(props, { slots }) {
+      return () => h('div', { class: 'md-editor-stub' }, [props.modelValue, slots.defToolbars?.(), slots.defFooters?.()])
     },
   })
   stubHolder.value = MdEditorStub
-  return { MdEditor: MdEditorStub }
+  // MdPreview 桩组件（只读模式）
+  const MdPreviewStub = defineComponent({
+    name: 'MdPreviewStub',
+    inheritAttrs: false,
+    props: {
+      modelValue: { type: String, default: '' },
+      theme: { type: String, default: '' },
+      previewTheme: { type: String, default: '' },
+      codeTheme: { type: String, default: '' },
+      language: { type: String, default: '' },
+    },
+    setup(props) {
+      return () => h('div', { class: 'md-preview-stub' }, props.modelValue)
+    },
+  })
+  // config 是全局配置函数，桩为 no-op；allToolbar 是默认工具栏数组
+  return { MdEditor: MdEditorStub, MdPreview: MdPreviewStub, config: () => {}, allToolbar: ['bold', 'italic', 'underline', 'strikeThrough', '-', 'title', 'sub', 'sup', 'quote', 'unorderedList', 'orderedList', 'task', 'codeRow', 'code', 'link', 'image', 'table', 'mermaid', 'katex', '-', 'revoke', 'next', '=', 'pageFullscreen', 'fullscreen', 'preview', 'previewOnly', 'htmlPreview', 'catalog', 'github'] }
 })
+
+// ============ mock @vavt/v3-extension 的扩展组件 ============
+vi.mock('@vavt/v3-extension', async () => {
+  const { defineComponent, h } = await import('vue')
+  const makeStub = (name) =>
+    defineComponent({
+      name,
+      props: { modelValue: { type: String, default: '' }, insert: { type: Function, default: null } },
+      emits: ['update:modelValue'],
+      setup() {
+        return () => h('span', { class: `ext-${name}` })
+      },
+    })
+  return {
+    Mark: makeStub('Mark'),
+    Emoji: makeStub('Emoji'),
+    PreviewThemeSwitch: makeStub('PreviewThemeSwitch'),
+  }
+})
+
+// ============ mock markdown-it-mark ============
+vi.mock('markdown-it-mark', () => ({
+  default: () => ({}),
+}))
 
 import MdEditor from '../../src/components/mdEditor/index.vue'
 

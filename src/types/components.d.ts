@@ -18,6 +18,7 @@ declare module 'vue' {
     CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
     CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']
     CommentItem: typeof import('./../components/comment/components/CommentItem.vue')['default']
+    DateTimeFooter: typeof import('./../components/mdEditor/extensions/DateTimeFooter.vue')['default']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']
@@ -49,6 +50,7 @@ declare module 'vue' {
     ReplyList: typeof import('./../components/comment/components/ReplyList.vue')['default']
     TablePro: typeof import('./../components/tablePro/index.vue')['default']
     TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
+    Time: typeof import('./../components/mdEditor/extensions/Time.vue')['default']
     VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
   }
   export interface GlobalDirectives {
@@ -64,6 +66,7 @@ declare global {
   const CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
   const CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']
   const CommentItem: typeof import('./../components/comment/components/CommentItem.vue')['default']
+  const DateTimeFooter: typeof import('./../components/mdEditor/extensions/DateTimeFooter.vue')['default']
   const ElAvatar: typeof import('element-plus/es')['ElAvatar']
   const ElButton: typeof import('element-plus/es')['ElButton']
   const ElCard: typeof import('element-plus/es')['ElCard']
@@ -95,5 +98,6 @@ declare global {
   const ReplyList: typeof import('./../components/comment/components/ReplyList.vue')['default']
   const TablePro: typeof import('./../components/tablePro/index.vue')['default']
   const TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
+  const Time: typeof import('./../components/mdEditor/extensions/Time.vue')['default']
   const VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
 }
