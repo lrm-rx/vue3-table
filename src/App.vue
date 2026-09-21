@@ -655,10 +655,12 @@ const onRemoveSelected = () => {
 
 <template>
   <div
-    style="padding: 20px; height: 100vh; box-sizing: border-box; overflow: auto"
+    style="padding: 0 20px 20px; height: 100vh; box-sizing: border-box; overflow: auto"
   >
-    <!-- 演示切换 -->
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
+    <!-- 演示切换（顶部间距用 margin 而非容器 padding-top：
+         Chromium 中 sticky 吸顶停靠在滚动容器 content-box 顶，
+         容器若保留 padding-top 会在吸顶头上方留出一截内容穿透的缝隙） -->
+    <div style="display: flex; align-items: center; gap: 12px; margin: 20px 0 12px">
       <el-radio-group v-model="activeDemo" size="small">
         <el-radio-button value="comment">评论区演示（MockJS）</el-radio-button>
         <el-radio-button value="table">表格组件演示</el-radio-button>
@@ -880,6 +882,15 @@ const onRemoveSelected = () => {
     </div>
   </div>
 </template>
+
+<style>
+/* 清零 body 默认 8px 上下外边距：否则文档高度 = 100vh + 16px，页面出现文档级滚动条，
+   评论区滚到底继续滚动（或拖动浏览器主滚动条）时，整页连同已吸顶的头部会被拖出
+   视口顶部（吸顶过头）。清零后文档高度恰为 100vh，滚动完全由根容器承担。 */
+body {
+  margin: 0;
+}
+</style>
 
 <style scoped lang="scss">
 .logo {

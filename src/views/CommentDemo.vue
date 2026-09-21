@@ -22,6 +22,8 @@ const seed = ref(0);
 const loading = ref(false);
 const virtualScroll = ref(true);
 const listHeight = ref(600);
+// 非虚拟模式触底自动加载（本地模式开启后滚近底部自动扩容，隐藏「点击加载更多」按钮）
+const autoLoadMore = ref(false);
 // 数据模式：local 全量拉取 + 本地切片；remote 分页触底加载
 const dataMode = ref("local");
 
@@ -156,6 +158,10 @@ onMounted(loadData);
 
           <span class="comment-demo__label">虚拟滚动</span>
           <el-switch v-model="virtualScroll" />
+          <template v-if="!virtualScroll">
+            <span class="comment-demo__label">触底自动加载</span>
+            <el-switch v-model="autoLoadMore" />
+          </template>
           <span class="comment-demo__label">视口高度</span>
           <el-select v-model="listHeight" size="small" style="width: 100px">
             <el-option :value="400" label="400px" />
@@ -183,6 +189,7 @@ onMounted(loadData);
         :current-user="currentUser"
         :loading="loading"
         :virtual-scroll="virtualScroll"
+        :auto-load-more="autoLoadMore"
         :list-height="listHeight"
         :remote="dataMode === 'remote'"
         :remote-has-more="remoteHasMore"
@@ -201,10 +208,20 @@ onMounted(loadData);
   display: flex;
   justify-content: center;
 
+  // el-card 自带 overflow:hidden、el-card__body 自带 overflow:auto，
+  // 两者会在「吸顶头部 → App 根滚动容器」之间形成新的滚动容器，吞掉 position:sticky；
+  // 页面级滚动由 App 根容器（height:100vh; overflow:auto）承担，此处放开保证吸顶生效
+  :deep(.el-card),
+  :deep(.el-card__body) {
+    overflow: visible;
+  }
+
   &__panel {
     width: 100%;
     max-width: 760px;
     border-radius: 8px;
+    // 吸顶条横向铺满卡片体：外扩量取 el-card__body 的左右 padding（CSS 变量继承进组件）
+    --bili-sticky-gutter: var(--el-card-padding);
   }
 
   &__toolbar {

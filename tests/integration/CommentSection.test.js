@@ -613,3 +613,187 @@ describe("CommentSection 远程加载模式", () => {
     );
   });
 });
+
+describe("CommentSection 本地模式自动加载（autoLoadMore）", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    vi.unstubAllGlobals();
+  });
+
+  // 可控 IntersectionObserver mock：trigger 手动让哨兵「进入视口」
+  const createIntersectionObserverMock = () => {
+    let callback = null;
+    const Mock = class {
+      constructor(cb) {
+        callback = cb;
+        this.observe = () => {};
+        this.unobserve = () => {};
+        this.disconnect = () => {};
+      }
+    };
+    Mock.trigger = () => {
+      if (callback) callback([{ isIntersecting: true }]);
+    };
+    return Mock;
+  };
+
+  const makeComments = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `c${i + 1}`,
+      floor: i + 1,
+      author: { id: "u", name: `用户${i + 1}`, avatar: "" },
+      content: `内容${i + 1}`,
+      createTime: Date.now() - i * 60000,
+      likeCount: 0,
+      liked: false,
+      replies: [],
+    }));
+
+  it("默认关闭：仍显示「点击加载更多」按钮且无哨兵", () => {
+    const wrapper = mountSection({ comments: makeComments(30), pageSize: 10 });
+    expect(wrapper.text()).toContain("点击加载更多评论");
+    expect(wrapper.find(".bili-comment__sentinel").exists()).toBe(false);
+  });
+
+  it("autoLoadMore=true：按钮隐藏、渲染哨兵，触底自动扩容切片且不 emit load-more", async () => {
+    const MockIO = createIntersectionObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({
+      comments: makeComments(30),
+      pageSize: 10,
+      autoLoadMore: true,
+    });
+    // onMounted 用 requestAnimationFrame 延迟建立哨兵观察，等 rAF 落地
+    await new Promise((r) => requestAnimationFrame(r));
+    expect(wrapper.text()).not.toContain("点击加载更多评论");
+    expect(wrapper.find(".bili-comment__sentinel").exists()).toBe(true);
+
+    MockIO.trigger();
+    await flushPromises();
+    expect(wrapper.findAll(".bili-comment-item").length).toBe(20);
+    // 本地扩容是组件内部行为，不走 load-more 事件
+    expect(wrapper.emitted("load-more")).toBeFalsy();
+  });
+
+  it("切片耗尽后哨兵触发不再扩容（hasMore 兜底），哨兵随之卸载", async () => {
+    const MockIO = createIntersectionObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({
+      comments: makeComments(15),
+      pageSize: 10,
+      autoLoadMore: true,
+    });
+    await new Promise((r) => requestAnimationFrame(r));
+    MockIO.trigger();
+    await flushPromises();
+    expect(wrapper.findAll(".bili-comment-item").length).toBe(15);
+    // 耗尽终态：哨兵卸载并显示「没有更多评论了」
+    expect(wrapper.find(".bili-comment__sentinel").exists()).toBe(false);
+    expect(wrapper.text()).toContain("没有更多评论了");
+  });
+});
+
+describe("CommentSection 吸顶头部", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    vi.unstubAllGlobals();
+  });
+
+  // 可控 IntersectionObserver mock：trigger 手动派发指定 entries（吸顶态检测用）
+  const createStickyObserverMock = () => {
+    let callback = null;
+    const Mock = class {
+      constructor(cb) {
+        callback = cb;
+        this.observe = () => {};
+        this.unobserve = () => {};
+        this.disconnect = () => {};
+      }
+    };
+    Mock.trigger = (entries) => {
+      if (callback) callback(entries);
+    };
+    return Mock;
+  };
+
+  it("非虚拟模式：头部与输入区包进吸顶容器（--sticky 类）", () => {
+    const wrapper = mountSection({ comments: [] });
+    const top = wrapper.find(".bili-comment__top");
+    expect(top.exists()).toBe(true);
+    expect(top.classes()).toContain("bili-comment__top--sticky");
+    // CommentHeader 与 CommentEditor 都渲染在吸顶容器内
+    expect(top.find(".bili-comment-header").exists()).toBe(true);
+    expect(top.find(".bili-comment-editor").exists()).toBe(true);
+  });
+
+  it("吸顶检测哨兵紧贴头部之前（sticky 受 .bili-comment 父级边界约束）", () => {
+    const wrapper = mountSection({ comments: [] });
+    const root = wrapper.find(".bili-comment");
+    const children = root.element.children;
+    // 哨兵在前、吸顶容器紧随其后（哨兵负 margin 不占布局，仅作观察目标）
+    expect(children[0].classList.contains("bili-comment__sticky-sentinel")).toBe(
+      true,
+    );
+    expect(children[1].classList.contains("bili-comment__top")).toBe(true);
+    // 列表 / 空态在吸顶容器之后，保证吸顶可覆盖整个评论列表滚动区间
+    expect(children[children.length - 1].classList.contains("bili-comment__top")).toBe(
+      false,
+    );
+  });
+
+  it("虚拟滚动模式：容器存在但不吸顶（列表自带视口，头部天然常驻）", () => {
+    const wrapper = mountSection({
+      comments: [],
+      virtualScroll: true,
+      listHeight: 400,
+    });
+    const top = wrapper.find(".bili-comment__top");
+    expect(top.exists()).toBe(true);
+    expect(top.find(".bili-comment-header").exists()).toBe(true);
+    expect(top.find(".bili-comment-editor").exists()).toBe(true);
+    expect(top.classes()).not.toContain("bili-comment__top--sticky");
+  });
+
+  it("动态切换 virtualScroll：吸顶类随之增减", async () => {
+    const wrapper = mountSection({ comments: [] });
+    expect(wrapper.find(".bili-comment__top").classes()).toContain(
+      "bili-comment__top--sticky",
+    );
+    await wrapper.setProps({ virtualScroll: true });
+    expect(wrapper.find(".bili-comment__top").classes()).not.toContain(
+      "bili-comment__top--sticky",
+    );
+    await wrapper.setProps({ virtualScroll: false });
+    expect(wrapper.find(".bili-comment__top").classes()).toContain(
+      "bili-comment__top--sticky",
+    );
+  });
+
+  it("吸顶态阴影：哨兵越过视口顶进入 is-stuck，回滚后解除；评论区未进屏不误判", async () => {
+    const MockIO = createStickyObserverMock();
+    vi.stubGlobal("IntersectionObserver", MockIO);
+    const wrapper = mountSection({ comments: [] });
+    // 等 VueUse 建立观察（模板 ref 挂载后 observe）
+    await new Promise((r) => requestAnimationFrame(r));
+    const classes = () => wrapper.find(".bili-comment__top").classes();
+
+    // 评论区尚在视口下方：未相交但在视口下侧 → 不算吸顶
+    MockIO.trigger([
+      { isIntersecting: false, boundingClientRect: { top: 300 } },
+    ]);
+    await flushPromises();
+    expect(classes()).not.toContain("is-stuck");
+
+    // 哨兵越过滚动容器可视顶 → is-stuck
+    MockIO.trigger([
+      { isIntersecting: false, boundingClientRect: { top: -2 } },
+    ]);
+    await flushPromises();
+    expect(classes()).toContain("is-stuck");
+
+    // 回滚：哨兵重新进入视口 → 解除
+    MockIO.trigger([{ isIntersecting: true, boundingClientRect: { top: 0 } }]);
+    await flushPromises();
+    expect(classes()).not.toContain("is-stuck");
+  });
+});

@@ -117,6 +117,20 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 - **触底加载**：滚动接近底部时抛出 `load-more`，配合外部 `loading` 可对接增量接口（本地全量数据无需处理）；
 - 切换排序 / 发表评论后列表自动回到顶部。
 
+### 10. 头部吸顶（非虚拟模式）
+
+非虚拟模式下评论数据较多时会出现页面级（滚动容器）滚动条，**「评论 + 总数」头部与顶部输入区**滚过滚动容器顶部后通过 `position: sticky` 固定在顶部（`CommentHeader` 与 `CommentEditor` 包裹在 `.bili-comment__top--sticky` 中），列表内容从其下方滚过；滚回顶部后自动还原。虚拟滚动模式列表在自身视口内滚动、头部天然常驻，不启用吸顶。
+
+**吸顶态阴影**：头部上方紧贴一个 1px 哨兵（负 margin 不占布局），`@vueuse/core` 的 `useIntersectionObserver` 观察哨兵——越过滚动容器可视顶（未相交且在视口上方）即进入 `is-stuck` 态，吸顶头显示 `box-shadow` 与列表内容拉开层次；回滚后自动解除（带 box-shadow 过渡）。哨兵在视口下方（评论区尚未进入屏幕）不会误判。
+
+宿主页面需满足 sticky 生效条件（组件已保证自身链路无障碍）：
+
+- 吸顶头部到滚动容器之间的祖先不能出现 `overflow: hidden / auto / scroll`（如 `el-card` 自带 `overflow: hidden`、`el-card__body` 自带 `overflow: auto`，需放开为 `visible`，参考 `CommentDemo.vue`）；
+- 滚动容器自身不要设置 `padding-top`：Chromium 中 sticky 吸顶停靠在滚动容器 content-box 顶，容器 `padding-top` 会让吸顶头下方留出一截内容穿透的缝隙（App 根容器已改为「无 padding-top + 首子元素 margin-top 补偿」）；
+- 文档本身不能有多余的可滚动量：`body` 默认 8px 上下外边距 + 容器 `height: 100vh` 会让文档高度变成 `100vh + 16px`，出现文档级滚动条——评论区滚到底继续滚动（或拖动浏览器主滚动条）时，整页连同已吸顶的头部会被拖出视口顶部（「吸顶过头」）。App 已通过 `body { margin: 0 }` 清零，文档高度恰为 100vh，滚动完全由根容器承担。
+
+**吸顶条宽度外扩**：宿主容器带左右 padding（如 `el-card__body` 默认 20px）时，仅内容宽的吸顶条会让列表从两侧 padding 区穿过而「穿帮」。组件吸顶条支持横向外扩：宿主在容器上设置 `--bili-sticky-gutter`（外扩量，默认 `0px` 不外扩），吸顶条以「负 margin 外扩 + 等量 padding 补偿」铺满整个容器宽度，内部内容仍与列表对齐。`CommentDemo.vue` 设 `--bili-sticky-gutter: var(--el-card-padding)` 使吸顶条与卡片体同宽。
+
 ---
 
 ## 二、组件拆分
@@ -194,10 +208,11 @@ const onDelete = ({ comment }) => {};
 | `virtualScroll` | Boolean | `false` | 是否开启评论列表虚拟滚动（显式开启；开启后不再显示「点击加载更多」，由列表内部承载全量数据） |
 | `listHeight` | Number \| String | `600` | 虚拟滚动视口高度，number 按 px；容器必须有确定高度 |
 | `remote` | Boolean | `false` | 远程加载模式：触底时 emit `load-more` 由父组件取数并 append；不启用时保留本地切片 + 「点击加载更多」按钮 |
+| `autoLoadMore` | Boolean | `false` | 非虚拟模式触底自动加载：开启后本地模式滚近底部自动扩容切片（隐藏「点击加载更多」按钮，哨兵触发，不 emit `load-more`），全部加载完后显示「没有更多评论了」；远程模式本就由哨兵触底取数，不受影响 |
 | `remoteHasMore` | Boolean | `true` | 远程模式：是否还有更多数据（父组件根据接口返回控制）；`false` 时显示「没有更多评论了」 |
-| `bottomDistance` | Number | `200` | 非虚拟远程模式触底提前量（px），哨兵进入视口 rootMargin 时触发 `load-more` |
+| `bottomDistance` | Number | `200` | 非虚拟模式触底提前量（px），哨兵进入视口 rootMargin 时触发 `load-more`（远程取数 / 本地扩容） |
 
-> 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 视口高度。
+> 开发环境提供 MockJS 批量数据实测入口：`src/views/CommentDemo.vue`（App 顶部「评论区演示」），数据由 `src/mock/modules/comment.js` 的 `GET /mock-api/comment/list?count=500&seed=0` 生成，可切换数据量 / 虚拟滚动 / 触底自动加载 / 视口高度。
 
 ### Emits
 

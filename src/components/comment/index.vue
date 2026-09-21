@@ -8,6 +8,7 @@
  * 不传 comments 时使用内置 mock 数据，开箱即用。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useIntersectionObserver } from "@vueuse/core";
 import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
@@ -43,6 +44,9 @@ const props = defineProps({
   remote: { type: Boolean, default: false },
   // 远程模式：是否还有更多数据（父组件根据接口 hasMore 控制；false 时显示「没有更多评论了」）
   remoteHasMore: { type: Boolean, default: true },
+  // 非虚拟模式触底自动加载：开启后本地模式滚近底部自动扩容切片（隐藏「点击加载更多」按钮），
+  // 远程模式本就由哨兵触底取数，不受此开关影响
+  autoLoadMore: { type: Boolean, default: false },
   // 非虚拟模式触底提前量（px）：哨兵进入视口 rootMargin 时触发 load-more
   bottomDistance: { type: Number, default: 200 },
 });
@@ -59,6 +63,20 @@ const emit = defineEmits([
 
 // —— 虚拟列表实例（virtualScroll=true 时使用）——
 const virtualListRef = ref(null);
+
+// —— 吸顶态检测（isStuck → 吸顶阴影）——
+// 哨兵紧贴吸顶头部上方：越过滚动容器可视顶 = 头部已被 sticky 钉住；
+// 位于视口下方（评论区尚未进入屏幕）不算吸顶。
+const stickySentinelRef = ref(null);
+const isStuck = ref(false);
+useIntersectionObserver(
+  stickySentinelRef,
+  (entries) => {
+    const entry = entries[entries.length - 1];
+    isStuck.value = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+  },
+  { threshold: 0 },
+);
 
 // —— 列表数据：受控优先，否则使用内置 mock ——
 const innerComments = ref([]);
@@ -128,17 +146,20 @@ const loadMore = () => {
 };
 
 // —— 非虚拟模式哨兵触底检测（IntersectionObserver）——
-// 页面级滚动时哨兵进入视口（含 rootMargin 提前量）即触发 load-more
+// 页面级滚动时哨兵进入视口（含 rootMargin 提前量）即触发 load-more；
+// 远程模式始终启用，本地模式仅在 autoLoadMore 开启时启用（否则用「点击加载更多」按钮）
 const sentinelRef = ref(null);
 let io = null;
 const setupSentinel = () => {
   if (io) io.disconnect();
-  // 仅非虚拟 + 远程模式才需要哨兵（本地模式有「点击加载更多」按钮）
-  if (!props.remote || props.virtualScroll) return;
+  // 虚拟滚动由列表自身检测触底；本地模式未开启自动加载时保留按钮交互
+  if (props.virtualScroll) return;
+  if (!props.remote && !props.autoLoadMore) return;
   if (!sentinelRef.value) return;
   io = new IntersectionObserver(
     (entries) => {
-      if (entries.some((e) => e.isIntersecting)) loadMore();
+      // hasMore 兜底：本地切片耗尽后哨兵不再扩容
+      if (entries.some((e) => e.isIntersecting) && hasMore.value) loadMore();
     },
     { rootMargin: `${props.bottomDistance}px 0px` },
   );
@@ -146,7 +167,7 @@ const setupSentinel = () => {
 };
 
 watch(
-  () => [props.remote, props.virtualScroll],
+  () => [props.remote, props.virtualScroll, props.autoLoadMore],
   () => {
     // 模式切换后 nextTick 重建哨兵（DOM 可能刚挂载/卸载）
     requestAnimationFrame(setupSentinel);
@@ -247,8 +268,8 @@ const handleDelete = ({ comment, reply }) => {
 
 // —— 生命周期：哨兵初始化与清理 ——
 onMounted(() => {
-  // 非虚拟 + 远程模式：DOM 就绪后建立哨兵观察
-  if (props.remote && !props.virtualScroll) {
+  // 非虚拟 + （远程 或 本地自动加载）：DOM 就绪后建立哨兵观察
+  if (!props.virtualScroll && (props.remote || props.autoLoadMore)) {
     requestAnimationFrame(setupSentinel);
   }
 });
@@ -263,21 +284,37 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="bili-comment">
-    <CommentHeader
-      :total="innerComments.length"
-      :model-value="innerSort"
-      @update:model-value="changeSort"
+    <!-- 吸顶态检测哨兵：越过滚动容器顶 → 头部进入 is-stuck（吸顶阴影） -->
+    <div
+      ref="stickySentinelRef"
+      class="bili-comment__sticky-sentinel"
+      aria-hidden="true"
     />
 
-    <div class="bili-comment__editor">
-      <CommentEditor
-        collapsible
-        :avatar="currentUser.avatar"
-        :name="currentUser.name"
-        submit-text="发布"
-        :maxlength="maxlength"
-        @send="sendComment"
+    <!-- 头部 + 输入区包裹层：非虚拟模式下吸顶（列表较长出现滚动条后，滚过头部即固定在滚动容器顶部） -->
+    <div
+      class="bili-comment__top"
+      :class="{
+        'bili-comment__top--sticky': !virtualScroll,
+        'is-stuck': !virtualScroll && isStuck,
+      }"
+    >
+      <CommentHeader
+        :total="innerComments.length"
+        :model-value="innerSort"
+        @update:model-value="changeSort"
       />
+
+      <div class="bili-comment__editor">
+        <CommentEditor
+          collapsible
+          :avatar="currentUser.avatar"
+          :name="currentUser.name"
+          submit-text="发布"
+          :maxlength="maxlength"
+          @send="sendComment"
+        />
+      </div>
     </div>
 
     <!-- 空列表（两种模式共用） -->
@@ -333,9 +370,10 @@ onBeforeUnmount(() => {
         @delete="handleDelete"
       />
 
-      <!-- 非虚拟远程模式：哨兵元素（IntersectionObserver 观察目标，不占可见高度） -->
+      <!-- 哨兵元素（IntersectionObserver 观察目标，不占可见高度）：
+           远程模式始终启用；本地模式在 autoLoadMore 开启时启用 -->
       <div
-        v-if="remote && hasMore"
+        v-if="(remote || autoLoadMore) && hasMore"
         ref="sentinelRef"
         class="bili-comment__sentinel"
       />
@@ -346,15 +384,19 @@ onBeforeUnmount(() => {
         <span v-if="remote && loading" class="bili-comment__status-text">
           加载中...
         </span>
-        <!-- 没有更多（远程模式到底） -->
+        <!-- 没有更多（远程到底 / 本地自动加载耗尽，给用户明确的终态反馈） -->
         <span
-          v-else-if="remote && !hasMore"
+          v-else-if="(remote || autoLoadMore) && !hasMore"
           class="bili-comment__status-text"
         >
           没有更多评论了
         </span>
-        <!-- 点击加载更多（仅本地模式，保留原有交互） -->
-        <el-button v-else-if="!remote && hasMore" size="small" @click="loadMore">
+        <!-- 点击加载更多（仅本地手动模式；autoLoadMore 开启后由哨兵自动加载） -->
+        <el-button
+          v-else-if="!remote && !autoLoadMore && hasMore"
+          size="small"
+          @click="loadMore"
+        >
           点击加载更多评论
         </el-button>
       </div>
@@ -366,6 +408,43 @@ onBeforeUnmount(() => {
 .bili-comment {
   width: 100%;
   color: #18191c;
+
+  // 吸顶态检测哨兵：1px 高 + 负 margin 抵消，不占布局但可被 IntersectionObserver 观察
+  &__sticky-sentinel {
+    height: 1px;
+    margin-bottom: -1px;
+    pointer-events: none;
+  }
+
+  // 头部 + 输入区包裹层
+  &__top {
+    // 非虚拟模式吸顶：sticky 相对「最近的可滚动祖先」生效，
+    // 要求自身到滚动容器的祖先链上不能出现 overflow: hidden / auto / scroll
+    // （如 el-card），否则吸顶被该容器吞掉而不生效。
+    // 虚拟滚动模式列表在自身视口内滚动、头部天然常驻，无需吸顶。
+    &--sticky {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      // 吸顶条横向外扩：宿主容器（如 el-card__body）带左右 padding 时，
+      // 仅内容宽的吸顶条会让列表从两侧 padding 区穿过而「穿帮」。
+      // 宿主把 --bili-sticky-gutter 设为该 padding 值（默认 0 不外扩），
+      // 这里负 margin 外扩 + 等量 padding 补偿，铺满整个容器宽度且内部布局不变。
+      margin-left: calc(-1 * var(--bili-sticky-gutter, 0px));
+      margin-right: calc(-1 * var(--bili-sticky-gutter, 0px));
+      padding-left: var(--bili-sticky-gutter, 0px);
+      padding-right: var(--bili-sticky-gutter, 0px);
+      // 吸顶后列表内容会从下方滚过，需要不透明底色遮住
+      background-color: #fff;
+      // 吸顶阴影出现 / 消失的过渡
+      transition: box-shadow 0.25s ease;
+
+      // 吸顶态：与滚过的列表内容拉开层次（is-stuck 由哨兵 IntersectionObserver 驱动）
+      &.is-stuck {
+        box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.08);
+      }
+    }
+  }
 
   &__editor {
     padding-bottom: 16px;
