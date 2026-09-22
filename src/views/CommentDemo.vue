@@ -10,10 +10,22 @@
 import { ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import CommentSection from "@/components/comment/index.vue";
-import { getCommentListApi, getCommentPageApi } from "@/api/comment";
+import {
+  getCommentListApi,
+  getCommentPageApi,
+  sendCommentApi,
+  replyCommentApi,
+  likeCommentApi,
+  deleteCommentApi,
+} from "@/api/comment";
 
 // 演示当前用户（id=me 的评论展示删除入口，与 mock 数据作者对齐）
 const currentUser = { id: "me", name: "我", avatar: "", role: "admin" };
+
+// 组件实例：写操作失败时调用 rollback(opId) 还原乐观态
+const commentRef = ref(null);
+// 写接口模拟失败开关：开启后所有写操作返回业务错误，用于验证回滚
+const simulateFail = ref(false);
 
 // —— 演示控制项 ——
 const countOptions = [50, 200, 500, 1000, 5000];
@@ -117,6 +129,64 @@ const onModeChange = () => {
   }
 };
 
+// —— 写操作事件：组件已乐观更新，请求成功 settle、失败 rollback ——
+const onSend = async ({ content, opId }) => {
+  bump("send");
+  try {
+    await sendCommentApi({ content, simulateFail: simulateFail.value });
+    commentRef.value?.settle(opId);
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("发布失败，已还原本地内容");
+  }
+};
+
+const onReply = async ({ commentId, content, replyTo, opId }) => {
+  bump("reply");
+  try {
+    await replyCommentApi({
+      commentId,
+      content,
+      replyTo,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("回复失败，已还原本地内容");
+  }
+};
+
+const onLike = async ({ comment, reply, liked, opId }) => {
+  bump("like");
+  try {
+    await likeCommentApi({
+      targetId: (reply || comment).id,
+      liked,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("点赞失败，已还原点赞状态");
+  }
+};
+
+const onDelete = async ({ comment, reply, opId }) => {
+  bump("delete");
+  try {
+    await deleteCommentApi({
+      targetId: (reply || comment).id,
+      isReply: !!reply,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("删除失败，已还原被删内容");
+  }
+};
+
 const onLoadMore = () => {
   if (dataMode.value === "remote") loadNextPage();
 };
@@ -168,6 +238,14 @@ onMounted(loadData);
             <el-option :value="600" label="600px" />
             <el-option :value="800" label="800px" />
           </el-select>
+
+          <el-divider direction="vertical" />
+
+          <span class="comment-demo__label">写接口模拟失败</span>
+          <el-switch v-model="simulateFail" />
+          <span class="comment-demo__tip">
+            （开启后发布/回复/点赞/删除均返回错误，验证乐观更新回滚）
+          </span>
         </div>
       </template>
 
@@ -185,6 +263,7 @@ onMounted(loadData);
       </div>
 
       <CommentSection
+        ref="commentRef"
         v-model:comments="comments"
         :current-user="currentUser"
         :loading="loading"
@@ -193,10 +272,10 @@ onMounted(loadData);
         :list-height="listHeight"
         :remote="dataMode === 'remote'"
         :remote-has-more="remoteHasMore"
-        @send="bump('send')"
-        @reply="bump('reply')"
-        @like="bump('like')"
-        @delete="bump('delete')"
+        @send="onSend"
+        @reply="onReply"
+        @like="onLike"
+        @delete="onDelete"
         @load-more="onLoadMore"
       />
     </el-card>

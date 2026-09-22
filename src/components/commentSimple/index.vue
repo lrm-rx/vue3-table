@@ -249,6 +249,64 @@ const syncComments = () => {
   emit("update:comments", innerComments.value);
 };
 
+// —— 乐观更新：快照管理与回滚 ——
+// 每个写操作先在 pendingOps 中保存「足以精确还原」的快照，再做本地变更并 emit；
+// 事件 payload 携带 opId：业务侧请求成功 → settle(opId) 丢弃快照；
+// 失败 → rollback(opId) 按快照精确回滚。快照与服务端刷新互不依赖。
+let opSeq = 0;
+const pendingOps = new Map();
+const nextOpId = () => `op_${++opSeq}`;
+
+const applyRollback = (snap) => {
+  switch (snap.type) {
+    case "like":
+      snap.target.liked = snap.liked;
+      snap.target.likeCount = snap.likeCount;
+      break;
+    case "send":
+      innerComments.value = innerComments.value.filter((c) => c.id !== snap.id);
+      break;
+    case "reply": {
+      const target = innerComments.value.find((c) => c.id === snap.commentId);
+      if (target) {
+        target.replies = (target.replies ?? []).filter((r) => r.id !== snap.id);
+      }
+      break;
+    }
+    case "delete": {
+      const arr = [...innerComments.value];
+      arr.splice(Math.min(snap.index, arr.length), 0, snap.item);
+      innerComments.value = arr;
+      break;
+    }
+    case "delete-reply": {
+      const target = innerComments.value.find((c) => c.id === snap.commentId);
+      if (target) {
+        const arr = [...(target.replies ?? [])];
+        arr.splice(Math.min(snap.index, arr.length), 0, snap.item);
+        target.replies = arr;
+      }
+      break;
+    }
+  }
+};
+
+// 失败回滚：还原本地数据并同步父组件
+const rollback = (opId) => {
+  const snap = pendingOps.get(opId);
+  if (!snap) return;
+  applyRollback(snap);
+  pendingOps.delete(opId);
+  syncComments();
+};
+
+// 成功确认：丢弃快照
+const settle = (opId) => {
+  pendingOps.delete(opId);
+};
+
+defineExpose({ rollback, settle });
+
 // —— 发表一级评论 ——
 const sendComment = (content) => {
   const newComment = {
@@ -265,9 +323,11 @@ const sendComment = (content) => {
     floor: getNextFloor(innerComments.value),
     replies: [],
   };
+  const opId = nextOpId();
+  pendingOps.set(opId, { type: "send", id: newComment.id });
   innerComments.value = [...innerComments.value, newComment];
   syncComments();
-  emit("send", content);
+  emit("send", { content, opId });
   // 发布后切到「最新」，保证立刻看到自己的评论
   if (innerSort.value !== "latest") {
     changeSort("latest");
@@ -279,7 +339,7 @@ const handleReply = ({ commentId, content, replyTo }) => {
   const target = innerComments.value.find((c) => c.id === commentId);
   if (!target) return;
   if (!Array.isArray(target.replies)) target.replies = [];
-  target.replies.push({
+  const newReply = {
     id: createId("reply"),
     author: {
       id: props.currentUser.id,
@@ -291,33 +351,55 @@ const handleReply = ({ commentId, content, replyTo }) => {
     likeCount: 0,
     liked: false,
     replyTo: replyTo ? { ...replyTo } : null,
-  });
+  };
+  const opId = nextOpId();
+  pendingOps.set(opId, { type: "reply", commentId, id: newReply.id });
+  target.replies.push(newReply);
   innerComments.value = [...innerComments.value];
   syncComments();
-  emit("reply", { commentId, content, replyTo });
+  emit("reply", { commentId, content, replyTo, opId });
 };
 
-// —— 点赞 / 取消（乐观翻转）——
+// —— 点赞 / 取消（乐观翻转 + 失败可回滚）——
 const handleLike = ({ comment, reply }) => {
   const target = reply || comment;
+  const opId = nextOpId();
+  // 快照：目标旧值（rollback 直接恢复字段）
+  pendingOps.set(opId, {
+    type: "like",
+    target,
+    liked: target.liked,
+    likeCount: target.likeCount,
+  });
   target.liked = !target.liked;
   target.likeCount += target.liked ? 1 : -1;
   syncComments();
-  emit("like", { comment, reply, liked: target.liked });
+  emit("like", { comment, reply, liked: target.liked, opId });
 };
 
 // —— 删除评论 / 回复 ——
 const handleDelete = ({ comment, reply }) => {
+  const opId = nextOpId();
   if (reply) {
     const target = innerComments.value.find((c) => c.id === comment.id);
     if (!target) return;
-    target.replies = (target.replies ?? []).filter((r) => r.id !== reply.id);
+    const replies = target.replies ?? [];
+    const index = replies.findIndex((r) => r.id === reply.id);
+    pendingOps.set(opId, {
+      type: "delete-reply",
+      commentId: comment.id,
+      index,
+      item: reply,
+    });
+    target.replies = replies.filter((r) => r.id !== reply.id);
     innerComments.value = [...innerComments.value];
   } else {
+    const index = innerComments.value.findIndex((c) => c.id === comment.id);
+    pendingOps.set(opId, { type: "delete", index, item: comment });
     innerComments.value = innerComments.value.filter((c) => c.id !== comment.id);
   }
   syncComments();
-  emit("delete", { comment, reply });
+  emit("delete", { comment, reply, opId });
 };
 
 // —— 生命周期：绑定滚动/意图监听与清理 ——

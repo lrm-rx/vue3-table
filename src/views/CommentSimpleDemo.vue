@@ -15,10 +15,21 @@
 import { ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import CommentSimple from "@/components/commentSimple/index.vue";
-import { getCommentPageApi } from "@/api/comment";
+import {
+  getCommentPageApi,
+  sendCommentApi,
+  replyCommentApi,
+  likeCommentApi,
+  deleteCommentApi,
+} from "@/api/comment";
 
 // —— 当前用户（id=me 的评论可删除；role=admin 可删任意）——
 const currentUser = { id: "me", name: "我", avatar: "", role: "admin" };
+
+// 组件实例：写操作失败时调用 rollback(opId) 还原乐观态
+const commentRef = ref(null);
+// 写接口模拟失败开关：开启后所有写操作返回业务错误，用于验证回滚
+const simulateFail = ref(false);
 
 // —— 演示控制项 ——
 const pageSize = 10; // 每页条数（小一点便于触发多页加载）
@@ -130,41 +141,79 @@ const loadTwoPageDataset = () => {
   loadFirstPage();
 };
 
-// —— 组件事件回调 ——
-const onSend = (content) => {
+// —— 组件事件回调：组件已乐观更新，请求成功 settle、失败 rollback ——
+const onSend = async ({ content, opId }) => {
   bump("send");
-  ElMessage.success(`已发布评论：${content.slice(0, 20)}`);
-  if (autoRefreshAfterAction.value) refreshAll();
+  try {
+    await sendCommentApi({ content, simulateFail: simulateFail.value });
+    commentRef.value?.settle(opId);
+    ElMessage.success(`已发布评论：${content.slice(0, 20)}`);
+    if (autoRefreshAfterAction.value) refreshAll();
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("发布失败，已还原本地内容");
+  }
 };
 
-const onReply = ({ commentId, content, replyTo }) => {
+const onReply = async ({ commentId, content, replyTo, opId }) => {
   bump("reply");
-  const target = replyTo?.name ? `@${replyTo.name}` : "楼主";
-  ElMessage.success(`已回复${target}：${content.slice(0, 20)}`);
-  if (autoRefreshAfterAction.value) refreshAll();
+  try {
+    await replyCommentApi({
+      commentId,
+      content,
+      replyTo,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+    const target = replyTo?.name ? `@${replyTo.name}` : "楼主";
+    ElMessage.success(`已回复${target}：${content.slice(0, 20)}`);
+    if (autoRefreshAfterAction.value) refreshAll();
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("回复失败，已还原本地内容");
+  }
 };
 
-const onLike = ({ comment, reply, liked }) => {
+const onLike = async ({ comment, reply, liked, opId }) => {
   bump("like");
-  const target = reply ? `回复「${reply.content.slice(0, 10)}」` : `评论「${comment.content.slice(0, 10)}」`;
-  ElMessage.info(`${liked ? "点赞" : "取消点赞"}：${target}`);
+  try {
+    await likeCommentApi({
+      targetId: (reply || comment).id,
+      liked,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+    const target = reply
+      ? `回复「${reply.content.slice(0, 10)}」`
+      : `评论「${comment.content.slice(0, 10)}」`;
+    ElMessage.info(`${liked ? "点赞" : "取消点赞"}：${target}`);
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("点赞失败，已还原点赞状态");
+  }
 };
 
-const onDelete = ({ comment, reply }) => {
+const onDelete = async ({ comment, reply, opId }) => {
   bump("delete");
-  ElMessage.warning(reply ? "已删除回复" : "已删除评论");
-  // 删除后不刷新：mock 数据是静态的，刷新会把已删除的评论带回来。
-  // 真实场景中服务端删除后刷新，评论自然消失；此处保留组件的乐观删除效果。
+  try {
+    await deleteCommentApi({
+      targetId: (reply || comment).id,
+      isReply: !!reply,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId);
+    ElMessage.warning(reply ? "已删除回复" : "已删除评论");
+    // 删除后不刷新：mock 数据是静态的，刷新会把已删除的评论带回来。
+    // 真实场景中服务端删除后刷新，评论自然消失；此处保留组件的乐观删除效果。
+  } catch {
+    commentRef.value?.rollback(opId);
+    ElMessage.info("删除失败，已还原被删内容");
+  }
 };
 
 const onLoadMore = () => {
   loadNextPage();
 };
-
-// 展开态数量展示（便于观察：刷新后展开数应保持不变）
-const expandedCount = ref(0);
-// commentSimple 内部 expandedIds 不对外暴露，这里通过监听评论数量变化来间接提示
-// 实际展开态由组件内部按 id 持有，刷新后数量不变即可验证
 
 onMounted(loadFirstPage);
 </script>
@@ -198,6 +247,14 @@ onMounted(loadFirstPage);
           <el-button size="small" type="warning" @click="refreshAll">
             手动模拟服务端刷新
           </el-button>
+
+          <el-divider direction="vertical" />
+
+          <span class="comment-simple-demo__label">写接口模拟失败</span>
+          <el-switch v-model="simulateFail" />
+          <span class="comment-simple-demo__tip">
+            （开启后发布/回复/点赞/删除均返回错误，验证乐观更新回滚）
+          </span>
         </div>
       </template>
 
@@ -226,10 +283,16 @@ onMounted(loadFirstPage);
             <b>数据量边界</b>：点「仅 3 条」→ 3 条数据且无更多时直接显示「没有更多评论了」，
             不卡在「加载中」；点「共 15 条」→ 触底加载末页 5 条后正常结束
           </li>
+          <li>
+            <b>乐观更新回滚</b>：开启「写接口模拟失败」→ 做点赞/发布/回复/删除
+            → 界面先出现乐观变化，约 600ms 后自动还原（组件按操作前快照精确回滚）；
+            关闭该开关后操作正常生效
+          </li>
         </ol>
       </div>
 
       <CommentSimple
+        ref="commentRef"
         v-model:comments="comments"
         :current-user="currentUser"
         :loading="loading"

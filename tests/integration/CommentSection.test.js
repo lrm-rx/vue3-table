@@ -77,8 +77,11 @@ describe("CommentSection 发送一级评论", () => {
     // 列表立即展示
     expect(wrapper.text()).toContain("我的第一条评论");
     expect(wrapper.text()).toContain("第1楼");
-    // 事件：send + v-model 同步 + 自动切到「最新」
-    expect(wrapper.emitted("send")?.[0]).toEqual(["我的第一条评论"]);
+    // 事件：send(payload 为 { content, opId }) + v-model 同步 + 自动切到「最新」
+    expect(wrapper.emitted("send")?.[0]?.[0]).toMatchObject({
+      content: "我的第一条评论",
+      opId: expect.any(String),
+    });
     expect(wrapper.emitted("update:comments")).toBeTruthy();
     expect(wrapper.emitted("update:sort")?.[0]).toEqual(["latest"]);
   });

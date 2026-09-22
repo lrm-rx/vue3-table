@@ -261,22 +261,49 @@ export default [
       const pageNum = Math.max(Number(query.pageNum) || 1, 1)
       const seed = String(query.seed || 'default')
       // 默认 200 条；query.total 可覆盖（1 ~ 10000），用于极小数据集测试
-      const total = query.total !== undefined && query.total !== ''
-        ? Math.min(Math.max(Number(query.total) || 1, 1), 10000)
-        : pageSize * 20
+      let total = pageSize * 20
+      if (query.total !== undefined && query.total !== '') {
+        total = Math.min(Math.max(Number(query.total) || 1, 1), 10000)
+      }
       const list = getDataset(total, seed)
       const start = (pageNum - 1) * pageSize
       const pageList = list.slice(start, start + pageSize)
+      const hasMore = start + pageSize < total
       return {
         code: 200,
         message: 'success',
-        data: {
-          list: pageList,
-          total,
-          pageNum,
-          pageSize,
-          hasMore: start + pageSize < total,
-        },
+        data: { list: pageList, total, pageNum, pageSize, hasMore },
+      }
+    },
+  },
+
+  // —— 写操作（乐观更新的服务端模拟；POST /mock-api/comment/write）——
+  // body.action: send / reply / like / delete
+  // body.simulateFail=true 时返回业务错误 code:500，
+  // 业务侧 catch 后调用组件 rollback(opId) 还原本地乐观态
+  // timeout 600ms：让「请求在途」与回滚效果肉眼可辨（POST /mock-api/comment/write）
+  {
+    url: '/mock-api/comment/write',
+    method: 'post',
+    timeout: 600,
+    response: ({ body }) => {
+      const { action, simulateFail } = body || {}
+      const failMessages = {
+        send: '发布失败：服务端异常（模拟）',
+        reply: '回复失败：服务端异常（模拟）',
+        like: '点赞失败：服务端异常（模拟）',
+        delete: '删除失败：服务端异常（模拟）',
+      }
+      if (simulateFail) {
+        return {
+          code: 500,
+          message: failMessages[action] || '操作失败（模拟）',
+        }
+      }
+      return {
+        code: 200,
+        message: 'success',
+        data: { action, ok: true },
       }
     },
   },

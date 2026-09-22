@@ -216,12 +216,21 @@ const onDelete = ({ comment }) => {};
 
 ### Emits
 
+所有写操作的 payload 均携带 `opId`（组件内部为该次操作保存了快照）：请求成功后调用暴露的 `settle(opId)` 丢弃快照；失败则调用 `rollback(opId)` 按快照精确还原本地数据。
+
 | 事件 | 参数 | 说明 |
 | --- | --- | --- |
 | `update:comments` | 新列表 | 任意本地变更后同步 |
 | `update:sort` | `'hot' \| 'latest'` | 切换排序 |
-| `send` | `content` | 发表一级评论（本地已插入） |
-| `reply` | `{ commentId, content, replyTo }` | 发表回复（本地已插入） |
-| `like` | `{ comment, reply, liked }` | 点赞/取消（本地已翻转，失败可回滚） |
-| `delete` | `{ comment, reply }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除 |
+| `send` | `{ content, opId }` | 发表一级评论（本地已插入） |
+| `reply` | `{ commentId, content, replyTo, opId }` | 发表回复（本地已插入） |
+| `like` | `{ comment, reply, liked, opId }` | 点赞/取消（本地已翻转，失败可回滚） |
+| `delete` | `{ comment, reply, opId }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除 |
 | `load-more` | — | 远程模式触底时触发（虚拟模式由 VirtualList `isNearBottom` 检测，非虚拟模式由 IntersectionObserver 哨兵检测）；父组件取数后 append 到 `comments` 并更新 `remoteHasMore` |
+
+### Exposed Methods（通过模板 ref 调用）
+
+| 方法 | 说明 |
+| --- | --- |
+| `settle(opId)` | 写请求成功后调用：丢弃该操作的快照 |
+| `rollback(opId)` | 写请求失败后调用：按操作前快照精确回滚（点赞恢复旧值、发布/回复按 id 移除、删除插回原位置），并同步 `comments` |
