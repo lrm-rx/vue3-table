@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { ElMessage, ElTag, ElButton } from "element-plus";
 import { getUserListApi, getFilterOptionsApi } from "@/api";
 import CommentDemo from "@/views/CommentDemo.vue";
+import CommentSimpleDemo from "@/views/CommentSimpleDemo.vue";
 import MdEditorDemo from "@/views/MdEditorDemo.vue";
 
 // 顶层演示切换：comment=评论区（MockJS 数据）/ table=表格组件 / md=Markdown 编辑器
@@ -663,12 +664,14 @@ const onRemoveSelected = () => {
     <div style="display: flex; align-items: center; gap: 12px; margin: 20px 0 12px">
       <el-radio-group v-model="activeDemo" size="small">
         <el-radio-button value="comment">评论区演示（MockJS）</el-radio-button>
+        <el-radio-button value="commentSimple">简化版评论区（仅远程）</el-radio-button>
         <el-radio-button value="table">表格组件演示</el-radio-button>
         <el-radio-button value="md">Markdown 编辑器演示</el-radio-button>
       </el-radio-group>
     </div>
 
     <CommentDemo v-if="activeDemo === 'comment'" />
+    <CommentSimpleDemo v-else-if="activeDemo === 'commentSimple'" />
     <MdEditorDemo v-else-if="activeDemo === 'md'" />
 
     <div v-show="activeDemo === 'table'">
