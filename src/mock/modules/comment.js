@@ -247,18 +247,23 @@ export default [
     },
   },
   // 分页拉取评论（远程无限滚动模式：触底后请求下一页）
-  // query: pageSize=20 每页条数；pageNum=1 页码（从1开始）；seed 数据批次
-  // 返回当前页切片 + total（全量总数，用于判断是否还有更多）
+  // query:
+  //   pageSize=20  每页条数；pageNum=1 页码（从1开始）；seed 数据批次
+  //   total        可选，自定义数据总条数（测试不足一屏 / 2-3 条等边界）
+  // 默认总数 200 条（pageSize*20）；返回当前页切片 + total（用于判断是否还有更多）
+  // timeout 调大至 1200ms：让底部「加载中...」状态文本肉眼可见（演示加载态）
   {
     url: '/mock-api/comment/page',
     method: 'get',
-    timeout: 300,
+    timeout: 1200,
     response: ({ query }) => {
       const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 100)
       const pageNum = Math.max(Number(query.pageNum) || 1, 1)
       const seed = String(query.seed || 'default')
-      // 以 pageSize*100 为全量规模生成数据集（足够触发多页加载）
-      const total = pageSize * 100
+      // 默认 200 条；query.total 可覆盖（1 ~ 10000），用于极小数据集测试
+      const total = query.total !== undefined && query.total !== ''
+        ? Math.min(Math.max(Number(query.total) || 1, 1), 10000)
+        : pageSize * 20
       const list = getDataset(total, seed)
       const start = (pageNum - 1) * pageSize
       const pageList = list.slice(start, start + pageSize)

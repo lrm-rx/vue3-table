@@ -10,7 +10,7 @@
  *
  * 组件为纯受控数据组件，内部不内置任何 mock 数据，评论列表由业务侧传入。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useIntersectionObserver } from "@vueuse/core";
 import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
@@ -37,8 +37,9 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   // 远程模式：是否还有更多数据（父组件根据接口 hasMore 控制）
   remoteHasMore: { type: Boolean, default: true },
-  // 触底提前量（px）：哨兵进入视口 rootMargin 时触发 load-more
-  bottomDistance: { type: Number, default: 200 },
+  // 触底提前量（px）：距底部该距离时即触发 load-more，
+  // 用于覆盖请求在途期间用户滚动的距离，避免看到内容断层
+  bottomDistance: { type: Number, default: 400 },
 });
 
 const emit = defineEmits([
@@ -116,64 +117,130 @@ const toggleExpand = (id) => {
   }
 };
 
-// 触底加载：远程模式 emit load-more（父组件取数）
-const loadMore = () => {
-  if (!props.loading && props.remoteHasMore) emit("load-more");
-};
+// —— 触底加载检测（scroll 事件 + 几何判断）——
+// 不使用 IntersectionObserver：root 为多层嵌套滚动容器时存在交集不回调的边界情况。
+// 改为监听滚动容器的 scroll 事件，直接比较
+// scrollTop + clientHeight + bottomDistance >= scrollHeight 判断是否触底，朴素可靠。
+const rootRef = ref(null);
+let scrollContainer = null;
+// 最近一次加载结束的时间戳：用于区分「发起本次加载的旧手势」与「加载结束后的新手势」
+let lastLoadEndTime = 0;
+// 触底锁：发起一次 load-more 后立即解除武装，
+// 只有滚动位置先离开底部阈值区（中途出现非触底状态）才重新武装。
+// 用于阻断 Chromium 滚动锚定 / 程序化钉底产生的自发 scroll 事件导致的级联加载；
+// 用户真实快速滚动会经过中间位置，武装会自然恢复，不影响连续滚动体验。
+let bottomArmed = true;
 
-// —— 哨兵触底检测（IntersectionObserver）——
-// 远程模式始终启用：哨兵进入视口（含 rootMargin 提前量）即触发 load-more
-const sentinelRef = ref(null);
-let io = null;
-// 记录哨兵当前是否与视口相交：用于 loading 结束后补发 load-more
-// （IO 回调仅在交集状态变化时触发；若初始加载期间已相交，加载完成后需手动补触发）
-let sentinelIntersecting = false;
-
-const setupSentinel = () => {
-  // 哨兵未渲染时不做任何操作（尤其不能断开已有 IO，否则后续滚动不再触发）
-  if (!sentinelRef.value) return;
-  if (io) io.disconnect();
-  // 找到最近的滚动容器作为 IO 的 root（比默认 viewport 更可靠，
-  // 避免内容在容器内滚动时 IO 不触发的问题）
-  let root = sentinelRef.value.parentElement;
-  while (root) {
-    const { overflowY } = getComputedStyle(root);
-    if (overflowY === "auto" || overflowY === "scroll") break;
-    root = root.parentElement;
+// 从组件根元素向上找最近的可滚动容器；找不到则回退到 window（页面级滚动）
+const resolveScrollContainer = () => {
+  let el = rootRef.value?.parentElement;
+  while (el) {
+    const { overflowY } = getComputedStyle(el);
+    if (overflowY === "auto" || overflowY === "scroll") return el;
+    el = el.parentElement;
   }
-  io = new IntersectionObserver(
-    (entries) => {
-      sentinelIntersecting = entries.some((e) => e.isIntersecting);
-      if (sentinelIntersecting && hasMore.value) loadMore();
-    },
-    { root: root || null, rootMargin: `${props.bottomDistance}px 0px` },
-  );
-  io.observe(sentinelRef.value);
+  return window;
 };
 
-// loading 结束时，若哨兵仍在视口内且还有更多数据，补发 load-more
-// （解决初始加载期间哨兵已相交但 loadMore 被 loading 拦截、之后不再触发的问题）
-// 用 requestAnimationFrame 延迟一帧，让 IntersectionObserver 先更新交集状态
+const checkReachBottom = () => {
+  // 加载中 / 无更多数据时直接短路
+  if (props.loading || !props.remoteHasMore) return;
+  // 容器被重建时重新解析
+  if (
+    scrollContainer &&
+    scrollContainer !== window &&
+    !scrollContainer.isConnected
+  ) {
+    scrollContainer = resolveScrollContainer();
+  }
+  const metrics =
+    scrollContainer === window
+      ? {
+          scrollTop: window.scrollY || document.documentElement.scrollTop,
+          clientHeight: window.innerHeight,
+          scrollHeight: document.documentElement.scrollHeight,
+        }
+      : {
+          scrollTop: scrollContainer.scrollTop,
+          clientHeight: scrollContainer.clientHeight,
+          scrollHeight: scrollContainer.scrollHeight,
+        };
+  const atBottom =
+    metrics.scrollTop + metrics.clientHeight + props.bottomDistance >=
+    metrics.scrollHeight;
+
+  // 只要离开底部区域就重新武装（用户真实滚动的必经路径）
+  if (!atBottom) {
+    bottomArmed = true;
+    return;
+  }
+  // 已触底但锁未解除（加载后被滚动锚定/钉底产生的自发事件）：忽略
+  if (!bottomArmed) return;
+  bottomArmed = false;
+  emit("load-more");
+};
+
+// —— 用户主动意图武装 ——
+// 解除武装期间发生在「本次加载结束之后」的新交互手势重新武装：
+//  wheel(向下滚动) / 键盘下翻 / 触摸滑动。
+// 滚动锚定只产生 scroll 事件，不产生这些输入事件，因此级联依旧被阻断；
+// 而当浏览器把位置钉在新底部时，真实用户也不会被卡住。
+const armByIntent = () => {
+  if (bottomArmed) return;
+  // 加载中不武装：排除发起本次加载的旧手势残留，且此时本就不该翻页
+  if (props.loading) return;
+  // 必须是加载结束后发生的新手势
+  if (Date.now() < lastLoadEndTime + 50) return;
+  bottomArmed = true;
+  requestAnimationFrame(checkReachBottom);
+};
+
+const onWheelIntent = (e) => {
+  if (e.deltaY > 0) armByIntent();
+};
+
+const onKeyIntent = (e) => {
+  if (["ArrowDown", "PageDown", " "].includes(e.key)) armByIntent();
+};
+
+const onTouchIntent = () => armByIntent();
+
+// 判断列表内容是否撑不满容器（没有可滚动的溢出）
+const isContentShorterThanViewport = () => {
+  if (scrollContainer === window) {
+    return document.documentElement.scrollHeight <= window.innerHeight + 1;
+  }
+  return scrollContainer.scrollHeight <= scrollContainer.clientHeight + 1;
+};
+
+// loading 结束后连续加载的唯一合法场景：
+// 新增内容仍撑不满一屏（用户无法通过滚动再次触发），自动补加载直到出现滚动条。
+// 若列表可滚动而用户停在底部，绝不自动翻页——必须由用户再次滚动触发，
+// 否则会形成「加载完仍触底 → 再加载」的级联请求（一路打到最后一页）。
 watch(
   () => props.loading,
   (isLoading) => {
     if (isLoading) return;
-    requestAnimationFrame(() => {
-      if (sentinelIntersecting && hasMore.value) loadMore();
+    lastLoadEndTime = Date.now();
+    nextTick(() => {
+      // 内容仍撑不满一屏：用户无法通过滚动离开底部区来重新武装，
+      // 此处显式武装后复检，连续补加载直到出现滚动条
+      if (isContentShorterThanViewport()) {
+        bottomArmed = true;
+        checkReachBottom();
+      }
     });
   },
 );
 
-// remoteHasMore 变化时重建哨兵：false 时断开观察；
-// true 时等待 v-if 渲染哨兵后再 observe（用 requestAnimationFrame 等 DOM 更新）
+// remoteHasMore 从 false 变回 true（如重新生成一批数据）后，重置武装并复检
 watch(
   () => props.remoteHasMore,
-  (hasMoreVal) => {
-    if (!hasMoreVal) {
-      if (io) io.disconnect();
-      return;
+  (val) => {
+    if (val) {
+      bottomArmed = true;
+      nextTick(checkReachBottom);
     }
-    requestAnimationFrame(setupSentinel);
   },
 );
 
@@ -253,21 +320,36 @@ const handleDelete = ({ comment, reply }) => {
   emit("delete", { comment, reply });
 };
 
-// —— 生命周期：哨兵初始化与清理 ——
+// —— 生命周期：绑定滚动/意图监听与清理 ——
 onMounted(() => {
-  requestAnimationFrame(setupSentinel);
+  scrollContainer = resolveScrollContainer();
+  scrollContainer.addEventListener("scroll", checkReachBottom, {
+    passive: true,
+  });
+  // 用户主动意图武装
+  scrollContainer.addEventListener("wheel", onWheelIntent, { passive: true });
+  scrollContainer.addEventListener("touchmove", onTouchIntent, {
+    passive: true,
+  });
+  // 键盘事件挂 window（容器未必持有焦点）
+  window.addEventListener("keydown", onKeyIntent);
+  // 首屏内容不足一屏时自动补加载
+  nextTick(checkReachBottom);
 });
 
 onBeforeUnmount(() => {
-  if (io) {
-    io.disconnect();
-    io = null;
+  if (scrollContainer) {
+    scrollContainer.removeEventListener("scroll", checkReachBottom);
+    scrollContainer.removeEventListener("wheel", onWheelIntent);
+    scrollContainer.removeEventListener("touchmove", onTouchIntent);
+    scrollContainer = null;
   }
+  window.removeEventListener("keydown", onKeyIntent);
 });
 </script>
 
 <template>
-  <div class="bili-comment">
+  <div ref="rootRef" class="bili-comment">
     <!-- 吸顶态检测哨兵 -->
     <div
       ref="stickySentinelRef"
@@ -319,13 +401,6 @@ onBeforeUnmount(() => {
         @reply="handleReply"
         @delete="handleDelete"
         @toggle-expand="toggleExpand(comment.id)"
-      />
-
-      <!-- 哨兵元素（IntersectionObserver 观察目标，不占可见高度） -->
-      <div
-        v-if="hasMore"
-        ref="sentinelRef"
-        class="bili-comment__sentinel"
       />
 
       <!-- 底部状态文本：加载中 / 没有更多（不使用 v-loading 全屏遮罩） -->
@@ -381,13 +456,6 @@ onBeforeUnmount(() => {
     :deep(.bili-comment-item + .bili-comment-item) {
       border-top: 1px solid #f1f2f3;
     }
-  }
-
-  // 哨兵元素：不占可见高度，仅作 IntersectionObserver 观察目标
-  &__sentinel {
-    height: 1px;
-    width: 100%;
-    pointer-events: none;
   }
 
   // 底部状态文本（加载中 / 没有更多）：居中、灰色小字

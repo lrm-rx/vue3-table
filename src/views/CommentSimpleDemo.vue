@@ -12,7 +12,7 @@
  *     - 已展开的楼中楼保持展开（展开态由 commentSimple 内部按 comment.id 持久化）
  *  4. 排序切换（最热 / 最新）、空列表态、点赞乐观翻转、删除权限
  */
-import { ref, computed, onMounted } from "vue";
+import { ref, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import CommentSimple from "@/components/commentSimple/index.vue";
 import { getCommentPageApi } from "@/api/comment";
@@ -26,6 +26,9 @@ const seed = ref(0);
 const loading = ref(false);
 const remoteHasMore = ref(true);
 const pageNum = ref(0);
+// 自定义数据总条数：null = 默认 200 条；数字 = 极小数据集（如 3 / 15，测试边界）
+const totalOverride = ref(null);
+const serverTotal = ref(0);
 
 // —— 评论数据（v-model:comments 双向同步）——
 const comments = ref([]);
@@ -41,21 +44,26 @@ const bump = (key) => {
   eventCount.value[key] += 1;
 };
 
+// 构造分页请求参数（totalOverride 存在时带上自定义 total）
+const buildParams = (num) => ({
+  pageSize,
+  pageNum: num,
+  seed: seed.value,
+  ...(totalOverride.value !== null ? { total: totalOverride.value } : {}),
+});
+
 // —— 拉取首页 ——
 const loadFirstPage = async () => {
   loading.value = true;
   remoteHasMore.value = true;
   pageNum.value = 1;
   try {
-    const data = await getCommentPageApi({
-      pageSize,
-      pageNum: 1,
-      seed: seed.value,
-    });
+    const data = await getCommentPageApi(buildParams(1));
     // 关键：用全新对象数组覆盖（模拟服务端返回最新数据），
     // 即使 comment.id 相同，对象引用也是新的，用于验证展开态不丢失
     comments.value = data.list.map((c) => ({ ...c }));
     remoteHasMore.value = data.hasMore;
+    serverTotal.value = data.total;
   } catch (err) {
     ElMessage.error(`评论数据加载失败：${err?.message || err}`);
   } finally {
@@ -69,11 +77,7 @@ const loadNextPage = async () => {
   loading.value = true;
   try {
     const next = pageNum.value + 1;
-    const data = await getCommentPageApi({
-      pageSize,
-      pageNum: next,
-      seed: seed.value,
-    });
+    const data = await getCommentPageApi(buildParams(next));
     // 追加新页数据（同样用新对象）
     comments.value = [...comments.value, ...data.list.map((c) => ({ ...c }))];
     pageNum.value = next;
@@ -93,11 +97,7 @@ const refreshAll = async () => {
     // 重新拉取前 pageNum 页并合并覆盖
     const allPages = [];
     for (let p = 1; p <= pageNum.value; p++) {
-      const data = await getCommentPageApi({
-        pageSize,
-        pageNum: p,
-        seed: seed.value,
-      });
+      const data = await getCommentPageApi(buildParams(p));
       allPages.push(...data.list);
     }
     // 用全新对象数组覆盖（即使 id 相同，引用也是新的）
@@ -110,9 +110,23 @@ const refreshAll = async () => {
   }
 };
 
-// 更换 seed → 重新生成一批全新数据
+// 更换 seed → 重新生成一批全新数据（恢复默认 200 条）
 const regenerate = () => {
   seed.value += 1;
+  totalOverride.value = null;
+  loadFirstPage();
+};
+
+// —— 极小数据集边界测试 ——
+// total=3：首屏仅 3 条且服务端无更多数据 → 应直接显示「没有更多评论了」
+const loadTinyDataset = () => {
+  totalOverride.value = 3;
+  loadFirstPage();
+};
+
+// total=15：首页 10 条(hasMore=true)，触底加载末页 5 条后显示「没有更多评论了」
+const loadTwoPageDataset = () => {
+  totalOverride.value = 15;
   loadFirstPage();
 };
 
@@ -165,6 +179,16 @@ onMounted(loadFirstPage);
 
           <el-divider direction="vertical" />
 
+          <span class="comment-simple-demo__label">边界测试</span>
+          <el-button size="small" type="info" @click="loadTinyDataset">
+            仅 3 条（不足一屏）
+          </el-button>
+          <el-button size="small" type="info" @click="loadTwoPageDataset">
+            共 15 条（末页不满）
+          </el-button>
+
+          <el-divider direction="vertical" />
+
           <span class="comment-simple-demo__label">操作后自动服务端刷新</span>
           <el-switch v-model="autoRefreshAfterAction" />
           <span class="comment-simple-demo__tip">
@@ -182,8 +206,8 @@ onMounted(loadFirstPage);
         <b>{{ eventCount.reply }}</b> · 点赞 <b>{{ eventCount.like }}</b> · 删除
         <b>{{ eventCount.delete }}</b>
         <span class="comment-simple-demo__tip">
-          （远程分页：已加载 {{ comments.length }} 条 · 第 {{ pageNum }} 页 ·
-          hasMore = {{ remoteHasMore }}）
+          （远程分页：已加载 {{ comments.length }} / 服务端共 {{ serverTotal }} 条 ·
+          第 {{ pageNum }} 页 · hasMore = {{ remoteHasMore }}）
         </span>
       </div>
 
@@ -198,6 +222,10 @@ onMounted(loadFirstPage);
           <li>点赞为乐观翻转（计数 +1/-1，点赞按钮高亮），删除需确认（本人/管理员可删）</li>
           <li>切换「最热/最新」排序，楼层号保持固定</li>
           <li>loading 仅底部状态文本，无全屏遮罩</li>
+          <li>
+            <b>数据量边界</b>：点「仅 3 条」→ 3 条数据且无更多时直接显示「没有更多评论了」，
+            不卡在「加载中」；点「共 15 条」→ 触底加载末页 5 条后正常结束
+          </li>
         </ol>
       </div>
 
