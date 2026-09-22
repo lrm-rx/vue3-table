@@ -143,21 +143,45 @@ const loadMore = () => {
   displayCount.value += props.pageSize;
 };
 
-// —— 非虚拟模式哨兵触底检测（IntersectionObserver）——
+// —— 非虚拟模式哨兵触底检测（IntersectionObserver + 触底锁/武装状态机）——
 // 页面级滚动时哨兵进入视口（含 rootMargin 提前量）即触发 load-more；
 // 远程模式始终启用，本地模式仅在 autoLoadMore 开启时启用（否则用「点击加载更多」按钮）
+//
+// 触底锁：哨兵进入阈值区触发一次后立即解除武装，阻断「内容 append + Chromium
+// 滚动锚定」产生的重复相交导致的级联请求。重新武装有两条路径：
+//  1. 位置武装：哨兵先离开阈值区（IO 报告不再相交）
+//  2. 意图武装：本次加载结束后发生新的 wheel(向下)/键盘下翻/触摸手势
+// 滚动锚定只产生 scroll 事件、不产生输入手势，因此级联被阻断，真实持续滚动不受影响。
 const sentinelRef = ref(null);
 let io = null;
+// 触底锁：触发一次 loadMore 后解除，重新武装后才允许下一次
+let bottomArmed = true;
+// 哨兵当前是否处于阈值区（由 IO 回调维护）
+let sentinelIntersecting = false;
+// 最近一次加载结束时间戳：区分「发起本次加载的旧手势」与「加载结束后的新手势」
+let lastLoadEndTime = 0;
+
 const setupSentinel = () => {
   if (io) io.disconnect();
+  // 模式重建后重置武装（新 IO 的初始回调会按哨兵当前位置决定是否触发）
+  bottomArmed = true;
   // 虚拟滚动由列表自身检测触底；本地模式未开启自动加载时保留按钮交互
   if (props.virtualScroll) return;
   if (!props.remote && !props.autoLoadMore) return;
   if (!sentinelRef.value) return;
   io = new IntersectionObserver(
     (entries) => {
-      // hasMore 兜底：本地切片耗尽后哨兵不再扩容
-      if (entries.some((e) => e.isIntersecting) && hasMore.value) loadMore();
+      const entry = entries[entries.length - 1];
+      sentinelIntersecting = entry.isIntersecting;
+      // 路径1（位置武装）：哨兵离开阈值区 → 重新武装
+      if (!entry.isIntersecting) {
+        bottomArmed = true;
+        return;
+      }
+      // 哨兵在阈值区但锁未解除（append + 滚动锚定的重复相交）：忽略，防级联
+      if (!bottomArmed || !hasMore.value) return;
+      bottomArmed = false;
+      loadMore();
     },
     { rootMargin: `${props.bottomDistance}px 0px` },
   );
@@ -172,16 +196,56 @@ watch(
   },
 );
 
-// remoteHasMore 变 false 时不再需要观察哨兵
+// loading 结束时记录时间戳：意图武装只接受加载结束之后的新手势
+watch(
+  () => props.loading,
+  (isLoading) => {
+    if (!isLoading) lastLoadEndTime = Date.now();
+  },
+);
+
+// remoteHasMore 变 false 时断开观察；重新变回 true 时重置武装并恢复观察
 watch(
   () => props.remoteHasMore,
-  (hasMore) => {
-    if (io) {
-      if (hasMore && sentinelRef.value) io.observe(sentinelRef.value);
-      else io.disconnect();
+  (hasMoreVal) => {
+    if (!io) return;
+    if (hasMoreVal && sentinelRef.value) {
+      bottomArmed = true;
+      io.observe(sentinelRef.value);
+    } else if (!hasMoreVal) {
+      io.disconnect();
     }
   },
 );
+
+// —— 路径2（意图武装）——
+// 武装后若哨兵仍在阈值区，立即补触发，避免滚动锚定把位置钉在新底部时用户被卡住
+const armByIntent = () => {
+  if (bottomArmed) return;
+  // 意图武装仅用于远程异步路径：本地自动扩容是同步的，位置武装已足够，
+  // 避免持续滚轮/惯性滚动在内容尚未滚过时一次扩容多页
+  if (!props.remote) return;
+  // 加载中不武装：排除发起本次加载的旧手势残留
+  if (props.loading) return;
+  if (Date.now() < lastLoadEndTime + 50) return;
+  bottomArmed = true;
+  requestAnimationFrame(() => {
+    if (bottomArmed && sentinelIntersecting && hasMore.value) {
+      bottomArmed = false;
+      loadMore();
+    }
+  });
+};
+
+const onWheelIntent = (e) => {
+  if (e.deltaY > 0) armByIntent();
+};
+
+const onKeyIntent = (e) => {
+  if (["ArrowDown", "PageDown", " "].includes(e.key)) armByIntent();
+};
+
+const onTouchIntent = () => armByIntent();
 
 // 任意变更后向父组件同步列表
 const syncComments = () => {
@@ -270,6 +334,10 @@ onMounted(() => {
   if (!props.virtualScroll && (props.remote || props.autoLoadMore)) {
     requestAnimationFrame(setupSentinel);
   }
+  // 意图武装监听（挂 window：手势在评论区任意位置发生即可，键盘事件容器未必持有焦点）
+  window.addEventListener("wheel", onWheelIntent, { passive: true });
+  window.addEventListener("touchmove", onTouchIntent, { passive: true });
+  window.addEventListener("keydown", onKeyIntent);
 });
 
 onBeforeUnmount(() => {
@@ -277,6 +345,9 @@ onBeforeUnmount(() => {
     io.disconnect();
     io = null;
   }
+  window.removeEventListener("wheel", onWheelIntent);
+  window.removeEventListener("touchmove", onTouchIntent);
+  window.removeEventListener("keydown", onKeyIntent);
 });
 </script>
 
