@@ -9,6 +9,8 @@ import zhCn from 'element-plus/dist/locale/zh-cn'
 
 // vxe-pc-ui 与 vxe-table 按需注册
 import { setupVxeUI } from './plugins/vxe-ui'
+// 路由
+import router from './router'
 
 const app = createApp(App)
 
@@ -18,6 +20,7 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 }
 
 app.use(ElementPlus, { locale: zhCn })
+app.use(router)
 
 // 注册 vxe-pc-ui 与 vxe-table 所需组件（按需）
 setupVxeUI(app)
