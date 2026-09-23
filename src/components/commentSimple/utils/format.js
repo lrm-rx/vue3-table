@@ -6,6 +6,7 @@
  * 远程模式下楼层通常由后端下发，assignFloors 仅在缺失时兜底补排。
  */
 import dayjs from "dayjs";
+import { nanoid } from "nanoid";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -73,7 +74,17 @@ export const sortRootComments = (comments, sort) =>
   });
 
 /**
- * 生成前端临时 id（后端落库后应以服务端 id 替换）
+ * 前端临时 id 前缀：标记「尚未被服务端确认」的乐观插入项。
+ * 创建接口成功后 settle(serverItem) 会用服务端真实 id 覆盖；在此之前，
+ * 点赞/删除等写操作对临时 id 只做本地处理、不发请求（命中不到服务端）。
  */
-export const createId = (prefix = "c") =>
-  `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+export const TEMP_ID_PREFIX = "tmp_";
+
+/**
+ * 生成前端临时 id：tmp_ + 类型前缀 + nanoid。
+ * 后端落库后 settle(serverItem) 会把它替换为服务端真实 id。
+ */
+export const createId = (type = "c") => `${TEMP_ID_PREFIX}${type}_${nanoid()}`;
+
+/** 判断是否为前端临时 id（未确认） */
+export const isTempId = (id) => typeof id === "string" && id.startsWith(TEMP_ID_PREFIX);

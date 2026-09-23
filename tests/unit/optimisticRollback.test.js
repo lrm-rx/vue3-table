@@ -210,5 +210,147 @@ for (const [name, Component, extraProps] of [
       expect(() => wrapper.vm.rollback("op_not_exist")).not.toThrow();
       expect(likeCountOf(wrapper)).toBe(countBefore);
     });
+
+    describe("在途项（临时 id）行为", () => {
+      // 发布一条评论但不 settle，得到一条 tmp_ 前缀的在途评论
+      const publishPending = async (wrapper) => {
+        const collapse = wrapper.find(".bili-comment-editor__collapse");
+        if (collapse.exists()) await collapse.trigger("click");
+        await wrapper.find("textarea").setValue("在途评论");
+        const publish = wrapper
+          .findAll("button")
+          .find((b) => b.text().includes("发布"));
+        await publish.trigger("click");
+        await flushPromises();
+        return wrapper.emitted("send")[0][0].opId;
+      };
+      // 定位在途评论所在行（点赞按钮带 disabled 的那条）
+      const pendingRowLikeBtn = (wrapper) =>
+        wrapper
+          .findAll(".bili-comment-item__like")
+          .find((b) => b.attributes("disabled") !== undefined);
+      const pendingRowDeleteBtn = (wrapper) =>
+        wrapper
+          .findAll(".bili-comment-item__delete")
+          .find((b) => b.attributes("disabled") !== undefined);
+      const pendingLikeCount = (wrapper) => {
+        const m = pendingRowLikeBtn(wrapper)?.text().match(/\((\d+)\)/);
+        return m ? Number(m[1]) : null;
+      };
+
+      it("在途评论的点赞/删除按钮禁用（不发请求）", async () => {
+        const wrapper = mountComp();
+        await publishPending(wrapper);
+        const likeBtn = pendingRowLikeBtn(wrapper);
+        expect(likeBtn).toBeDefined();
+        expect(likeBtn.attributes("disabled")).toBeDefined();
+        // 强制触发点击也不应 emit like（组件内对临时 id 本地处理/拦截）
+        await likeBtn.trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("like")).toBeFalsy();
+        // 删除按钮存在但禁用（本人评论）
+        const deleteBtn = pendingRowDeleteBtn(wrapper);
+        if (deleteBtn) expect(deleteBtn.attributes("disabled")).toBeDefined();
+      });
+
+      it("settle 回填真实 id 后，按钮恢复可用且点赞会 emit", async () => {
+        const wrapper = mountComp();
+        const opId = await publishPending(wrapper);
+        expect(pendingRowLikeBtn(wrapper)).toBeDefined();
+
+        // 回填服务端真实 id（非 tmp_ 前缀）
+        wrapper.vm.settle(opId, { id: "svc_real_1", floor: 999 });
+        await flushPromises();
+        // 不再存在禁用按钮
+        expect(pendingRowLikeBtn(wrapper)).toBeUndefined();
+
+        // 真实 id（第一条 c1）：点赞会 emit like 事件
+        const firstLike = wrapper.find(".bili-comment-item__like");
+        await firstLike.trigger("click");
+        await flushPromises();
+        const likeEvents = wrapper.emitted("like");
+        expect(likeEvents).toHaveLength(1);
+        expect(likeEvents[0][0].opId).toEqual(expect.any(String));
+      });
+
+      it("在途评论 id 带 tmp_ 前缀；settle 后被真实 id 替换", async () => {
+        const wrapper = mountComp();
+        const opId = await publishPending(wrapper);
+        // 在途：同步给父组件的列表中应存在一条 tmp_ 前缀的评论
+        const inFlightList = wrapper.emitted("update:comments").at(-1)[0];
+        const inFlight = inFlightList.find((c) => String(c.id).startsWith("tmp_"));
+        expect(inFlight).toBeTruthy();
+
+        wrapper.vm.settle(opId, { id: "svc_real_2", floor: 5 });
+        await flushPromises();
+        const settledList = wrapper.emitted("update:comments").at(-1)[0];
+        expect(settledList.some((c) => c.id === "svc_real_2")).toBe(true);
+        expect(settledList.some((c) => String(c.id).startsWith("tmp_"))).toBe(false);
+      });
+
+      it("在途点赞：按钮禁用，点击不会触发任何 like 事件（不发请求）", async () => {
+        const wrapper = mountComp();
+        await publishPending(wrapper);
+        const likeBtn = pendingRowLikeBtn(wrapper);
+        expect(likeBtn.attributes("disabled")).toBeDefined();
+        expect(pendingLikeCount(wrapper)).toBe(0);
+
+        // disabled 按钮在 jsdom 中 click 不触发 handler（与真实浏览器一致）
+        await likeBtn.trigger("click");
+        await flushPromises();
+        // 计数不变、且未 emit：证明在途点赞不会对服务端发请求
+        expect(pendingLikeCount(wrapper)).toBe(0);
+        expect(wrapper.emitted("like")).toBeFalsy();
+      });
+
+      it("在途删除：按钮禁用，点击不会触发删除（本地不丢、不弹确认框、不发请求）", async () => {
+        confirmFn.mockReset();
+        const wrapper = mountComp();
+        await publishPending(wrapper);
+        expect(wrapper.text()).toContain("在途评论");
+
+        const deleteBtn = pendingRowDeleteBtn(wrapper);
+        expect(deleteBtn.attributes("disabled")).toBeDefined();
+        await deleteBtn.trigger("click"); // disabled，handler 不执行
+        await flushPromises();
+        // 在途评论仍在、未弹确认框、未 emit delete
+        expect(wrapper.text()).toContain("在途评论");
+        expect(confirmFn).not.toHaveBeenCalled();
+        expect(wrapper.emitted("delete")).toBeFalsy();
+      });
+
+      it("在途评论 rollback 移除后，按钮与数据均清理干净", async () => {
+        const wrapper = mountComp();
+        const opId = await publishPending(wrapper);
+        expect(wrapper.text()).toContain("在途评论");
+
+        wrapper.vm.rollback(opId);
+        await flushPromises();
+        expect(wrapper.text()).not.toContain("在途评论");
+        // 回滚后列表回到初始（无在途项），不存在禁用按钮
+        expect(pendingRowLikeBtn(wrapper)).toBeUndefined();
+      });
+
+      it("已确认（真实 id）记录的点赞/删除正常走 emit + 回滚链路，不受临时逻辑影响", async () => {
+        confirmFn.mockResolvedValueOnce("confirm");
+        const wrapper = mountComp(); // 初始 c1（真实 id）可删
+        expect(likeCountOf(wrapper)).toBe(3);
+
+        // 真实 id 点赞：emit + 可回滚
+        await wrapper.find(".bili-comment-item__like").trigger("click");
+        await flushPromises();
+        expect(likeCountOf(wrapper)).toBe(4);
+        const { opId } = wrapper.emitted("like")[0][0];
+        wrapper.vm.rollback(opId);
+        await flushPromises();
+        expect(likeCountOf(wrapper)).toBe(3);
+
+        // 真实 id 删除：弹确认框 + emit
+        await wrapper.find(".bili-comment-item__delete").trigger("click");
+        await flushPromises();
+        expect(wrapper.emitted("delete")).toHaveLength(1);
+        expect(confirmFn).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 }

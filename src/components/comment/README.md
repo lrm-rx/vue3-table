@@ -218,14 +218,16 @@ const onDelete = ({ comment }) => {};
 
 所有写操作的 payload 均携带 `opId`（组件内部为该次操作保存了快照）：请求成功后调用暴露的 `settle(opId[, serverItem])` 丢弃快照；创建类操作（send/reply）应把服务端返回的真实记录作为 `serverItem` 传入，组件会用它回填本地乐观项的 id、楼层等字段。失败则调用 `rollback(opId)` 按快照精确还原本地数据。
 
+> **临时 id 与在途行为**：新发布的评论/回复使用 `tmp_` 前缀的临时 id（由 `nanoid` 生成），表示「尚未被服务端确认」。在途期间：① 该条的点赞/删除按钮自动禁用；② 即使触发也只做本地处理、**不会 emit `like`/`delete`**（避免对服务端尚不存在的记录发请求）。`settle(serverItem)` 回填真实 id 后，前缀消失，按钮恢复可用，后续写操作正常上抛。
+
 | 事件 | 参数 | 说明 |
 | --- | --- | --- |
 | `update:comments` | 新列表 | 任意本地变更后同步 |
 | `update:sort` | `'hot' \| 'latest'` | 切换排序 |
-| `send` | `{ content, opId }` | 发表一级评论（本地已插入） |
-| `reply` | `{ commentId, content, replyTo, opId }` | 发表回复（本地已插入） |
-| `like` | `{ comment, reply, liked, opId }` | 点赞/取消（本地已翻转，失败可回滚） |
-| `delete` | `{ comment, reply, opId }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除 |
+| `send` | `{ content, opId }` | 发表一级评论（本地已插入，临时 id） |
+| `reply` | `{ commentId, content, replyTo, opId }` | 发表回复（本地已插入，临时 id） |
+| `like` | `{ comment, reply, liked, opId }` | 点赞/取消（仅对已确认记录 emit；在途临时 id 仅本地翻转、不发请求） |
+| `delete` | `{ comment, reply, opId }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除（仅对已确认记录 emit；在途临时 id 仅本地移除） |
 | `load-more` | — | 远程模式触底时触发（虚拟模式由 VirtualList `isNearBottom` 检测，非虚拟模式由 IntersectionObserver 哨兵检测）；父组件取数后 append 到 `comments` 并更新 `remoteHasMore` |
 
 ### Exposed Methods（通过模板 ref 调用）

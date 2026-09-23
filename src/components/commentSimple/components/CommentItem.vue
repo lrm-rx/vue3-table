@@ -10,7 +10,7 @@ import { ElMessageBox } from "element-plus";
 import BaseAvatar from "../base/BaseAvatar.vue";
 import CommentEditor from "./CommentEditor.vue";
 import ReplyList from "./ReplyList.vue";
-import { formatCount, floorLabel, formatRelativeTime, hasFloor } from "../utils/format.js";
+import { formatCount, floorLabel, formatRelativeTime, hasFloor, isTempId } from "../utils/format.js";
 
 const props = defineProps({
   comment: { type: Object, required: true },
@@ -33,6 +33,8 @@ const replyAnchorId = ref(null);
 const isAdmin = computed(() => props.currentUser?.role === "admin");
 const isOwn = computed(() => props.comment.author?.id === props.currentUser?.id);
 const canDelete = computed(() => isOwn.value || isAdmin.value);
+// 未确认（临时 id）的评论：创建请求在途，禁用点赞/删除
+const pending = computed(() => isTempId(props.comment?.id));
 
 const replyCount = computed(() => props.comment.replies?.length ?? 0);
 
@@ -136,6 +138,7 @@ const onToggleExpand = () => {
             size="small"
             class="bili-comment-item__action bili-comment-item__like"
             :type="comment.liked ? 'primary' : ''"
+            :disabled="pending"
             @click="onLike"
           >
             点赞({{ formatCount(comment.likeCount) }})
@@ -153,6 +156,7 @@ const onToggleExpand = () => {
             text
             size="small"
             class="bili-comment-item__action bili-comment-item__delete"
+            :disabled="pending"
             @click="onDelete"
           >
             删除

@@ -13,7 +13,7 @@ import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
 import VirtualList from "./components/VirtualList.vue";
-import { createId, sortRootComments } from "./utils/format.js";
+import { createId, isTempId, sortRootComments } from "./utils/format.js";
 
 const props = defineProps({
   // 评论列表（v-model:comments），由业务侧传入
@@ -380,6 +380,13 @@ const handleReply = ({ commentId, content, replyTo }) => {
 // —— 点赞 / 取消（乐观翻转 + 失败可回滚）——
 const handleLike = ({ comment, reply }) => {
   const target = reply || comment;
+  // 未确认（临时 id）的记录：服务端尚无此记录，只做本地翻转、不发请求
+  if (isTempId(target.id)) {
+    target.liked = !target.liked;
+    target.likeCount += target.liked ? 1 : -1;
+    syncComments();
+    return;
+  }
   const opId = nextOpId();
   // 快照：目标旧值（rollback 直接恢复字段）
   pendingOps.set(opId, {
@@ -396,12 +403,24 @@ const handleLike = ({ comment, reply }) => {
 
 // —— 删除评论 / 回复（确认弹窗在 CommentItem 内；reply 为 null 表示删一级评论）——
 const handleDelete = ({ comment, reply }) => {
+  const target = reply || comment;
+  // 未确认（临时 id）的记录：服务端尚无此记录，只本地移除、不发请求、无需回滚
+  if (isTempId(target.id)) {
+    if (reply) {
+      const parent = innerComments.value.find((c) => c.id === comment.id);
+      if (parent) parent.replies = (parent.replies ?? []).filter((r) => r.id !== reply.id);
+    } else {
+      innerComments.value = innerComments.value.filter((c) => c.id !== comment.id);
+    }
+    syncComments();
+    return;
+  }
   const opId = nextOpId();
   if (reply) {
     // 删除楼中楼回复：从所属一级评论的 replies 中移除
-    const target = innerComments.value.find((c) => c.id === comment.id);
-    if (!target) return;
-    const replies = target.replies ?? [];
+    const parent = innerComments.value.find((c) => c.id === comment.id);
+    if (!parent) return;
+    const replies = parent.replies ?? [];
     const index = replies.findIndex((r) => r.id === reply.id);
     pendingOps.set(opId, {
       type: "delete-reply",
@@ -409,7 +428,7 @@ const handleDelete = ({ comment, reply }) => {
       index,
       item: reply,
     });
-    target.replies = replies.filter((r) => r.id !== reply.id);
+    parent.replies = replies.filter((r) => r.id !== reply.id);
     innerComments.value = [...innerComments.value];
   } else {
     // 删除一级评论：整条移除（楼层号不重新编号）

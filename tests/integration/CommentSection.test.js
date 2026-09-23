@@ -440,7 +440,7 @@ describe("CommentSection 虚拟滚动模式", () => {
     expect(firstRow.find(".bili-comment-item__floor").text()).toBe("第101楼");
   });
 
-  it("虚拟模式下发布并删除自己的一级评论：行移除且 delete 事件上抛", async () => {
+  it("虚拟模式下发布并删除自己的一级评论：回填真实记录后删除，行移除且 delete 事件上抛", async () => {
     const wrapper = mount(CommentSection, {
       props: {
         comments: makeMany(100),
@@ -459,8 +459,22 @@ describe("CommentSection 虚拟滚动模式", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(wrapper.text()).toContain("待删除的回归评论");
 
+    // 新评论为临时 id（在途）：删除按钮应禁用，不能删除
+    const firstRow = () => wrapper.findAll(".biz-virtual-list__item")[0];
+    expect(
+      firstRow().find(".bili-comment-item__delete").attributes("disabled"),
+    ).toBeDefined();
+
+    // 模拟创建成功：settle 回填服务端真实 id（非 tmp_ 前缀）→ 按钮恢复可用
+    const { opId } = wrapper.emitted("send")[0][0];
+    wrapper.vm.settle(opId, { id: "svc_root_new", floor: 101 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      firstRow().find(".bili-comment-item__delete").attributes("disabled"),
+    ).toBeUndefined();
+
     // 点第一条评论的「删除」→ 确认弹窗
-    await wrapper.find(".bili-comment-item__delete").trigger("click");
+    await firstRow().find(".bili-comment-item__delete").trigger("click");
     await confirmMessageBox();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -808,5 +822,115 @@ describe("CommentSection 吸顶头部", () => {
     MockIO.trigger([{ isIntersecting: true, boundingClientRect: { top: 0 } }]);
     await flushPromises();
     expect(classes()).not.toContain("is-stuck");
+  });
+});
+
+describe("CommentSection 楼中楼展开/收起与回复删除", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+  const makeManyReplies = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `r${i + 1}`,
+      author: { id: `ru${i + 1}`, name: `回复者${i + 1}`, avatar: "" },
+      content: `回复内容${i + 1}`,
+      createTime: Date.now() - i * 1000,
+      likeCount: 0,
+      liked: false,
+      replyTo: null,
+    }));
+
+  it("回复数超过预览数：展示「查看全部」，点击展开全部，再点收起", async () => {
+    const comments = [
+      {
+        id: "c1",
+        floor: 1,
+        author: { id: "u1", name: "楼主", avatar: "" },
+        content: "主评论",
+        createTime: Date.now(),
+        likeCount: 0,
+        liked: false,
+        replies: makeManyReplies(5), // 默认预览 2 条
+      },
+    ];
+    const wrapper = mountSection({ comments });
+    // 默认只预览 2 条
+    expect(wrapper.text()).toContain("回复内容1");
+    expect(wrapper.text()).toContain("回复内容2");
+    expect(wrapper.text()).not.toContain("回复内容5");
+    expect(wrapper.text()).toContain("查看全部 5 条回复");
+
+    // 点击展开
+    await wrapper.find(".bili-reply-list__toggle").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("回复内容5");
+    expect(wrapper.text()).toContain("收起回复");
+
+    // 点击收起
+    await wrapper.find(".bili-reply-list__toggle").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("回复内容5");
+    expect(wrapper.text()).toContain("查看全部 5 条回复");
+  });
+
+  it("回复数不超过预览数：不展示展开切换按钮", () => {
+    const comments = [
+      {
+        id: "c1",
+        floor: 1,
+        author: { id: "u1", name: "楼主", avatar: "" },
+        content: "主评论",
+        createTime: Date.now(),
+        likeCount: 0,
+        liked: false,
+        replies: makeManyReplies(2),
+      },
+    ];
+    const wrapper = mountSection({ comments });
+    expect(wrapper.find(".bili-reply-list__toggle").exists()).toBe(false);
+  });
+
+  it("管理员可删除楼中楼他人回复：确认后移除并 emit delete 携带 reply", async () => {
+    const comments = [
+      {
+        id: "c1",
+        floor: 1,
+        author: { id: "u1", name: "楼主", avatar: "" },
+        content: "主评论",
+        createTime: Date.now(),
+        likeCount: 0,
+        liked: false,
+        replies: makeManyReplies(3),
+      },
+    ];
+    const wrapper = mountSection({
+      comments,
+      currentUser: { id: "admin", name: "管理员", avatar: "", role: "admin" },
+    });
+    expect(wrapper.text()).toContain("回复内容1");
+    await wrapper.find(".bili-reply-item__delete").trigger("click");
+    await confirmMessageBox();
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("回复内容1");
+    const events = wrapper.emitted("delete");
+    expect(events).toHaveLength(1);
+    expect(events[0][0].reply).toBeTruthy();
+    expect(events[0][0].reply.id).toBe("r1");
+  });
+});
+
+describe("CommentSection 输入框 maxlength 与快捷键", () => {
+  it("maxlength 透传到输入框", async () => {
+    const wrapper = mountSection({ maxlength: 88 });
+    await wrapper.find(".bili-comment-editor__collapse").trigger("click");
+    const ta = wrapper.find("textarea");
+    expect(Number(ta.attributes("maxlength"))).toBe(88);
+  });
+
+  it("空内容时发布按钮禁用", async () => {
+    const wrapper = mountSection();
+    await wrapper.find(".bili-comment-editor__collapse").trigger("click");
+    const publish = findButton(wrapper, "发布");
+    expect(publish.attributes("disabled")).toBeDefined();
   });
 });

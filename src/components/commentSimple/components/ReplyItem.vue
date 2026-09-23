@@ -8,7 +8,7 @@
  */
 import { computed } from "vue";
 import BaseAvatar from "../base/BaseAvatar.vue";
-import { formatCount, formatRelativeTime } from "../utils/format.js";
+import { formatCount, formatRelativeTime, isTempId } from "../utils/format.js";
 
 const props = defineProps({
   reply: { type: Object, required: true },
@@ -22,6 +22,8 @@ const canDelete = computed(
     props.reply.author?.id === props.currentUser?.id ||
     props.currentUser?.role === "admin",
 );
+// 未确认（临时 id）的回复：创建请求在途，禁用点赞/删除
+const pending = computed(() => isTempId(props.reply?.id));
 
 const onLike = () => {
   emit("like", props.reply);
@@ -61,6 +63,7 @@ const onDelete = () => {
           size="small"
           class="bili-reply-item__action bili-reply-item__like"
           :type="reply.liked ? 'primary' : ''"
+          :disabled="pending"
           @click="onLike"
         >
           点赞({{ formatCount(reply.likeCount) }})
@@ -73,6 +76,7 @@ const onDelete = () => {
           text
           size="small"
           class="bili-reply-item__action bili-reply-item__delete"
+          :disabled="pending"
           @click="onDelete"
         >
           删除

@@ -5,6 +5,7 @@ import {
   formatCount,
   formatRelativeTime,
   hasFloor,
+  isTempId,
   sortRootComments,
 } from "../../src/components/comment/utils/format.js";
 
@@ -119,11 +120,20 @@ describe("sortRootComments 排序", () => {
   });
 });
 
-describe("createId", () => {
-  it("生成的 id 带前缀且唯一", () => {
+describe("createId / isTempId 临时 id", () => {
+  it("生成的临时 id 带 tmp_ 前缀、含类型段且唯一", () => {
     const a = createId("root");
-    const b = createId("root");
-    expect(a.startsWith("root_")).toBe(true);
+    const b = createId("reply");
+    expect(a.startsWith("tmp_root_")).toBe(true);
+    expect(b.startsWith("tmp_reply_")).toBe(true);
     expect(a).not.toBe(b);
+  });
+
+  it("isTempId：仅 tmp_ 前缀判定为临时（未确认），服务端 id 为 false", () => {
+    expect(isTempId(createId("root"))).toBe(true);
+    expect(isTempId("svc_root_1")).toBe(false);
+    expect(isTempId("mock_root_5")).toBe(false);
+    expect(isTempId(undefined)).toBe(false);
+    expect(isTempId(123)).toBe(false);
   });
 });
