@@ -19,7 +19,7 @@ export const fileToBase64 = (file) => {
  */
 export const isImageFile = (file) => {
   if (!file) return false
-  if (file.type && file.type.startsWith('image/')) return true
+  if (file.type?.startsWith('image/')) return true
   // 兜底：根据扩展名判断
   const name = (file.name || '').toLowerCase()
   return /\.(png|jpe?g|gif|bmp|webp|svg|ico)$/.test(name)
