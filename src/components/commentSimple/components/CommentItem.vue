@@ -10,7 +10,7 @@ import { ElMessageBox } from "element-plus";
 import BaseAvatar from "../base/BaseAvatar.vue";
 import CommentEditor from "./CommentEditor.vue";
 import ReplyList from "./ReplyList.vue";
-import { formatCount, floorLabel, formatRelativeTime } from "../utils/format.js";
+import { formatCount, floorLabel, formatRelativeTime, hasFloor } from "../utils/format.js";
 
 const props = defineProps({
   comment: { type: Object, required: true },
@@ -121,7 +121,7 @@ const onToggleExpand = () => {
           <span class="bili-comment-item__name">{{ comment.author?.name }}</span>
           <span v-if="comment.isUp" class="bili-comment-item__up">UP主</span>
         </div>
-        <span v-if="showFloor" class="bili-comment-item__floor">
+        <span v-if="showFloor && hasFloor(comment)" class="bili-comment-item__floor">
           {{ floorLabel(comment.floor) }}
         </span>
       </div>

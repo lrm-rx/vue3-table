@@ -129,12 +129,17 @@ const onModeChange = () => {
   }
 };
 
-// —— 写操作事件：组件已乐观更新，请求成功 settle、失败 rollback ——
+// —— 写操作事件：组件已乐观更新，请求成功 settle（回填服务端真实 id/floor）、失败 rollback ——
 const onSend = async ({ content, opId }) => {
   bump("send");
   try {
-    await sendCommentApi({ content, simulateFail: simulateFail.value });
-    commentRef.value?.settle(opId);
+    // 携带 author 供 mock 生成服务端记录；返回值为带真实 id / floor 的新评论
+    const data = await sendCommentApi({
+      content,
+      author: currentUser,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId, data);
   } catch {
     commentRef.value?.rollback(opId);
     ElMessage.info("发布失败，已还原本地内容");
@@ -144,13 +149,14 @@ const onSend = async ({ content, opId }) => {
 const onReply = async ({ commentId, content, replyTo, opId }) => {
   bump("reply");
   try {
-    await replyCommentApi({
+    const data = await replyCommentApi({
       commentId,
       content,
       replyTo,
+      author: currentUser,
       simulateFail: simulateFail.value,
     });
-    commentRef.value?.settle(opId);
+    commentRef.value?.settle(opId, data);
   } catch {
     commentRef.value?.rollback(opId);
     ElMessage.info("回复失败，已还原本地内容");

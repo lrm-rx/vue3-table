@@ -226,6 +226,10 @@ const getDataset = (count, seed) => {
   return datasetCache.get(key)
 }
 
+// 写接口发号计数器（模拟服务端自增 id / 楼层），模块级累计
+let sendSeq = 0
+let replySeq = 0
+
 export default [
   // 全量拉取评论（虚拟滚动在客户端承载全量数据）
   // query: count=500 数据条数；seed 变化时重新生成一批
@@ -281,13 +285,15 @@ export default [
   // body.action: send / reply / like / delete
   // body.simulateFail=true 时返回业务错误 code:500，
   // 业务侧 catch 后调用组件 rollback(opId) 还原本地乐观态
-  // timeout 600ms：让「请求在途」与回滚效果肉眼可辨（POST /mock-api/comment/write）
+  // 成功时：send / reply 返回带「服务端真实 id 与楼层」的新对象，
+  //         业务侧通过 settle(opId, data) 回填到本地乐观项（演示 id / floor 对账）
+  // timeout 600ms：让「请求在途」与回滚效果肉眼可辨
   {
     url: '/mock-api/comment/write',
     method: 'post',
     timeout: 600,
     response: ({ body }) => {
-      const { action, simulateFail } = body || {}
+      const { action, simulateFail, content, author } = body || {}
       const failMessages = {
         send: '发布失败：服务端异常（模拟）',
         reply: '回复失败：服务端异常（模拟）',
@@ -300,11 +306,40 @@ export default [
           message: failMessages[action] || '操作失败（模拟）',
         }
       }
-      return {
-        code: 200,
-        message: 'success',
-        data: { action, ok: true },
+      // 模拟服务端发号：真实 id + 楼层（按请求序号递增，跨数据集独立）
+      if (action === 'send') {
+        sendSeq += 1
+        return {
+          code: 200,
+          message: 'success',
+          data: {
+            id: `svc_root_${sendSeq}`,
+            floor: sendSeq + 999, // 从 1000 楼开始，明显区别于 mock 存量的 1~200 楼
+            content,
+            author,
+            createTime: Date.now(),
+            likeCount: 0,
+            liked: false,
+            replies: [],
+          },
+        }
       }
+      if (action === 'reply') {
+        replySeq += 1
+        return {
+          code: 200,
+          message: 'success',
+          data: {
+            id: `svc_reply_${replySeq}`,
+            content,
+            author,
+            createTime: Date.now(),
+            likeCount: 0,
+            liked: false,
+          },
+        }
+      }
+      return { code: 200, message: 'success', data: { action, ok: true } }
     },
   },
 ]

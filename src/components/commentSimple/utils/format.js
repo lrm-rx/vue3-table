@@ -45,49 +45,15 @@ export const formatCount = (count) => {
  */
 export const floorLabel = (floor) => `第${floor}楼`;
 
-/**
- * 为缺少 floor 的一级评论补排楼层：
- * 已带 floor 的保持不变；缺失的按 createTime 升序从「当前最大楼层 + 1」开始补号。
- * 删除评论后不重新编号（楼层是评论的固定属性）。
- */
-export const assignFloors = (comments) => {
-  const list = [...(comments || [])];
-  let maxFloor = list.reduce(
-    (m, c) => (Number(c.floor) > m ? Number(c.floor) : m),
-    0,
-  );
-  const missing = list.filter(
-    (c) => !Number.isFinite(Number(c.floor)) || Number(c.floor) <= 0,
-  );
-  if (missing.length) {
-    const sortedMissing = [...missing].sort(
-      (a, b) => (a.createTime ?? 0) - (b.createTime ?? 0),
-    );
-    const floorMap = new Map();
-    sortedMissing.forEach((c) => {
-      maxFloor += 1;
-      floorMap.set(c, maxFloor);
-    });
-    list.forEach((c) => {
-      if (floorMap.has(c)) c.floor = floorMap.get(c);
-    });
-  }
-  return list;
-};
-
-/**
- * 下一个楼层号：当前最大楼层 + 1（真实场景由后端发号）
- */
-export const getNextFloor = (comments) =>
-  (comments || []).reduce(
-    (m, c) => (Number(c.floor) > m ? Number(c.floor) : m),
-    0,
-  ) + 1;
+// 楼层号由后端生成并随评论数据返回，前端不补排、不取号。
+// 仅在排序与渲染处对 floor 缺失做容错：缺失视为无穷大（排末尾）、不展示「第 n 楼」。
+export const hasFloor = (c) =>
+  Number.isFinite(Number(c?.floor)) && Number(c.floor) > 0;
 
 /**
  * 一级评论排序（返回新数组，不改原数组）
  *  - latest 最新：createTime 倒序
- *  - floor 楼层：floor 升序，楼层相同按 createTime 升序
+ *  - floor 楼层：floor 升序，floor 缺失排末尾，相同按 createTime 升序
  *  - hot 最热（默认）：likeCount 倒序，相同点赞按 createTime 倒序
  */
 export const sortRootComments = (comments, sort) =>
@@ -96,8 +62,9 @@ export const sortRootComments = (comments, sort) =>
       return (b.createTime ?? 0) - (a.createTime ?? 0);
     }
     if (sort === "floor") {
-      const floorDiff = (a.floor ?? 0) - (b.floor ?? 0);
-      if (floorDiff !== 0) return floorDiff;
+      const af = hasFloor(a) ? Number(a.floor) : Infinity;
+      const bf = hasFloor(b) ? Number(b.floor) : Infinity;
+      if (af !== bf) return af - bf;
       return (a.createTime ?? 0) - (b.createTime ?? 0);
     }
     const likeDiff = (b.likeCount ?? 0) - (a.likeCount ?? 0);

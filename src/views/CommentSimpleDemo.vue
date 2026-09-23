@@ -141,12 +141,16 @@ const loadTwoPageDataset = () => {
   loadFirstPage();
 };
 
-// —— 组件事件回调：组件已乐观更新，请求成功 settle、失败 rollback ——
+// —— 组件事件回调：组件已乐观更新，请求成功 settle（回填服务端真实 id/floor）、失败 rollback ——
 const onSend = async ({ content, opId }) => {
   bump("send");
   try {
-    await sendCommentApi({ content, simulateFail: simulateFail.value });
-    commentRef.value?.settle(opId);
+    const data = await sendCommentApi({
+      content,
+      author: currentUser,
+      simulateFail: simulateFail.value,
+    });
+    commentRef.value?.settle(opId, data);
     ElMessage.success(`已发布评论：${content.slice(0, 20)}`);
     if (autoRefreshAfterAction.value) refreshAll();
   } catch {
@@ -158,13 +162,14 @@ const onSend = async ({ content, opId }) => {
 const onReply = async ({ commentId, content, replyTo, opId }) => {
   bump("reply");
   try {
-    await replyCommentApi({
+    const data = await replyCommentApi({
       commentId,
       content,
       replyTo,
+      author: currentUser,
       simulateFail: simulateFail.value,
     });
-    commentRef.value?.settle(opId);
+    commentRef.value?.settle(opId, data);
     const target = replyTo?.name ? `@${replyTo.name}` : "楼主";
     ElMessage.success(`已回复${target}：${content.slice(0, 20)}`);
     if (autoRefreshAfterAction.value) refreshAll();

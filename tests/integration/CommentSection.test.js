@@ -50,6 +50,7 @@ describe("CommentSection 基础渲染", () => {
         content: "你好，评论区",
         createTime: Date.now() - 24 * 60 * 60 * 1000,
         likeCount: 10,
+        floor: 1, // 楼层号由后端随数据返回
         replies: [],
       },
     ];
@@ -66,7 +67,7 @@ describe("CommentSection 基础渲染", () => {
 });
 
 describe("CommentSection 发送一级评论", () => {
-  it("输入内容点击发布：插入列表（第1楼）并抛出 send/update 事件", async () => {
+  it("输入内容点击发布：乐观插入并抛出 send 事件；楼层由 settle 回填后才展示", async () => {
     const wrapper = mountSection();
     // 新版顶部输入框为折叠态，先点击展开
     await wrapper.find(".bili-comment-editor__collapse").trigger("click");
@@ -74,9 +75,9 @@ describe("CommentSection 发送一级评论", () => {
     await findButton(wrapper, "发布").trigger("click");
     await flushPromises();
 
-    // 列表立即展示
+    // 列表立即展示内容，但楼层号由后端生成，settle 回填前不渲染「第 n 楼」元素
     expect(wrapper.text()).toContain("我的第一条评论");
-    expect(wrapper.text()).toContain("第1楼");
+    expect(wrapper.find(".bili-comment-item__floor").exists()).toBe(false);
     // 事件：send(payload 为 { content, opId }) + v-model 同步 + 自动切到「最新」
     expect(wrapper.emitted("send")?.[0]?.[0]).toMatchObject({
       content: "我的第一条评论",
@@ -84,6 +85,12 @@ describe("CommentSection 发送一级评论", () => {
     });
     expect(wrapper.emitted("update:comments")).toBeTruthy();
     expect(wrapper.emitted("update:sort")?.[0]).toEqual(["latest"]);
+
+    // 模拟后端返回带真实楼层的评论 → settle 回填 → 展示「第 n 楼」
+    const { opId } = wrapper.emitted("send")[0][0];
+    wrapper.vm.settle(opId, { floor: 1000 });
+    await flushPromises();
+    expect(wrapper.text()).toContain("第1000楼");
   });
 
   it("纯空格内容不可发布", async () => {
@@ -402,7 +409,7 @@ describe("CommentSection 虚拟滚动模式", () => {
     expect(wrapper.text()).toContain("点击加载更多评论");
   });
 
-  it("虚拟模式下发送评论：新评论立即出现在窗口顶部并取得楼层", async () => {
+  it("虚拟模式下发送评论：新评论立即出现在窗口顶部，settle 回填楼层后展示", async () => {
     const wrapper = mount(CommentSection, {
       props: {
         comments: makeMany(100),
@@ -419,11 +426,17 @@ describe("CommentSection 虚拟滚动模式", () => {
     await findButton(wrapper, "发布").trigger("click");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // 第一条虚拟列表项：CommentItem 显示正文，昵称行右端显示「第101楼」
+    // 第一条虚拟列表项：CommentItem 显示正文；楼层由后端生成，settle 前不展示
     const firstRow = wrapper.findAll(".biz-virtual-list__item")[0];
     expect(firstRow.find(".bili-comment-item").text()).toContain(
       "虚拟滚动下的新评论",
     );
+    expect(firstRow.find(".bili-comment-item__floor").exists()).toBe(false);
+
+    // 模拟后端返回真实楼层 → settle 回填 → 展示「第 n 楼」
+    const { opId } = wrapper.emitted("send")[0][0];
+    wrapper.vm.settle(opId, { floor: 101 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(firstRow.find(".bili-comment-item__floor").text()).toBe("第101楼");
   });
 

@@ -1,11 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  assignFloors,
   createId,
   floorLabel,
   formatCount,
   formatRelativeTime,
-  getNextFloor,
+  hasFloor,
   sortRootComments,
 } from "../../src/components/comment/utils/format.js";
 
@@ -54,44 +53,18 @@ describe("formatRelativeTime 相对时间", () => {
   });
 });
 
-describe("assignFloors 楼层补排", () => {
-  const root = (id, createTime, floor) => ({ id, createTime, floor });
-
-  it("已有楼层保持不变", () => {
-    const list = [root("a", 2000, 5), root("b", 1000, 2)];
-    const result = assignFloors(list);
-    expect(result.find((c) => c.id === "a").floor).toBe(5);
-    expect(result.find((c) => c.id === "b").floor).toBe(2);
+describe("hasFloor 楼层字段判定", () => {
+  it("有效正整数楼层返回 true", () => {
+    expect(hasFloor({ floor: 1 })).toBe(true);
+    expect(hasFloor({ floor: 100 })).toBe(true);
   });
-
-  it("缺失楼层按发帖时间升序，从最大楼层 +1 开始补号", () => {
-    const list = [
-      root("a", 1000, 3),
-      root("b", 3000, undefined),
-      root("c", 2000, undefined),
-    ];
-    const result = assignFloors(list);
-    expect(result.find((c) => c.id === "c").floor).toBe(4);
-    expect(result.find((c) => c.id === "b").floor).toBe(5);
-  });
-
-  it("全部缺失时从 1 楼开始", () => {
-    const list = [root("a", 3000), root("b", 1000), root("c", 2000)];
-    const result = assignFloors(list);
-    expect(result.find((c) => c.id === "b").floor).toBe(1);
-    expect(result.find((c) => c.id === "c").floor).toBe(2);
-    expect(result.find((c) => c.id === "a").floor).toBe(3);
-  });
-
-  it("非数组安全兜底为空数组", () => {
-    expect(assignFloors(null)).toEqual([]);
-  });
-});
-
-describe("getNextFloor 楼层取号", () => {
-  it("返回当前最大楼层 + 1，空列表为 1", () => {
-    expect(getNextFloor([{ floor: 3 }, { floor: 12 }])).toBe(13);
-    expect(getNextFloor([])).toBe(1);
+  it("缺失 / 0 / 非数字 / 负数返回 false（后端尚未返回楼层时不展示「第 n 楼」）", () => {
+    expect(hasFloor({})).toBe(false);
+    expect(hasFloor({ floor: undefined })).toBe(false);
+    expect(hasFloor({ floor: 0 })).toBe(false);
+    expect(hasFloor({ floor: -1 })).toBe(false);
+    expect(hasFloor({ floor: "abc" })).toBe(false);
+    expect(hasFloor(null)).toBe(false);
   });
 });
 
@@ -120,6 +93,22 @@ describe("sortRootComments 排序", () => {
       "e",
       "d",
       "a",
+    ]);
+  });
+
+  it("楼层排序：floor 缺失项（后端尚未返回）排到末尾，不干扰有楼层项", () => {
+    const list = [
+      { id: "a", createTime: 1000, floor: 2 },
+      { id: "pending1", createTime: 3000 }, // 缺失：新发布未对账
+      { id: "b", createTime: 2000, floor: 1 },
+      { id: "pending2", createTime: 4000 }, // 缺失
+    ];
+    // 有楼层项按 floor 升序在前；缺失项均视为无穷大，互相按 createTime 升序
+    expect(sortRootComments(list, "floor").map((x) => x.id)).toEqual([
+      "b",
+      "a",
+      "pending1",
+      "pending2",
     ]);
   });
 

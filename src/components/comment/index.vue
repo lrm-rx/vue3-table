@@ -13,12 +13,7 @@ import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
 import CommentItem from "./components/CommentItem.vue";
 import VirtualList from "./components/VirtualList.vue";
-import {
-  assignFloors,
-  createId,
-  getNextFloor,
-  sortRootComments,
-} from "./utils/format.js";
+import { createId, sortRootComments } from "./utils/format.js";
 
 const props = defineProps({
   // 评论列表（v-model:comments），由业务侧传入
@@ -79,10 +74,11 @@ useIntersectionObserver(
 
 // —— 列表数据：纯受控，业务侧传入后统一分配楼层 ——
 const innerComments = ref([]);
+// 楼层号由后端生成并随数据返回，组件直接透传，不做补排
 watch(
   () => props.comments,
   (val) => {
-    innerComments.value = assignFloors(val ?? []);
+    innerComments.value = val ?? [];
   },
   { immediate: true },
 );
@@ -303,8 +299,23 @@ const rollback = (opId) => {
   syncComments();
 };
 
-// 成功确认：丢弃快照
-const settle = (opId) => {
+// 成功确认：丢弃快照；若传入 serverItem（创建类操作的服务端返回），
+// 用服务端真实数据覆盖本地临时对象——关键是把临时 id / 缺失的 floor 等字段回填为真实值，
+// 此后点赞、删除等操作才会命中服务端真实记录。
+const settle = (opId, serverItem) => {
+  const snap = pendingOps.get(opId);
+  if (!snap) return;
+  if (serverItem && (snap.type === "send" || snap.type === "reply")) {
+    if (snap.type === "send") {
+      const local = innerComments.value.find((c) => c.id === snap.id);
+      if (local) Object.assign(local, serverItem);
+    } else {
+      const target = innerComments.value.find((c) => c.id === snap.commentId);
+      const local = target?.replies?.find((r) => r.id === snap.id);
+      if (local) Object.assign(local, serverItem);
+    }
+    syncComments();
+  }
   pendingOps.delete(opId);
 };
 
@@ -323,7 +334,7 @@ const sendComment = (content) => {
     createTime: Date.now(),
     likeCount: 0,
     liked: false,
-    floor: getNextFloor(innerComments.value),
+    // 楼层号由后端生成，落库成功后通过 settle(serverItem) 回填；在此之前不展示「第 n 楼」
     replies: [],
   };
   const opId = nextOpId();
