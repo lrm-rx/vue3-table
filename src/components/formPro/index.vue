@@ -107,12 +107,21 @@ const fillMissingDefaults = () => {
 };
 
 const syncFromParent = (val) => {
-  const next = props.autoFillDefaults
-    ? buildInitialData(props.items, val)
-    : { ...(val || {}) };
-  if (isEqual(next, formData)) return;
+  const incoming = { ...(val || {}) };
+  // buildInitialData 会为所有字段补默认值；但父级 val 可能因 removeHiddenValues
+  // 剔除了隐藏字段的键——此时不应把内部已有的隐藏字段值重置为默认值（会丢失用户输入）。
+  // 因此：内部存在而 val 中缺失的键，保留内部值。
+  const base = props.autoFillDefaults
+    ? buildInitialData(props.items, incoming)
+    : incoming;
+  for (const k of Object.keys(formData)) {
+    if (!(k in incoming) && formData[k] !== undefined) {
+      base[k] = formData[k];
+    }
+  }
+  if (isEqual(base, formData)) return;
   for (const k of Object.keys(formData)) delete formData[k];
-  Object.assign(formData, next);
+  Object.assign(formData, base);
 };
 // 父级 modelValue 变化 → 同步进内部 formData（值未变则跳过，避免回环）
 watch(
@@ -194,14 +203,19 @@ const formSpanComputed = computed(() => {
   return props.span;
 });
 
-// 分组折叠状态：以分组标题为 key
+// 分组折叠状态：以「分组在 blocks 中的索引」为 key（唯一），避免重复标题共享折叠态 / v-for key 碰撞。
 const collapsedMap = reactive({});
 const groupKey = (t) => t || "__default__";
 
+// 取某分组对象在 blocks 中的索引（唯一身份）；找不到返回 -1
+const groupIndexOf = (groupItem) =>
+  groupItem ? blocks.value.findIndex((b) => b.group === groupItem) : -1;
+
 const isGroupCollapsed = (groupItem) => {
-  const key = groupKey(groupItem?.title);
-  if (collapsedMap[key] === undefined) return !!groupItem?.fold;
-  return collapsedMap[key];
+  const idx = groupIndexOf(groupItem);
+  if (idx === -1) return !!groupItem?.fold;
+  if (collapsedMap[idx] === undefined) return !!groupItem?.fold;
+  return collapsedMap[idx];
 };
 
 // 某分组是否可折叠：group.collapsible 优先，否则回退表单级 groupCollapsible（默认 true）
@@ -213,23 +227,28 @@ const isGroupCollapsible = (groupItem) => {
 
 const toggleGroup = (groupItem) => {
   if (!isGroupCollapsible(groupItem)) return;
-  const key = groupKey(groupItem?.title);
-  collapsedMap[key] = !isGroupCollapsed(groupItem);
+  const idx = groupIndexOf(groupItem);
+  if (idx === -1) return;
+  collapsedMap[idx] = !isGroupCollapsed(groupItem);
 };
 
-// 对外暴露的动态折叠方法（按分组标题操作）——
-const findGroupItem = (title) =>
-  blocks.value.find((b) => b.group && groupKey(b.group.title) === groupKey(title))
-    ?.group || null;
+// 对外暴露的动态折叠方法（按分组标题操作；标题重复时命中第一个匹配分组）——
+// 按标题取分组在 blocks 中的索引
+const findGroupIndex = (title) =>
+  blocks.value.findIndex((b) => b.group && groupKey(b.group.title) === groupKey(title));
 
 /** 设置某个分组的折叠状态 */
 const setGroupCollapsed = (title, collapsed) => {
-  collapsedMap[groupKey(title)] = !!collapsed;
+  const idx = findGroupIndex(title);
+  if (idx === -1) return;
+  collapsedMap[idx] = !!collapsed;
 };
 /** 切换某个分组 */
 const toggleGroupByTitle = (title) => {
-  const g = findGroupItem(title);
-  collapsedMap[groupKey(title)] = !isGroupCollapsed(g || { title });
+  const idx = findGroupIndex(title);
+  if (idx === -1) return;
+  const g = blocks.value[idx]?.group || { title };
+  collapsedMap[idx] = !isGroupCollapsed(g);
 };
 /** 批量设置多个分组的折叠状态 */
 const setGroupsCollapsed = (titles, collapsed) => {
@@ -237,8 +256,8 @@ const setGroupsCollapsed = (titles, collapsed) => {
 };
 /** 折叠 / 展开全部分组 */
 const setAllGroupsCollapsed = (collapsed) => {
-  blocks.value.forEach((b) => {
-    if (b.group) setGroupCollapsed(b.group.title, collapsed);
+  blocks.value.forEach((b, idx) => {
+    if (b.group) collapsedMap[idx] = !!collapsed;
   });
 };
 const collapseAllGroups = () => setAllGroupsCollapsed(true);
@@ -304,7 +323,7 @@ defineExpose(ownExposed);
   <el-form ref="formRef" v-bind="formPropsComputed">
     <FormBlock
       v-for="(block, idx) in blocks"
-      :key="block.group ? block.group.title || idx : idx"
+      :key="idx"
       :block="block"
       :form-data="formData"
       :only-required="onlyRequired"

@@ -148,6 +148,29 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(2);
   });
 
+  it("重复分组标题：折叠状态互不影响（按 block 索引隔离）", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        { group: true, title: "G" },
+        { prop: "a", label: "A" },
+        { group: true, title: "G" },
+        { prop: "b", label: "B" },
+      ],
+    });
+    await flushPromises();
+    // 两个分组各自渲染一个 header（v-for key 不碰撞）
+    const headers = wrapper.findAll(".form-pro__group-header-main");
+    expect(headers.length).toBe(2);
+    // 默认都展开 → 2 个表单项
+    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(2);
+    // 折叠第一个分组：只影响第一个
+    await headers[0].trigger("click");
+    await flushPromises();
+    // 只剩 B（第二个分组的项）
+    expect(wrapper.findAllComponents({ name: "ElFormItem" }).map((i) => i.props("label"))).toEqual(["B"]);
+  });
+
   it("JSX 渲染：item.render(h, ctx) 产出控件", async () => {
     const wrapper = mountFormPro({
       modelValue: { name: "jsx-val" },
@@ -344,6 +367,55 @@ describe("FormPro 配置式表单", () => {
       expect(wrapper.vm.formData.age).toBe("");
       expect((wrapper.emitted("update:modelValue") || []).length).toBe(before);
     });
+  });
+
+  // 回归：removeHiddenValues + 字段显隐切换时，隐藏字段已输入的值不应丢失
+  it("removeHiddenValues 开启时隐藏字段值不被重置（保留用户输入）", async () => {
+    const formData = ref({ type: "company", company: "ACME" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :remove-hidden-values="true" :items="items" />`,
+        data() {
+          return {
+            items: [
+              {
+                prop: "type",
+                label: "类型",
+                itemRender: {
+                  name: "ElSelect",
+                  options: [
+                    { label: "企业", value: "company" },
+                    { label: "个人", value: "personal" },
+                  ],
+                },
+              },
+              {
+                prop: "company",
+                label: "公司",
+                visibleMethod: (d) => d.type === "company",
+                itemRender: { name: "ElInput" },
+              },
+            ],
+          };
+        },
+      },
+      { global: globalConfig },
+    );
+    await flushPromises();
+    const fp = wrapper.findComponent({ name: "FormPro" });
+    expect(fp.vm.formData.company).toBe("ACME");
+    // 切到 personal → company 隐藏
+    formData.value.type = "personal";
+    await flushPromises();
+    expect(fp.vm.formData.company).toBe("ACME"); // 内部值保留，未被重置为 ""
+    expect(formData.value.company).toBeUndefined(); // 父级 v-model 不含隐藏值
+    // 切回 company → 值应仍在
+    formData.value.type = "company";
+    await flushPromises();
+    expect(fp.vm.formData.company).toBe("ACME");
+    expect(formData.value.company).toBe("ACME");
   });
 
   it("暴露 el-form 全部实例 API（含 getField / fields / setInitialValues）", async () => {

@@ -75,10 +75,12 @@ const pickOptionComponent = (name) => {
 
 const renderByItemRender = (ir, item, ctx) => {
   const comp = resolveComponent(ir.name);
+  // 内部 v-model 绑定放在 ir.props 之后，确保用户在 itemRender.props 中误写
+  // modelValue / onUpdate:modelValue 不会破坏组件的双向同步。
   const bindProps = {
+    ...(ir.props || {}),
     modelValue: ctx.value,
     "onUpdate:modelValue": (v) => setField(item.prop, v),
-    ...(ir.props || {}),
   };
   const children = [];
   if (Array.isArray(ir.options) && ir.options.length) {
