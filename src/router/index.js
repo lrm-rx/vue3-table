@@ -37,6 +37,12 @@ const routes = [
         component: () => import("@/views/FormProDemo.vue"),
         meta: { title: "配置式表单 FormPro", icon: "Document" },
       },
+      {
+        path: "float-ball",
+        name: "FloatBall",
+        component: () => import("@/views/FloatBallDemo.vue"),
+        meta: { title: "灵动悬浮球 FloatBall", icon: "Aim" },
+      },
     ],
   },
 ];
