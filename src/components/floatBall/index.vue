@@ -367,6 +367,11 @@ const doSnap = () => {
   if (!result) return
   position.x = result.x
   position.y = result.y
+  // 吸附后同步「展开前位置快照」：拖拽结束后球的新位置就是当前基准，
+  // 否则随后 mouseleave 触发的 scheduleCollapse 会把位置还原到拖拽前的
+  // positionBeforeExpand，导致 y 被拽回旧值（出现 (x',y')→贴边→旧 y 的回弹）。
+  positionBeforeExpand.x = position.x
+  positionBeforeExpand.y = position.y
   emit('snap', result.edge)
   emit('change', { x: result.x, y: result.y })
 }
