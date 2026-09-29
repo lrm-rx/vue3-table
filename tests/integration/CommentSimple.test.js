@@ -301,6 +301,35 @@ describe("CommentSimple 远程加载（触底 load-more）", () => {
     await flushPromises();
     expect(wrapper.emitted("load-more")).toBeFalsy();
   });
+
+  it("数据耗尽（remoteHasMore=false）后反复触底不再发请求，不会出现第 4 页", async () => {
+    const wrapper = mountSimple({ comments: makeComments(10) });
+    await flushPromises();
+
+    // 首屏不足一屏时组件会自动补加载一次，记录当前已发出次数作为基线
+    const baseline = wrapper.emitted("load-more")?.length ?? 0;
+
+    const scrollToBottom = async () => {
+      simulateAtBottom(false); // 离开底部阈值区 → 重新武装
+      simulateAtBottom(true); // 再次触底 → 触发一次加载
+      await flushPromises();
+    };
+
+    // 仍有更多数据时，滚动到底会再触发一次（证明 emit 通路本身正常）
+    await scrollToBottom();
+    expect(wrapper.emitted("load-more")).toHaveLength(baseline + 1);
+
+    // 父组件判定数据耗尽（如页大小 10、总量 18：第 3 页返回空），翻 remoteHasMore=false
+    await wrapper.setProps({ remoteHasMore: false });
+    await flushPromises();
+
+    // 关键断言：此后无论怎样反复滚动到底，请求次数都不再增长（不存在第 4 页请求）
+    const exhausted = wrapper.emitted("load-more").length;
+    await scrollToBottom();
+    await scrollToBottom();
+    await scrollToBottom();
+    expect(wrapper.emitted("load-more")).toHaveLength(exhausted);
+  });
 });
 
 describe("CommentSimple 底部状态文本", () => {
