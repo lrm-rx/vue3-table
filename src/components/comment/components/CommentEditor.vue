@@ -60,6 +60,51 @@ const emojiPopperSelector = `.bili-emoji-popper--${emojiEditorSeed}`;
 // 插槽内的模板 ref 无法回传到本组件 setup）
 let emojiTriggerEl = null;
 
+// 表情面板预估尺寸（7 行 × 9 列网格 + 弹层内边距），用于展开前预判视口可用空间
+const EMOJI_PANEL_WIDTH = 308;
+const EMOJI_PANEL_HEIGHT = 260;
+const EMOJI_VIEWPORT_MARGIN = 8;
+
+// 表情面板展开方向：依据触发按钮位置自动判断，默认/优先向下
+// （工具栏在输入框下方，向下展开不会遮挡输入区域）
+const emojiPlacement = ref("bottom-start");
+
+// 依据触发按钮相对视口的可用空间，自动选择表情面板展开位置：
+// 垂直优先「向下」(bottom)，下方空间不足时回退「向上」(top)；
+// 水平方向在 start / end 间选择，确保面板留在视口内。
+const resolveEmojiPlacement = (triggerEl) => {
+  if (!triggerEl) return "bottom-start";
+  const rect = triggerEl.getBoundingClientRect();
+  if (!rect.width && !rect.height) return "bottom-start";
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+
+  const spaceBelow = vh - rect.bottom;
+  const spaceAbove = rect.top;
+  const needV = EMOJI_PANEL_HEIGHT + EMOJI_VIEWPORT_MARGIN;
+  const vertical =
+    spaceBelow >= needV
+      ? "bottom"
+      : spaceAbove >= needV
+        ? "top"
+        : spaceBelow >= spaceAbove
+          ? "bottom"
+          : "top";
+
+  const needW = EMOJI_PANEL_WIDTH + EMOJI_VIEWPORT_MARGIN;
+  const spaceRight = vw - rect.left;
+  const align = spaceRight >= needW ? "start" : "end";
+
+  return `${vertical}-${align}`;
+};
+
+// 面板展开期间，页面滚动 / 视口缩放可能改变可用空间，按需重新计算展开方向
+const updateEmojiPlacement = () => {
+  if (!emojiVisible.value) return;
+  const next = resolveEmojiPlacement(emojiTriggerEl);
+  if (next !== emojiPlacement.value) emojiPlacement.value = next;
+};
+
 // 去除首尾空格后的有效长度
 const trimmed = computed(() => text.value.trim());
 const canSend = computed(() => trimmed.value.length > 0 && !props.submitting);
@@ -99,6 +144,10 @@ const cancel = () => {
 
 const toggleEmoji = (event) => {
   emojiTriggerEl = event.currentTarget;
+  // 展开前先判断一次展开方向，避免面板遮挡输入区
+  if (!emojiVisible.value) {
+    emojiPlacement.value = resolveEmojiPlacement(emojiTriggerEl);
+  }
   emojiVisible.value = !emojiVisible.value;
 };
 
@@ -142,6 +191,9 @@ onClickOutside(
 
 onMounted(() => {
   document.addEventListener("click", onDocumentClick, true);
+  // 捕获阶段监听任意滚动（含容器内滚动）与窗口缩放，面板打开时自动校正位置
+  document.addEventListener("scroll", updateEmojiPlacement, true);
+  window.addEventListener("resize", updateEmojiPlacement);
   if (props.autoFocus) {
     nextTick(() => textareaRef.value?.focus());
   }
@@ -149,6 +201,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("click", onDocumentClick, true);
+  document.removeEventListener("scroll", updateEmojiPlacement, true);
+  window.removeEventListener("resize", updateEmojiPlacement);
 });
 
 // 展开状态变化后自动聚焦（折叠 → 展开）
@@ -206,7 +260,7 @@ watch(expanded, (val) => {
         <div class="bili-comment-editor__toolbar">
           <el-popover
             :visible="emojiVisible"
-            placement="top-start"
+            :placement="emojiPlacement"
             :width="308"
             trigger="manual"
             :popper-class="emojiPopperClass"

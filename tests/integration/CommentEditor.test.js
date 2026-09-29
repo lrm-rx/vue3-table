@@ -187,3 +187,75 @@ describe("CommentEditor 表情面板", () => {
     wrapper.unmount();
   });
 });
+
+describe("CommentEditor 表情面板自动定位（不遮挡输入区）", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  // 让 jsdom 下的窗口尺寸与触发按钮位置可控，验证展开方向自动判断
+  const setViewport = (w, h) => {
+    Object.defineProperty(window, "innerWidth", { value: w, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: h, configurable: true });
+  };
+  const stubRect = (el, rect) => {
+    el.getBoundingClientRect = () => ({
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width ?? 28,
+      height: rect.height ?? 28,
+      x: rect.left,
+      y: rect.top,
+      toJSON() {},
+    });
+  };
+  const popoverPlacement = (wrapper) =>
+    wrapper.findComponent({ name: "ElPopover" }).props("placement");
+
+  it("下方空间充足时优先向下展开（避开上方输入框）", async () => {
+    setViewport(1024, 800);
+    const wrapper = mountEditor();
+    await flushPromises();
+    const btn = wrapper.find(".bili-comment-editor__tool[title='表情']");
+    stubRect(btn.element, { left: 20, top: 120, right: 48, bottom: 148 });
+
+    await btn.trigger("click");
+    await flushPromises();
+    expect(emojiActive(wrapper)).toBe(true);
+    expect(popoverPlacement(wrapper)).toBe("bottom-start");
+
+    wrapper.unmount();
+  });
+
+  it("下方空间不足、上方充足时回退向上展开", async () => {
+    setViewport(1024, 500);
+    const wrapper = mountEditor();
+    await flushPromises();
+    const btn = wrapper.find(".bili-comment-editor__tool[title='表情']");
+    // top=400 → 上方空间 400 充足；bottom=428，视口高 500 → 下方仅 72，不足
+    stubRect(btn.element, { left: 20, top: 400, right: 48, bottom: 428 });
+
+    await btn.trigger("click");
+    await flushPromises();
+    expect(popoverPlacement(wrapper)).toBe("top-start");
+
+    wrapper.unmount();
+  });
+
+  it("水平方向靠右时使用 end 对齐，避免溢出视口", async () => {
+    setViewport(400, 800);
+    const wrapper = mountEditor();
+    await flushPromises();
+    const btn = wrapper.find(".bili-comment-editor__tool[title='表情']");
+    // left=350，视口宽 400 → 右侧仅 50，不足以放下 308 宽面板 → end 对齐
+    stubRect(btn.element, { left: 350, top: 120, right: 378, bottom: 148 });
+
+    await btn.trigger("click");
+    await flushPromises();
+    expect(popoverPlacement(wrapper)).toBe("bottom-end");
+
+    wrapper.unmount();
+  });
+});
