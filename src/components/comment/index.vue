@@ -7,7 +7,7 @@
  *  - 与父组件同步：v-model:comments / v-model:sort + send/reply/like/delete 事件
  * 组件为纯受控数据组件，内部不内置任何 mock 数据，评论列表由业务侧传入。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useIntersectionObserver } from "@vueuse/core";
 import CommentEditor from "./components/CommentEditor.vue";
 import CommentHeader from "./components/CommentHeader.vue";
@@ -57,6 +57,8 @@ const emit = defineEmits([
 
 // —— 虚拟列表实例（virtualScroll=true 时使用）——
 const virtualListRef = ref(null);
+// —— 组件根元素：非虚拟模式下用于「发送一级评论后瞬间回到评论区顶部」——
+const rootRef = ref(null);
 
 // —— 吸顶态检测（isStuck → 吸顶阴影）——
 // 哨兵紧贴吸顶头部上方：越过滚动容器可视顶 = 头部已被 sticky 钉住；
@@ -342,17 +344,33 @@ const sendComment = (content) => {
   innerComments.value = [...innerComments.value, newComment];
   syncComments();
   emit("send", { content, opId });
-  // 发布后切到「最新」，保证立刻看到自己的评论
+  // 发布后切到「最新」，保证新评论出现在列表顶部（createTime 最大 → latest 排序首项）
   if (innerSort.value !== "latest") {
     changeSort("latest");
-  } else {
-    // 已处于最新排序：数组更新后虚拟列表手动回顶
+  }
+  // 瞬间回到评论区顶部：虚拟模式滚列表视口，非虚拟模式滚动页面/容器让评论区顶部对齐视口顶
+  if (props.virtualScroll) {
     virtualListRef.value?.scrollToTop();
+  } else {
+    rootRef.value?.scrollIntoView?.({ block: "start" });
   }
 };
 
+// 新回复插入后，让其滚动进入视口（block:'nearest' = 最小幅度滚动，已可见则不动）。
+// 回复场景不应跳到整个评论区顶部（会把用户带离当前楼层），只需保证刚发的回复可见。
+const scrollReplyIntoView = (id) => {
+  nextTick(() => {
+    document
+      .querySelector(`[data-reply-id="${id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  });
+};
+
 // —— 发表回复（扁平挂在一级评论的 replies 中）——
-const handleReply = ({ commentId, content, replyTo }) => {
+// 插入位置规则：
+//  - replyToId == null → 回复楼主 → 放到 replies 第一个位置（楼顶）
+//  - replyToId 为某条回复 id → 回复楼中楼 → 放到该条回复的下方（楼中楼之间）
+const handleReply = ({ commentId, content, replyTo, replyToId }) => {
   const target = innerComments.value.find((c) => c.id === commentId);
   if (!target) return;
   if (!Array.isArray(target.replies)) target.replies = [];
@@ -371,10 +389,20 @@ const handleReply = ({ commentId, content, replyTo }) => {
   };
   const opId = nextOpId();
   pendingOps.set(opId, { type: "reply", commentId, id: newReply.id });
-  target.replies.push(newReply);
+  if (replyToId == null) {
+    // 回复楼主：楼顶
+    target.replies.unshift(newReply);
+  } else {
+    // 回复楼中楼：插到被回复那条的正下方；找不到锚点时兜底追加到末尾
+    const anchorIdx = target.replies.findIndex((r) => r.id === replyToId);
+    if (anchorIdx === -1) target.replies.push(newReply);
+    else target.replies.splice(anchorIdx + 1, 0, newReply);
+  }
   innerComments.value = [...innerComments.value];
   syncComments();
-  emit("reply", { commentId, content, replyTo, opId });
+  emit("reply", { commentId, content, replyTo, replyToId, opId });
+  // 让新插入的回复滚动进入视口，确保用户立刻看到自己刚发的内容
+  scrollReplyIntoView(newReply.id);
 };
 
 // —— 点赞 / 取消（乐观翻转 + 失败可回滚）——
@@ -464,7 +492,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="bili-comment">
+  <div ref="rootRef" class="bili-comment">
     <!-- 吸顶态检测哨兵：越过滚动容器顶 → 头部进入 is-stuck（吸顶阴影） -->
     <div
       ref="stickySentinelRef"

@@ -337,14 +337,29 @@ const sendComment = (content) => {
   innerComments.value = [...innerComments.value, newComment];
   syncComments();
   emit("send", { content, opId });
-  // 发布后切到「最新」，保证立刻看到自己的评论
+  // 发布后切到「最新」，保证新评论出现在列表顶部（createTime 最大 → latest 排序首项）
   if (innerSort.value !== "latest") {
     changeSort("latest");
   }
+  // 瞬间回到评论区顶部：滚动页面/容器让评论区顶部对齐视口顶（behavior 缺省为 auto，无动画）
+  nextTick(() => rootRef.value?.scrollIntoView?.({ block: "start" }));
+};
+
+// 新回复插入后，让其滚动进入视口（block:'nearest' = 最小幅度滚动，已可见则不动）。
+// 回复场景不应跳到整个评论区顶部（会把用户带离当前楼层），只需保证刚发的回复可见。
+const scrollReplyIntoView = (id) => {
+  nextTick(() => {
+    document
+      .querySelector(`[data-reply-id="${id}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  });
 };
 
 // —— 发表回复（扁平挂在一级评论的 replies 中）——
-const handleReply = ({ commentId, content, replyTo }) => {
+// 插入位置规则：
+//  - replyToId == null → 回复楼主 → 放到 replies 第一个位置（楼顶）
+//  - replyToId 为某条回复 id → 回复楼中楼 → 放到该条回复的下方（楼中楼之间）
+const handleReply = ({ commentId, content, replyTo, replyToId }) => {
   const target = innerComments.value.find((c) => c.id === commentId);
   if (!target) return;
   if (!Array.isArray(target.replies)) target.replies = [];
@@ -363,10 +378,22 @@ const handleReply = ({ commentId, content, replyTo }) => {
   };
   const opId = nextOpId();
   pendingOps.set(opId, { type: "reply", commentId, id: newReply.id });
-  target.replies.push(newReply);
+  if (replyToId == null) {
+    // 回复楼主：楼顶
+    target.replies.unshift(newReply);
+  } else {
+    // 回复楼中楼：插到被回复那条的正下方；找不到锚点时兜底追加到末尾
+    const anchorIdx = target.replies.findIndex((r) => r.id === replyToId);
+    if (anchorIdx === -1) target.replies.push(newReply);
+    else target.replies.splice(anchorIdx + 1, 0, newReply);
+  }
+  // 自动展开该评论的楼中楼：保证按位置插入的新回复立即可见（展开态按 comment.id 持久化）
+  expandedMap.value[commentId] = true;
   innerComments.value = [...innerComments.value];
   syncComments();
-  emit("reply", { commentId, content, replyTo, opId });
+  emit("reply", { commentId, content, replyTo, replyToId, opId });
+  // 让新插入的回复滚动进入视口，确保用户立刻看到自己刚发的内容
+  scrollReplyIntoView(newReply.id);
 };
 
 // —— 点赞 / 取消（乐观翻转 + 失败可回滚）——

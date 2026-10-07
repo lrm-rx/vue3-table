@@ -42,6 +42,13 @@ const toggle = () => {
   expanded.value = !expanded.value;
 };
 
+// 强制展开（供父级在新回复插入后调用，保证新回复可见）
+const expand = () => {
+  expanded.value = true;
+};
+
+defineExpose({ expand });
+
 const onLike = (reply) => {
   emit("like", reply);
 };

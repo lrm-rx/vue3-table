@@ -59,6 +59,8 @@ const onEditorSend = (content) => {
     commentId: props.comment.id,
     content,
     replyTo: replyTarget.value,
+    // 被回复的回复 id：null = 回复楼主（插到 replies 楼顶），否则 = 回复楼中楼（插到该条下方）
+    replyToId: replyAnchorId.value,
   });
   replying.value = false;
   replyTarget.value = null;

@@ -103,6 +103,95 @@ describe("CommentSection 发送一级评论", () => {
   });
 });
 
+describe("CommentSection 乐观更新插入位置", () => {
+  // 驱动内联回复框：打开 → 填写 → 提交，返回提交后同步给父组件的最新 comments
+  const submitReply = async (wrapper, openSelector, content) => {
+    await openSelector.trigger("click");
+    await flushPromises();
+    const editor = wrapper.find(".bili-reply-list__editor");
+    expect(editor.exists()).toBe(true);
+    await editor.find("textarea").setValue(content);
+    const submit = editor
+      .findAll("button")
+      .find((b) => b.text().includes("回复"));
+    await submit.trigger("click");
+    await flushPromises();
+    const events = wrapper.emitted("update:comments");
+    return events[events.length - 1][0];
+  };
+
+  it("回复楼主：新回复插到 replies 第一个位置（楼顶）", async () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    // 一级评论操作条上的「回复(1)」→ 回复楼主（replyToId 为 null）
+    const comments = await submitReply(
+      wrapper,
+      findButton(wrapper, "回复(1)"),
+      "我回楼主",
+    );
+    const replies = comments[0].replies;
+    expect(replies).toHaveLength(2);
+    expect(replies[0].content).toBe("我回楼主"); // 楼顶
+    expect(replies[1].content).toBe("帮顶"); // 原有 r1 被挤到第二位
+  });
+
+  it("回复楼中楼：新回复插到被回复那条的正下方（楼中楼之间）", async () => {
+    const wrapper = mountSection({ comments: [makeFixture()] });
+    // r1（内容「帮顶」）的「回复」按钮 → 回复楼中楼（replyToId = r1.id）
+    const r1ReplyBtn = wrapper
+      .findAll(".bili-reply-item .el-button")
+      .find((b) => b.text().trim() === "回复");
+    const comments = await submitReply(wrapper, r1ReplyBtn, "我回 r1");
+    const replies = comments[0].replies;
+    expect(replies).toHaveLength(2);
+    expect(replies[0].content).toBe("帮顶"); // r1 保持原位
+    expect(replies[1].content).toBe("我回 r1"); // 新回复紧跟 r1 下方
+  });
+
+  it("reply 事件携带 replyToId：楼主为 null，楼中楼为被回复回复的 id", async () => {
+    const w1 = mountSection({ comments: [makeFixture()] });
+    await submitReply(w1, findButton(w1, "回复(1)"), "x");
+    expect(w1.emitted("reply")[0][0].replyToId).toBeNull();
+
+    const w2 = mountSection({ comments: [makeFixture()] });
+    const btn = w2
+      .findAll(".bili-reply-item .el-button")
+      .find((b) => b.text().trim() === "回复");
+    await submitReply(w2, btn, "y");
+    expect(w2.emitted("reply")[0][0].replyToId).toBe("r1");
+  });
+
+  it("回复后把新回复滚动进入视口（scrollIntoView 作用在新回复节点上）", async () => {
+    // jsdom 未实现 scrollIntoView，直接挂一个 mock 到原型上验证被调用；
+    // attachTo document.body 与真实浏览器一致，使组件内 document.querySelector 可命中节点
+    const original = Element.prototype.scrollIntoView;
+    const spy = vi.fn();
+    Element.prototype.scrollIntoView = spy;
+    const holder = document.createElement("div");
+    document.body.appendChild(holder);
+    try {
+      const wrapper = mount(CommentSection, {
+        props: {
+          comments: [makeFixture()],
+          currentUser: { id: "me", name: "我", avatar: "" },
+        },
+        global: globalConfig,
+        attachTo: holder,
+      });
+      const comments = await submitReply(wrapper, findButton(wrapper, "回复(1)"), "回楼主");
+      await flushPromises();
+      const newReply = comments[0].replies.find((r) => r.content === "回楼主");
+      // 新回复渲染出带 data-reply-id 的节点
+      expect(wrapper.find(`[data-reply-id="${newReply.id}"]`).exists()).toBe(true);
+      // 组件内对该节点调用了 scrollIntoView
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete Element.prototype.scrollIntoView;
+      else Element.prototype.scrollIntoView = original;
+      holder.remove();
+    }
+  });
+});
+
 describe("CommentSection 点赞", () => {
   it("点击点赞按钮：乐观翻转并抛出 like 事件", async () => {
     const comments = [

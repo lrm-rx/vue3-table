@@ -34,6 +34,8 @@ const replying = ref(false);
 const replyTarget = ref(null);
 // 编辑器锚点：回复某条回复时记录该条的 id（用于编辑器就近插入）；回复楼主为 null
 const replyAnchorId = ref(null);
+// ReplyList 实例：发送回复后触发展开，保证新插入的回复立即可见
+const replyListRef = ref(null);
 
 // —— 删除权限：本人 或 管理员 ——
 const isAdmin = computed(() => props.currentUser?.role === "admin");
@@ -66,7 +68,11 @@ const onEditorSend = (content) => {
     commentId: props.comment.id,
     content,
     replyTo: replyTarget.value,
+    // 被回复的回复 id：null = 回复楼主（插到 replies 楼顶），否则 = 回复楼中楼（插到该条下方）
+    replyToId: replyAnchorId.value,
   });
+  // 发送后展开回复列表：确保按位置插入的新回复立即可见（避免折叠在预览条数之外）
+  replyListRef.value?.expand?.();
   replying.value = false;
   replyTarget.value = null;
   replyAnchorId.value = null;
@@ -173,6 +179,7 @@ const onReplyDelete = async (reply) => {
       <!-- 楼中楼灰卡：有回复或回复框展开时渲染；bare=无回复时不显示灰底 -->
       <ReplyList
         v-if="hasReplies || replying"
+        ref="replyListRef"
         :replies="comment.replies ?? []"
         :current-user="currentUser"
         :preview-count="previewReplies"

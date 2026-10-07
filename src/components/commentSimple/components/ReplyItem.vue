@@ -39,7 +39,7 @@ const onDelete = () => {
 </script>
 
 <template>
-  <div class="bili-reply-item">
+  <div class="bili-reply-item" :data-reply-id="reply.id">
     <BaseAvatar
       :src="reply.author?.avatar"
       :name="reply.author?.name"
