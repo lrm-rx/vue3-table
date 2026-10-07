@@ -193,6 +193,32 @@ describe("CommentSimple 回复框就近展开", () => {
       opId: expect.any(String),
     });
   });
+
+  it("切换回复目标：旧回复框自动关闭，全局同一时刻仅一个编辑器", async () => {
+    const wrapper = mountSimple(); // 默认 2 条评论：c1(用户1)、c2(用户2)
+    const replyBtns = Array.from(
+      wrapper.element.querySelectorAll(".bili-comment-item__action"),
+    ).filter((el) => /回复\(\d+\)/.test(el.textContent));
+    expect(replyBtns.length).toBeGreaterThanOrEqual(2);
+
+    // 打开第一条（c1）
+    replyBtns[0].dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+    expect(wrapper.element.querySelectorAll(".bili-reply-list__editor").length).toBe(1);
+
+    // 再打开第二条（c2）
+    replyBtns[1].dispatchEvent(new Event("click", { bubbles: true }));
+    await flushPromises();
+    await flushPromises();
+
+    // 全局仍只有一个编辑器（c1 的已自动关闭），且属于 c2（占位符含「用户2」）
+    const editors = wrapper.element.querySelectorAll(".bili-reply-list__editor");
+    expect(editors.length).toBe(1);
+    expect(editors[0].querySelector("textarea").getAttribute("placeholder")).toContain(
+      "用户2",
+    );
+  });
 });
 
 describe("CommentSimple 删除权限", () => {

@@ -80,6 +80,8 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 - 每条一级评论默认只预览前 **2 条**回复（B站 PC 端做法），减少页面高度。
 - 回复数超过 2 条时出现「共 n 条回复，点击查看」，点击后**就地展开**全部回复（B站实际为弹层面板，本组件采用就地展开，保持组件自包含；也可替换为抽屉/弹窗）。
 - 点击「回复」按钮，内联输入框**就近展开**：回复楼主时编辑器置顶于楼中楼卡片（全部回复之上，紧邻操作条，长列表也无需滚动）；回复某条回复时编辑器插在**该条正下方**。内容带上 `replyTo`，渲染为「B 回复 A：…」。切换回复目标时编辑器随位置迁移并重新聚焦，发送/取消后收起。
+- **单编辑器互斥**：回复框的激活态由父组件**单例**管理，同一时刻**全局只有一个**回复框——在 A 楼打开回复框后再去 B 楼打开，A 的框自动关闭。
+- **回复插入位置**：提交后乐观插入——回复楼主 → 该楼 `replies` **首位**；回复楼中楼 → **被回复那条正下方**（非列表末尾）；发送后自动展开该楼楼中楼，并把新回复最小幅度滚动进入视口（已可见则不动）。
 - 点赞为**乐观更新**：先改 UI（liked 与数字 +1/−1），再异步通知后端，失败回滚。
 
 ### 6. 操作条与删除权限
@@ -141,7 +143,7 @@ B站评论只有**两层**：主评论（一楼）与它的回复列表（楼中
 src/components/comment/
 ├─ README.md                 # 本设计文档
 ├─ index.vue                 # CommentSection 评论区主容器（状态中枢）
-├─ utils/format.js            # assignFloors 楼层分配、createId、排序等纯函数
+├─ utils/format.js            # 楼层展示/容错（hasFloor）、createId、排序等纯函数
 ├─ base/                     # —— 基于 Element Plus 的基础组件封装 ——
 │  ├─ BaseAvatar.vue         # ElAvatar 封装：加载失败兜底为「昵称首字 + 色块」
 │  └─ BaseTextarea.vue       # ElInput(textarea) 封装：字数统计 + 自适应高度
@@ -176,7 +178,7 @@ const currentUser = ref({ id: "me", name: "我", avatar: "" });
 const onSend = (content) => {
   // 对接后端：组件已先把评论插入本地列表
 };
-const onReply = ({ commentId, content, replyTo }) => {};
+const onReply = ({ commentId, content, replyTo, replyToId }) => {}; // replyToId: 被回复的回复 id，null=回复楼主
 const onLike = ({ comment, reply, liked }) => {};
 const onDelete = ({ comment }) => {};
 </script>
@@ -225,7 +227,7 @@ const onDelete = ({ comment }) => {};
 | `update:comments` | 新列表 | 任意本地变更后同步 |
 | `update:sort` | `'hot' \| 'latest'` | 切换排序 |
 | `send` | `{ content, opId }` | 发表一级评论（本地已插入，临时 id） |
-| `reply` | `{ commentId, content, replyTo, opId }` | 发表回复（本地已插入，临时 id） |
+| `reply` | `{ commentId, content, replyTo, replyToId, opId }` | 发表回复（本地已插入，临时 id）；`replyToId` 为被回复的回复 id（`null` = 回复楼主，新增字段，向后兼容） |
 | `like` | `{ comment, reply, liked, opId }` | 点赞/取消（仅对已确认记录 emit；在途临时 id 仅本地翻转、不发请求） |
 | `delete` | `{ comment, reply, opId }` | 删除一级评论（`reply` 为 null）或楼中楼回复（`reply` 为该回复），确认弹窗后本地已移除（仅对已确认记录 emit；在途临时 id 仅本地移除） |
 | `load-more` | — | 远程模式触底时触发（虚拟模式由 VirtualList `isNearBottom` 检测，非虚拟模式由 IntersectionObserver 哨兵检测）；父组件取数后 append 到 `comments` 并更新 `remoteHasMore` |
@@ -236,3 +238,18 @@ const onDelete = ({ comment }) => {};
 | --- | --- |
 | `settle(opId, serverItem?)` | 写请求成功后调用：丢弃该操作的快照。对 send/reply 传入 `serverItem`（服务端返回的真实记录），会回填本地乐观项的 id、楼层等字段，避免后续点赞/删除用临时 id 命中不到服务端 |
 | `rollback(opId)` | 写请求失败后调用：按操作前快照精确回滚（点赞恢复旧值、发布/回复按 id 移除、删除插回原位置），并同步 `comments` |
+
+---
+
+## 四、更新记录
+
+> 完整升级说明见 [docs/comment-upgrade.md](file:///d:/vue3-vxe-table/docs/comment-upgrade.md)。
+
+### 2026-10-07 · 行为增强（向后兼容，无破坏性变更）
+
+1. **乐观更新插入位置规则**：发表一级评论 → 列表顶部；回复楼主 → `replies` 首位；回复楼中楼 → 被回复那条正下方。
+2. **滚动联动**：发表一级评论回到评论区顶部；回复后自动展开楼中楼并把新回复滚入视口。
+3. **单编辑器互斥**：修复「回复不同目标出现多个回复框」——回复框激活态提升为父组件单例，全局同一时刻仅一个，切换目标旧框自动关闭。
+4. **`reply` 事件新增 `replyToId` 字段**（被回复的回复 id，`null`=回复楼主），纯新增、向后兼容。
+
+`commentSimple`（简化版）组件同步上述全部改动。

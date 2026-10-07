@@ -289,6 +289,38 @@ describe("CommentSection 回复框就近展开", () => {
       list.element.children[0].classList.contains("bili-reply-list__editor"),
     ).toBe(false);
   });
+
+  it("切换回复目标：旧回复框自动关闭，同一时刻全局仅一个编辑器", async () => {
+    const comments = [
+      makeFixture(),
+      {
+        ...makeFixture(),
+        id: "c2",
+        author: { id: "u3", name: "王五", avatar: "" },
+        content: "我是二楼",
+        replies: [],
+      },
+    ];
+    const wrapper = mountSection({ comments });
+
+    // 打开 c1 的回复框
+    await findButton(wrapper, "回复(1)").trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".bili-reply-list__editor")).toHaveLength(1);
+
+    // 再打开 c2 的回复框（c2 无回复，按钮文案「回复(0)」）
+    const c2Btn = wrapper
+      .findAll("button")
+      .find((b) => b.text().trim() === "回复(0)");
+    await c2Btn.trigger("click");
+    await flushPromises();
+
+    // 全局仍只有一个编辑器（c1 的已自动关闭）
+    expect(wrapper.findAll(".bili-reply-list__editor")).toHaveLength(1);
+    // 且该编辑器属于 c2（占位符为「回复 @王五」）
+    const ta = wrapper.find(".bili-reply-list__editor textarea");
+    expect(ta.attributes("placeholder")).toContain("回复 @王五");
+  });
 });
 
 describe("CommentSection 操作条文本按钮与计数", () => {

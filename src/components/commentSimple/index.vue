@@ -67,6 +67,17 @@ const innerComments = ref([]);
 // 使用 ref 对象（.value 为响应式普通对象），读写直接走 .value
 const expandedMap = ref({});
 
+// —— 全局激活的回复编辑器（单例）：{ commentId, replyId } | null ——
+// 收敛到父组件持有，保证同一时刻全局只有一个回复框：切换回复目标时旧框自动失活。
+// replyId = null 表示回复楼主；否则为被回复的楼中楼 id（决定编辑器就近插入位置）。
+const activeEditor = ref(null);
+const openEditor = ({ commentId, replyId }) => {
+  activeEditor.value = { commentId, replyId };
+};
+const closeEditor = () => {
+  activeEditor.value = null;
+};
+
 watch(
   () => props.comments,
   (val) => {
@@ -533,10 +544,13 @@ onBeforeUnmount(() => {
         :preview-replies="previewReplies"
         :maxlength="maxlength"
         :expanded="isExpanded(comment.id)"
+        :active-editor="activeEditor"
         @like="handleLike"
         @reply="handleReply"
         @delete="handleDelete"
         @toggle-expand="toggleExpand(comment.id)"
+        @open-editor="openEditor"
+        @close-editor="closeEditor"
       />
 
       <!-- 底部状态文本：加载中 / 没有更多（不使用 v-loading 全屏遮罩） -->

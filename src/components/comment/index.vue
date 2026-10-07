@@ -76,6 +76,17 @@ useIntersectionObserver(
 
 // —— 列表数据：纯受控，业务侧传入后统一分配楼层 ——
 const innerComments = ref([]);
+
+// —— 全局激活的回复编辑器（单例）：{ commentId, replyId } | null ——
+// 收敛到父组件持有，保证同一时刻全局只有一个回复框：切换回复目标时旧框自动失活。
+// replyId = null 表示回复楼主；否则为被回复的楼中楼 id（决定编辑器就近插入位置）。
+const activeEditor = ref(null);
+const openEditor = ({ commentId, replyId }) => {
+  activeEditor.value = { commentId, replyId };
+};
+const closeEditor = () => {
+  activeEditor.value = null;
+};
 // 楼层号由后端生成并随数据返回，组件直接透传，不做补排
 watch(
   () => props.comments,
@@ -551,9 +562,12 @@ onBeforeUnmount(() => {
           :current-user="currentUser"
           :preview-replies="previewReplies"
           :maxlength="maxlength"
+          :active-editor="activeEditor"
           @like="handleLike"
           @reply="handleReply"
           @delete="handleDelete"
+          @open-editor="openEditor"
+          @close-editor="closeEditor"
         />
       </template>
       <!-- 虚拟模式底部状态：加载中 / 没有更多 -->
@@ -574,9 +588,12 @@ onBeforeUnmount(() => {
         :current-user="currentUser"
         :preview-replies="previewReplies"
         :maxlength="maxlength"
+        :active-editor="activeEditor"
         @like="handleLike"
         @reply="handleReply"
         @delete="handleDelete"
+        @open-editor="openEditor"
+        @close-editor="closeEditor"
       />
 
       <!-- 哨兵元素（IntersectionObserver 观察目标，不占可见高度）：

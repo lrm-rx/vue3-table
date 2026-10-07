@@ -5,7 +5,7 @@
  * 展开态（楼中楼是否展开全部）由父组件按 comment.id 持久化持有，
  * 保证远程刷新后已展开的回复不被折叠。
  */
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { ElMessageBox } from "element-plus";
 import BaseAvatar from "../base/BaseAvatar.vue";
 import CommentEditor from "./CommentEditor.vue";
@@ -20,14 +20,23 @@ const props = defineProps({
   showFloor: { type: Boolean, default: true },
   // 楼中楼是否展开全部（由父组件按 comment.id 持有）
   expanded: { type: Boolean, default: false },
+  // 全局激活的编辑器（单例，由父组件持有）：{ commentId, replyId } | null；replyId=null 表示回复楼主
+  activeEditor: { type: Object, default: null },
 });
 
-const emit = defineEmits(["like", "reply", "delete", "toggle-expand"]);
+const emit = defineEmits([
+  "like",
+  "reply",
+  "delete",
+  "toggle-expand",
+  "open-editor",
+  "close-editor",
+]);
 
-// —— 内联回复态 ——
-const replying = ref(false);
-const replyTarget = ref(null);
-const replyAnchorId = ref(null);
+// —— 内联回复态：由父组件单例 activeEditor 派生，保证全局同一时刻只有一个回复框 ——
+const replying = computed(() => props.activeEditor?.commentId === props.comment.id);
+// 编辑器锚点 replyId（null = 回复楼主，编辑器置顶；否则 = 回复楼中楼，就近插入该条下方）
+const editorReplyId = computed(() => (replying.value ? props.activeEditor.replyId : null));
 
 // —— 删除权限：本人 或 管理员 ——
 const isAdmin = computed(() => props.currentUser?.role === "admin");
@@ -42,35 +51,39 @@ const hasReplies = computed(
   () => Array.isArray(props.comment.replies) && props.comment.replies.length > 0,
 );
 
-const replyPlaceholder = computed(() =>
-  replyTarget.value
-    ? `回复 @${replyTarget.value.name}`
-    : `回复 @${props.comment.author?.name ?? ""}`,
-);
+const replyPlaceholder = computed(() => {
+  if (!replying.value) return `回复 @${props.comment.author?.name ?? ""}`;
+  const rid = props.activeEditor.replyId;
+  if (rid == null) return `回复 @${props.comment.author?.name ?? ""}`;
+  const r = (props.comment.replies ?? []).find((x) => x.id === rid);
+  return r ? `回复 @${r.author?.name ?? ""}` : `回复 @${props.comment.author?.name ?? ""}`;
+});
 
-const startReply = (reply = null) => {
-  replyTarget.value = reply ? { id: reply.author?.id, name: reply.author?.name } : null;
-  replyAnchorId.value = reply?.id ?? null;
-  replying.value = true;
+// 打开编辑器（reply=null → 回复楼主；否则 → 回复该条楼中楼）。交给父组件设置单例 activeEditor，
+// 设置的同时其它楼层已打开的回复框会自动失活（同一时刻全局只有一个）。
+const openEditor = (reply = null) => {
+  emit("open-editor", { commentId: props.comment.id, replyId: reply?.id ?? null });
 };
 
 const onEditorSend = (content) => {
+  const rid = editorReplyId.value;
+  let replyTo = null;
+  if (rid != null) {
+    const r = (props.comment.replies ?? []).find((x) => x.id === rid);
+    if (r) replyTo = { id: r.author?.id, name: r.author?.name };
+  }
   emit("reply", {
     commentId: props.comment.id,
     content,
-    replyTo: replyTarget.value,
+    replyTo,
     // 被回复的回复 id：null = 回复楼主（插到 replies 楼顶），否则 = 回复楼中楼（插到该条下方）
-    replyToId: replyAnchorId.value,
+    replyToId: rid,
   });
-  replying.value = false;
-  replyTarget.value = null;
-  replyAnchorId.value = null;
+  emit("close-editor");
 };
 
 const onEditorCancel = () => {
-  replying.value = false;
-  replyTarget.value = null;
-  replyAnchorId.value = null;
+  emit("close-editor");
 };
 
 const onLike = () => {
@@ -149,7 +162,7 @@ const onToggleExpand = () => {
             text
             size="small"
             class="bili-comment-item__action"
-            @click="startReply()"
+            @click="openEditor()"
           >
             回复({{ formatCount(replyCount) }})
           </el-button>
@@ -174,10 +187,10 @@ const onToggleExpand = () => {
         :preview-count="previewReplies"
         :bare="!hasReplies"
         :replying="replying"
-        :editor-reply-id="replyAnchorId"
+        :editor-reply-id="editorReplyId"
         :expanded="expanded"
         @like="onReplyLike"
-        @reply="startReply"
+        @reply="openEditor"
         @delete="onReplyDelete"
         @toggle="onToggleExpand"
       >
