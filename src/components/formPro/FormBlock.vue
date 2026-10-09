@@ -25,6 +25,8 @@ const props = defineProps({
   allCollapsed: { type: Boolean, default: false },
   // 表单级：标题是否带冒号（item.titleColon 可单独覆盖）
   titleColon: { type: Boolean, default: false },
+  // 由父级传入的「字段 prop → 当前校验错误信息」映射，用于驱动 item.tip 填写提示的显隐
+  fieldErrors: { type: Object, default: () => ({}) },
   // 由父级传入的「字段 prop → el-form-item 实例」映射，渲染时回填，供父级暴露
   formItemRefs: { type: Object, default: () => ({}) },
 });
@@ -170,6 +172,12 @@ const buildLabel = (item) => {
 
 const renderFieldEntry = (entry) => {
   const { item, span, required } = entry;
+  // 填写/选择提示 tip：位于校验错误提示同一位置（控件下方），颜色为 success 主色调。
+  // 显示时机：只要当前字段未触发校验不通过（fieldErrors 中无该 prop）就一直显示；
+  // 一旦校验不通过则隐藏 tip，让位给 el-form-item 的错误提示。
+  const tip = item.tip;
+  const hasError = !!(props.fieldErrors && props.fieldErrors[item.prop]);
+  const showTip = tip != null && tip !== "" && !hasError;
   const formItem = h(
     ElFormItem,
     {
@@ -187,7 +195,13 @@ const renderFieldEntry = (entry) => {
     },
     {
       label: () => buildLabel(item),
-      default: () => renderFieldControl(item),
+      default: () => {
+        const nodes = [renderFieldControl(item)];
+        if (showTip) {
+          nodes.push(h("div", { class: "form-pro__field-tip" }, tip));
+        }
+        return nodes;
+      },
     },
   );
   return h(ElCol, { span }, () => formItem);
@@ -341,6 +355,19 @@ defineExpose({ entries });
 :deep(.form-pro__title-colon) {
   margin-left: 2px;
   font-weight: normal;
+}
+// 字段「填写/选择提示」：与 el-form-item 错误提示共用同一位置（控件正下方，绝对定位），
+// 颜色为 success 主色调。仅在字段未校验失败时渲染；校验失败时由 el-form-item 错误提示占据该位置。
+// （DOM 由 render 函数生成，需 :deep 命中；定位参照 .el-form-item__content 的 position:relative）
+:deep(.form-pro__field-tip) {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  color: var(--el-color-success);
+  font-size: 12px;
+  line-height: 1;
+  padding-top: 2px;
+  white-space: nowrap;
 }
 :deep(.form-pro__collapse-btn) {
   display: inline-flex;

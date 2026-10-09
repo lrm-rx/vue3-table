@@ -43,11 +43,16 @@ const onlyRequired = ref(false);
 const removeHiddenValues = ref(false);
 
 // 校验规则（el-form 统一 rules，也可在 item.rules 单独配置）
+// 覆盖多种控件类型，用于充分测试 tip 与校验错误提示的切换
 const rules = {
   name: [{ required: true, message: "请输入姓名", trigger: "blur" }],
   email: [
     { required: true, message: "请输入邮箱", trigger: "blur" },
     { type: "email", message: "邮箱格式不正确", trigger: ["blur", "change"] },
+  ],
+  level: [{ required: true, message: "请选择职级", trigger: "change" }],
+  zip: [
+    { pattern: /^\d{6}$/, message: "邮编必须为 6 位数字", trigger: "blur" },
   ],
 };
 
@@ -86,6 +91,7 @@ const items = ref([
     titleBold: true,
     titlePrefix: InfoFilled,
     titlePrefixTip: "请输入真实姓名",
+    tip: "请输入 2-20 位字符的真实姓名",
     itemRender: {
       name: "ElInput",
       props: { placeholder: "请输入姓名", clearable: true },
@@ -96,6 +102,7 @@ const items = ref([
     label: "年龄",
     titleSuffix: InfoFilled,
     titleSuffixTip: "请输入真实年龄",
+    tip: "取值范围 0-150，将用于年龄分布统计",
     itemRender: {
       name: "ElInputNumber",
       props: { min: 0, max: 150, controlsPosition: "right" },
@@ -104,6 +111,7 @@ const items = ref([
   {
     prop: "gender",
     label: "性别",
+    tip: "请选择与本人身份证件一致的性别",
     itemRender: {
       name: "ElRadioGroup",
       options: [
@@ -120,6 +128,7 @@ const items = ref([
   {
     prop: "birthday",
     label: "出生日期",
+    tip: "格式 YYYY-MM-DD，用于计算年龄与星座",
     itemRender: {
       name: "ElDatePicker",
       props: {
@@ -132,6 +141,7 @@ const items = ref([
   {
     prop: "enabled",
     label: "是否启用",
+    tip: "关闭后该账号将无法登录系统",
     itemRender: { name: "ElSwitch" },
   },
   // 插入项：在表单项之间插入自定义内容（render = JSX）
@@ -148,6 +158,7 @@ const items = ref([
   {
     prop: "type",
     label: "类型",
+    tip: "选择「企业」后将展开公司名称填写项",
     itemRender: {
       name: "ElSelect",
       props: { placeholder: "请选择类型" },
@@ -161,12 +172,14 @@ const items = ref([
   {
     prop: "company",
     label: "公司名称",
+    tip: "需与营业执照上的名称完全一致",
     visibleMethod: (data) => data.type === "company",
     itemRender: { name: "ElInput", props: { placeholder: "请输入公司名称" } },
   },
   {
     prop: "email",
     label: "邮箱",
+    tip: "请输入可正常接收邮件的有效邮箱地址",
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
   },
   // 折叠表单：folding 项默认收起，由 collapseNode 控制展开/收起
@@ -174,12 +187,14 @@ const items = ref([
     prop: "address",
     label: "地址",
     folding: true,
+    tip: "请填写详细收货地址（省市区+街道门牌号）",
     itemRender: { name: "ElInput", props: { placeholder: "请输入地址" } },
   },
   {
     prop: "zip",
     label: "邮编",
     folding: true,
+    tip: "6 位数字邮政编码",
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮编" } },
   },
   // 折叠触发节点：span 控制占位宽度，不设置时默认 24（整行）
@@ -192,6 +207,7 @@ const items = ref([
   {
     prop: "role",
     label: "角色",
+    tip: "admin 拥有全部权限，viewer 仅可查看",
     render: (h, ctx) => (
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <ElTag type={ctx.value === "admin" ? "danger" : "success"}>
@@ -211,6 +227,7 @@ const items = ref([
   {
     prop: "hobbies",
     label: "爱好",
+    tip: "可多选，最多选择 3 项",
     itemRender: {
       name: "ElCheckboxGroup",
       options: [
@@ -224,6 +241,7 @@ const items = ref([
   {
     prop: "level",
     label: "职级",
+    tip: "P5~P8 对应不同的薪资带宽",
     itemRender: {
       name: "ElSelect",
       props: { placeholder: "请选择职级" },
@@ -236,7 +254,7 @@ const items = ref([
     },
   },
   // 插槽式控件：引用外部 #remark 具名插槽
-  { prop: "remark", label: "备注", span: 24, slot: "remark" },
+  { prop: "remark", label: "备注", span: 24, tip: "选填，最多 200 字", slot: "remark" },
 ]);
 
 const formRef = ref();

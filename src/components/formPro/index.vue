@@ -81,6 +81,16 @@ const formItemRefs = reactive({});
 // 按 prop 取单个 el-form-item 实例（拿不到时返回 undefined）
 const getFormItem = (prop) => formItemRefs[prop];
 
+// 「字段 prop → 当前校验错误信息」映射：由 el-form 的 validate 事件同步。
+// 用于驱动字段「填写提示」(item.tip) 的显隐：无错误时显示 tip（success 色），
+// 校验不通过时隐藏 tip、让位给 el-form-item 的错误提示。
+const fieldErrors = reactive({});
+// el-form 校验事件：(prop, isValid, message) —— 字段校验状态变化时触发
+const onFormValidate = (prop, isValid, message) => {
+  if (isValid) delete fieldErrors[prop];
+  else fieldErrors[prop] = message || "";
+};
+
 // 一次性「静默」开关：fillMissingDefaults 补默认值引发的 formData 变化，
 // 不向父级回抛（避免「watch formData → 改 items → 补默认值 → formData 再变」多余触发父级 watcher）。
 let suppressEmit = false;
@@ -299,6 +309,22 @@ const ownExposed = {
   collapseAllGroups,
   expandAllGroups,
   toggleAllGroups,
+  // 包装 el-form 的 resetFields / clearValidate：这两个方法清除校验状态时「不触发」validate 事件，
+  // 需同步清除内部 fieldErrors，否则 item.tip 填写提示会因残留错误状态而无法恢复显示。
+  resetFields() {
+    for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+    return formRef.value?.resetFields?.();
+  },
+  clearValidate(props) {
+    if (props == null) {
+      for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+    } else {
+      (Array.isArray(props) ? props : [props]).forEach((p) =>
+        delete fieldErrors[p],
+      );
+    }
+    return formRef.value?.clearValidate?.(props);
+  },
 };
 
 // 把 el-form 实例的「全部」方法/属性合并到暴露对象上：
@@ -320,7 +346,7 @@ defineExpose(ownExposed);
 </script>
 
 <template>
-  <el-form ref="formRef" v-bind="formPropsComputed">
+  <el-form ref="formRef" v-bind="formPropsComputed" @validate="onFormValidate">
     <FormBlock
       v-for="(block, idx) in blocks"
       :key="idx"
@@ -331,6 +357,7 @@ defineExpose(ownExposed);
       :form-span="formSpanComputed"
       :gutter="gutter"
       :title-colon="titleColon"
+      :field-errors="fieldErrors"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :all-collapsed="allGroupsCollapsed"

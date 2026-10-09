@@ -63,6 +63,7 @@ const items = ref([
 | `span` | 栅格占位（覆盖表单级） |
 | `required` | 是否必填 |
 | `rules` | 单字段校验规则 |
+| `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
 | `itemRender` | `{ name, props, options }` 渲染内置控件（ElInput/ElSelect/...） |
 | `render(h, ctx)` | JSX 自定义渲染控件，`ctx = { value, data }` |

@@ -23,6 +23,9 @@
  *     span: 12,               // 该项栅格占位（优先级 > 表单级 span）
  *     required: true,         // 必填（驱动 onlyRequired 过滤 + 显示星号）
  *     rules: [],              // el-form-item 校验规则（也可由 el-form rules 统一提供）
+ *     tip: '请输入真实姓名',    // 填写/选择提示：位于「校验错误提示」同一位置（控件下方），
+ *                              //   颜色为 success 主色调；只要字段未校验不通过就一直显示，
+ *                              //   一旦校验失败则隐藏、让位给错误提示。传空串等同不配置。
  *     visible: true,          // 静态显隐
  *     visibleMethod: (data) => boolean,  // 动态显隐（data 为当前表单数据）
  *     removeValueOnHidden: true, // 隐藏时是否移除其值（提交时不传）；覆盖表单级 removeHiddenValues
