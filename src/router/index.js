@@ -26,6 +26,12 @@ const routes = [
         meta: { title: "表格组件演示", icon: "Grid" },
       },
       {
+        path: "table-fixed",
+        name: "TableFixed",
+        component: () => import("@/views/TableFixedColumnDemo.vue"),
+        meta: { title: "表格固定列修复验证", icon: "Grid" },
+      },
+      {
         path: "md",
         name: "MdEditor",
         component: () => import("@/views/MdEditorDemo.vue"),

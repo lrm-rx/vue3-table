@@ -1728,16 +1728,42 @@ $table-toolbar-gap: 12px;
       height: 100%;
     }
 
+    // ========== 固定列分界线：左/右固定列与滚动区域之间添加实线 border ==========
+    // vxe 默认仅用 box-shadow 做视觉分隔，在 border=true 的表格中缺少明确的分界感。
+    // 同时给固定列表头/表体 wrapper 同步加 border，保证滚动时线条连续不中断。
+    :deep(.vxe-table--fixed-left-wrapper) {
+      border-right: 1px solid var(--el-border-color-lighter, #dcdfe6);
+      box-sizing: border-box;
+    }
+    :deep(.vxe-table--fixed-right-wrapper) {
+      border-left: 1px solid var(--el-border-color-lighter, #dcdfe6);
+      box-sizing: border-box;
+    }
+    // 固定列内部 header/body wrapper 也需要 border，否则滚动时分界线会断开
+    :deep(.vxe-table--fixed-left-wrapper .vxe-table--header-wrapper),
+    :deep(.vxe-table--fixed-left-wrapper .vxe-table--body-wrapper) {
+      border-right: 1px solid var(--el-border-color-lighter, #dcdfe6);
+    }
+    :deep(.vxe-table--fixed-right-wrapper .vxe-table--header-wrapper),
+    :deep(.vxe-table--fixed-right-wrapper .vxe-table--body-wrapper) {
+      border-left: 1px solid var(--el-border-color-lighter, #dcdfe6);
+    }
+
     // ========== 列头布局：统一 flex 布局，防止图标换行 ==========
     // 所有列（left/center/right）均使用 flex 布局，确保过滤图标和排序图标始终在一起，
     // 文字可被挤压省略，但图标不会被压缩或换行。
     :deep(.vxe-header--column) {
+      // 确保表头单元格不裁剪过滤图标的激活角标（::after 伪元素延伸到按钮外）
+      overflow: visible;
+
       .vxe-cell--wrapper.vxe-header-cell--wrapper {
         display: flex;
         align-items: center;
         width: 100%;
         // 默认不允许换行：图标和文字必须在同一行
         flex-wrap: nowrap;
+        // 确保 wrapper 不裁剪过滤图标角标
+        overflow: visible;
 
         // 标题文字：可被挤压省略，但保留最小宽度避免完全消失
         .vxe-cell--title {
