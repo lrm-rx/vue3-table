@@ -11,7 +11,7 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import MdEditor from '@/components/mdEditor/index.vue'
-import { fileToBase64 } from '@/components/mdEditor/utils'
+import { fileToBase64, countMarkdownChars } from '@/components/mdEditor/utils'
 
 // 编辑器内容
 const content = ref(`# MdEditor 演示
@@ -55,6 +55,136 @@ console.log(hello)
 - 无序列表 A
 - 无序列表 B
 
+## 数学公式（KaTeX · 全特性覆盖）
+
+行内公式：质能方程 $E = mc^2$；求根公式 $x = \\dfrac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$；希腊字母 $\\alpha + \\beta = \\gamma$；二项式 $\\binom{n}{k}$；向量点积 $\\vec{v} \\cdot \\vec{w}$；重要极限 $\\lim_{x \\to 0} \\dfrac{\\sin x}{x} = 1$。
+
+### 积分与无穷级数
+
+$$
+\\int_{-\\infty}^{+\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}
+$$
+
+$$
+f(x) = \\sum_{n=0}^{\\infty} \\frac{f^{(n)}(a)}{n!}(x-a)^n
+$$
+
+### 嵌套根式、连分数与 n 次根
+
+$$
+\\sqrt{1 + 2\\sqrt{1 + 3\\sqrt{1 + 4\\sqrt{\\cdots}}}} = 3
+$$
+
+$$
+x = 1 + \\cfrac{1}{1 + \\cfrac{1}{1 + \\cfrac{1}{1 + \\cdots}}}
+$$
+
+$$
+\\sqrt[n]{x^n} = |x|
+$$
+
+### 矩阵、行列式与分段函数
+
+$$
+\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}
+\\begin{pmatrix} x \\\\ y \\end{pmatrix}
+=
+\\begin{pmatrix} ax+by \\\\ cx+dy \\end{pmatrix}
+$$
+
+$$
+\\det \\begin{vmatrix} a & b \\\\ c & d \\end{vmatrix} = ad - bc
+$$
+
+$$
+|x| = \\begin{cases} x & x \\geq 0 \\\\ -x & x < 0 \\end{cases}
+$$
+
+### 多行对齐、极限与连乘
+
+$$
+\\begin{aligned}
+(a+b)^2 &= a^2 + 2ab + b^2 \\\\
+(a-b)^2 &= a^2 - 2ab + b^2 \\\\
+(a+b)(a-b) &= a^2 - b^2
+\\end{aligned}
+$$
+
+$$
+\\lim_{n \\to \\infty} \\prod_{k=1}^{n} \\left(1 + \\frac{1}{k}\\right) = e
+$$
+
+### 数学字体、着重号与顶线/底线括号
+
+$$
+\\mathbb{R} \\quad \\mathcal{L} \\quad \\mathbf{x} \\quad \\mathrm{e}^{i\\pi} + 1 = 0 \\quad \\mathsf{ABC} \\quad \\mathtt{0101}
+$$
+
+$$
+\\dot{x} = \\frac{dx}{dt}, \\qquad \\ddot{x} = \\frac{d^2x}{dt^2}, \\qquad \\hat{H}\\psi = E\\psi
+$$
+
+$$
+\\overbrace{a + b + c}^{\\text{三项之和}} + \\underbrace{d + e}_{\\text{两项}}
+$$
+
+### 颜色（需 trust: true）
+
+$$
+\\color{red}{x^2} + \\color{blue}{y^2} = \\color{green}{r^2}
+$$
+
+## 复杂公式与文本混排
+
+下面这段文字密集穿插了**行内公式**，用于验证文本与行内公式混排时的换行、基线对齐与上下间距：设随机变量 $X \\sim N(\\mu, \\sigma^2)$，其概率密度为 $f(x) = \\dfrac{1}{\\sqrt{2\\pi}\\,\\sigma} e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}$，期望 $\\mathbb{E}[X] = \\mu$，方差 $\\mathrm{Var}(X) = \\sigma^2$。对任意实数 $a \\neq 0$，有 $aX + b \\sim N(a\\mu + b,\\, a^2\\sigma^2)$，标准化后 $Z = \\dfrac{X - \\mu}{\\sigma} \\sim N(0, 1)$。当样本量 $n \\to \\infty$ 时，由中心极限定理 $\\sqrt{n}\\,(\\bar{X}_n - \\mu) \\xrightarrow{d} N(0, \\sigma^2)$。
+
+再看一段**块级公式与说明文字衔接**的内容，验证公式前后文本的过渡与块级公式的居中显示：
+
+欧拉恒等式把五个最基本的常数联系在一起，被誉为「最美的数学公式」：
+
+$$
+e^{i\\pi} + 1 = 0
+$$
+
+高斯积分（广义积分与根号嵌套）在概率论与统计力学中反复出现：
+
+$$
+\\int_{-\\infty}^{+\\infty} e^{-\\alpha x^2}\\,dx = \\sqrt{\\dfrac{\\pi}{\\alpha}}, \\qquad (\\alpha > 0)
+$$
+
+带说明文字的多行推导（aligned 环境，逐行等号对齐），常用于证明与计算过程：
+
+$$
+\\begin{aligned}
+\\sum_{k=1}^{n} k &= \\dfrac{n(n+1)}{2} \\\\
+\\sum_{k=1}^{n} k^2 &= \\dfrac{n(n+1)(2n+1)}{6} \\\\
+\\sum_{k=1}^{n} k^3 &= \\left(\\dfrac{n(n+1)}{2}\\right)^{\\!2}
+\\end{aligned}
+$$
+
+含上下限的大型运算符与分式嵌套，测试大运算符、上下标与分数线的垂直间距：
+
+$$
+\\Gamma(z) = \\int_{0}^{\\infty} t^{z-1} e^{-t}\\,dt, \\qquad \\Gamma(n) = (n-1)! \\quad (n \\in \\mathbb{N}^{+})
+$$
+
+$$
+\\zeta(s) = \\sum_{n=1}^{\\infty} \\dfrac{1}{n^s} = \\prod_{p \\text{ prime}} \\dfrac{1}{1 - p^{-s}}, \\qquad (\\mathrm{Re}(s) > 1)
+$$
+
+行内公式与块级公式同段混排：傅里叶变换 $\\hat{f}(\\xi) = \\int_{-\\infty}^{\\infty} f(x)\\,e^{-2\\pi i x \\xi}\\,dx$ 定义在整个实轴上，其逆变换为 $f(x) = \\int_{-\\infty}^{\\infty} \\hat{f}(\\xi)\\,e^{2\\pi i x \\xi}\\,d\\xi$，这对变换在 $L^2(\\mathbb{R})$ 上构成等距同构。
+
+**超长行内公式**（验证不溢出容器、不出现错乱换行）：$\\displaystyle \\oint_{\\partial\\Omega} P\\,dx + Q\\,dy = \\iint_{\\Omega} \\left(\\dfrac{\\partial Q}{\\partial x} - \\dfrac{\\partial P}{\\partial y}\\right) dx\\,dy$，即二维区域上的格林公式。
+
+## 字数统计测试（base64 图片过滤）
+
+下面内嵌了一张 base64 图片（其编码约 90 字符）。
+观察左下角与下方「字数」：它**不应**包含这段 base64 编码，只统计真实文本。
+
+![内嵌 base64 测试图](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==)
+
+↑ 这张 1×1 PNG 的 base64 载荷不会被计入字数；图片前后的文字仍正常统计。
+
 ---
 
 ## 😲 md-editor-v3
@@ -86,6 +216,8 @@ const maxImageSize = ref(10)
 const theme = ref('light')
 // 只读模式
 const readOnly = ref(false)
+// 禁用模式（工具栏置灰、不可编辑）
+const disabled = ref(false)
 // 代码高亮主题
 const codeTheme = ref('atom')
 const codeThemeOptions = [
@@ -100,8 +232,8 @@ const customUpload = async (files) => {
   return urls
 }
 
-// 字数统计
-const charCount = computed(() => content.value.length)
+// 字数统计（与编辑器页脚一致：过滤 base64 图片编码）
+const charCount = computed(() => countMarkdownChars(content.value))
 
 // 复制 Markdown 源码
 const copyMarkdown = async () => {
@@ -153,6 +285,9 @@ const clearContent = () => {
           <span class="md-demo__label">只读</span>
           <el-switch v-model="readOnly" active-text="预览" inactive-text="编辑" />
 
+          <span class="md-demo__label">禁用</span>
+          <el-switch v-model="disabled" active-text="禁用" inactive-text="正常" />
+
           <span class="md-demo__label">代码主题</span>
           <el-select v-model="codeTheme" size="small" style="width: 130px">
             <el-option
@@ -177,6 +312,7 @@ const clearContent = () => {
       <MdEditor
         v-model="content"
         :read-only="readOnly"
+        :disabled="disabled"
         :upload-type="uploadType"
         :custom-upload="uploadType === 'custom' ? customUpload : null"
         :max-image-size="maxImageSize"

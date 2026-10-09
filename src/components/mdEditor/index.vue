@@ -10,15 +10,35 @@ import '@vavt/v3-extension/lib/asset/Mark.css'
 import '@vavt/v3-extension/lib/asset/Emoji.css'
 import '@vavt/v3-extension/lib/asset/PreviewThemeSwitch.css'
 import MarkExtension from 'markdown-it-mark'
-import { fileToBase64, isImageFile } from './utils'
+// 本地 katex：替代运行时从 CDN 加载，保证字体/CSS 随构建打包，
+// 避免 CDN 不可达、字体加载失败导致的公式排版错乱（重叠、平方根间距异常等）
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import { fileToBase64, isImageFile, countMarkdownChars } from './utils'
 import Time from './extensions/Time.vue'
 import DateTimeFooter from './extensions/DateTimeFooter.vue'
+import CharCount from './extensions/CharCount.vue'
 
-// 注册 markdown-it-mark 扩展（==文本== → <mark>文本</mark>）
+// 全局配置：
+// 1. 注册 markdown-it-mark 扩展（==文本== → <mark>文本</mark>）
+// 2. 注入本地 katex 实例，md-editor-v3 检测到 instance 已存在则跳过 CDN 加载
+// 3. katexConfig：关闭 throwOnError/strict，避免单个不支持的命令导致整块公式红屏/不渲染
 config({
   markdownItConfig: (md) => {
     md.use(MarkExtension)
   },
+  editorExtensions: {
+    katex: {
+      instance: katex,
+    },
+  },
+  katexConfig: (k) => ({
+    ...k,
+    throwOnError: false,
+    strict: false,
+    output: 'html',
+    trust: true,
+  }),
 })
 
 /**
@@ -48,11 +68,6 @@ const props = defineProps({
     type: String,
     default: 'light',
   },
-  // 是否显示预览栏（默认不显示，用户可通过工具栏的预览按钮切换）
-  preview: {
-    type: Boolean,
-    default: false,
-  },
   // 预览主题
   previewTheme: {
     type: String,
@@ -78,12 +93,12 @@ const props = defineProps({
     type: Array,
     default: () => ['github'],
   },
-  // 页脚配置：默认 [字数, 日期时间, =, 同步滚动]
-  // 数字 0 引用 defFooters 中的第一个自定义页脚组件（DateTimeFooter）
+  // 页脚配置：默认 [字数(自定义,过滤base64), 日期时间, =, 同步滚动]
+  // 数字索引引用 defFooters 中的自定义页脚组件：0=CharCount 1=DateTimeFooter
   // 布局：左侧字数统计 | 右侧 日期时间 + 同步滚动
   footers: {
     type: Array,
-    default: () => ['markdownTotal', '=', 0, 'scrollSwitch'],
+    default: () => [0, '=', 1, 'scrollSwitch'],
   },
   // 高度
   height: {
@@ -157,6 +172,10 @@ const mergedProps = computed(() => {
   delete rest.maxImageSize
   return rest
 })
+
+// 过滤 base64 图片编码后的正文字数（供自定义页脚 CharCount 展示）
+// 内置 markdownTotal 会把 base64 编码计入字数，这里用 countMarkdownChars 剔除
+const charCount = computed(() => countMarkdownChars(props.modelValue))
 
 // 统一的图片上传处理（覆盖工具栏上传 / 拖拽 / 截图粘贴三种入口）
 const handleUploadImg = async (files, callback) => {
@@ -246,6 +265,7 @@ defineExpose({
       <Time />
     </template>
     <template #defFooters>
+      <CharCount :count="charCount" />
       <DateTimeFooter />
     </template>
   </MdEditor>

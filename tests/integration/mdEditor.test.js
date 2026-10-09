@@ -99,6 +99,7 @@ vi.mock('markdown-it-mark', () => ({
 }))
 
 import MdEditor from '../../src/components/mdEditor/index.vue'
+import CharCount from '../../src/components/mdEditor/extensions/CharCount.vue'
 
 const mountEditor = (props = {}) =>
   mount(MdEditor, {
@@ -354,5 +355,43 @@ describe('MdEditor —— 透传原生 attrs（事件 / 额外 props）', () => 
     expect(p.uploadType).toBeUndefined()
     expect(p.customUpload).toBeUndefined()
     expect(p.maxImageSize).toBeUndefined()
+  })
+})
+
+describe('MdEditor —— 自定义字数统计页脚（过滤 base64）', () => {
+  it('默认 footers 使用自定义页脚索引 [0, =, 1, scrollSwitch]（0=CharCount, 1=DateTimeFooter）', () => {
+    const wrapper = mountEditor()
+    expect(stub(wrapper).props('footers')).toEqual([0, '=', 1, 'scrollSwitch'])
+  })
+
+  it('无图片内容时 CharCount 收到的 count 等于文本长度', () => {
+    const wrapper = mountEditor({ modelValue: '# 标题\n\n正文' })
+    const charCount = wrapper.findComponent(CharCount)
+    expect(charCount.exists()).toBe(true)
+    expect(charCount.props('count')).toBe('# 标题\n\n正文'.length)
+  })
+
+  it('含 base64 图片时 CharCount 收到的 count 已剔除 base64 编码', () => {
+    const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const md = `开头文字\n![图](data:image/png;base64,${b64})\n结尾`
+    const wrapper = mountEditor({ modelValue: md })
+    const charCount = wrapper.findComponent(CharCount)
+    expect(charCount.exists()).toBe(true)
+    // 过滤后应远小于原始长度（base64 载荷约 100+ 字符被剔除）
+    expect(charCount.props('count')).toBeLessThan(md.length - b64.length + 10)
+    // 且不包含原始长度（确认不是简单透传 modelValue.length）
+    expect(charCount.props('count')).not.toBe(md.length)
+  })
+
+  it('编辑内容变化时 CharCount 的 count 响应式更新', async () => {
+    const wrapper = mountEditor({ modelValue: 'abc' })
+    expect(wrapper.findComponent(CharCount).props('count')).toBe(3)
+    await wrapper.setProps({ modelValue: 'abcd' })
+    expect(wrapper.findComponent(CharCount).props('count')).toBe(4)
+  })
+
+  it('用户可通过 footers prop 覆盖默认页脚配置', () => {
+    const wrapper = mountEditor({ footers: [0, 'scrollSwitch'] })
+    expect(stub(wrapper).props('footers')).toEqual([0, 'scrollSwitch'])
   })
 })

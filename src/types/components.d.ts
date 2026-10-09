@@ -14,6 +14,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
     BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
+    CharCount: typeof import('./../components/mdEditor/extensions/CharCount.vue')['default']
     Comment: typeof import('./../components/comment/index.vue')['default']
     CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
     CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']
@@ -81,6 +82,7 @@ declare module 'vue' {
 declare global {
   const BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
   const BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
+  const CharCount: typeof import('./../components/mdEditor/extensions/CharCount.vue')['default']
   const Comment: typeof import('./../components/comment/index.vue')['default']
   const CommentEditor: typeof import('./../components/comment/components/CommentEditor.vue')['default']
   const CommentHeader: typeof import('./../components/comment/components/CommentHeader.vue')['default']

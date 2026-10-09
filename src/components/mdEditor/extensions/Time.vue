@@ -21,9 +21,15 @@ const props = defineProps({
     type: String,
     default: '插入时间',
   },
+  // 编辑器禁用态（md-editor-v3 会下发），用于同步置灰样式与阻止点击
+  disabled: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const handleClick = () => {
+  if (props.disabled) return
   if (typeof props.insert !== 'function') return
   const timeStr = dayjs().format(props.format)
   // Insert 类型: (generate) => void, generate: (selectedText) => { targetValue, select? }
@@ -35,6 +41,8 @@ const handleClick = () => {
   <button
     type="button"
     class="md-editor-toolbar-item md-editor-time-btn"
+    :class="{ 'md-editor-disabled': disabled }"
+    :disabled="disabled"
     :title="title"
     @click="handleClick"
   >
@@ -73,8 +81,18 @@ const handleClick = () => {
   border-radius: 2px;
   transition: background-color 0.2s;
 
-  &:hover {
+  &:not(:disabled):hover {
     background-color: var(--md-editor-hover-color, #e8e8e8);
+  }
+
+  // 禁用态：与 md-editor-v3 原生工具栏图标保持一致（置灰 + 禁止光标）
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+
+    &:hover {
+      background-color: transparent;
+    }
   }
 }
 
