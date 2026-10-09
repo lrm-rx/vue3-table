@@ -205,7 +205,7 @@ const renderFieldEntry = (entry) => {
       default: () => {
         const nodes = [renderFieldControl(item)];
         if (showTip) {
-          nodes.push(h("div", { class: "form-pro__field-tip" }, tip));
+          nodes.push(h("div", { class: "form-pro__field-tip", title: tip }, tip));
         }
         return nodes;
       },
@@ -370,11 +370,23 @@ defineExpose({ entries });
   position: absolute;
   top: 100%;
   left: 0;
+  right: 0;
+  max-width: 100%;
   color: var(--el-color-success);
   font-size: 12px;
-  line-height: 1;
+  line-height: 1.4;
   padding-top: 2px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+// 校验错误提示（el-form 原生 .el-form-item__error）：空间不足时单行省略为 …，
+// 完整文本通过 title 属性悬浮展示（title 由 index.vue 的校验事件注入）。
+:deep(.el-form-item__error) {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 :deep(.form-pro__collapse-btn) {
   display: inline-flex;

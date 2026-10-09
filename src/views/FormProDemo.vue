@@ -50,7 +50,7 @@ const rules = {
   name: [{ required: true, message: "请输入姓名", trigger: "blur" }],
   email: [
     { required: true, message: "请输入邮箱", trigger: "blur" },
-    { type: "email", message: "邮箱格式不正确", trigger: ["blur", "change"] },
+    { type: "email", message: "邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等", trigger: ["blur", "change"] },
   ],
   level: [{ required: true, message: "请选择职级", trigger: "change" }],
   zip: [
@@ -256,7 +256,8 @@ const items = ref([
   {
     prop: "email",
     label: "邮箱",
-    tip: "请输入可正常接收邮件的有效邮箱地址",
+    // 长 tip 演示：空间不足时单行省略为 …，鼠标悬浮可通过原生 title 查看完整提示文本
+    tip: "请输入可正常接收邮件的有效邮箱地址，该邮箱将用于接收账户激活链接、密码重置邮件以及各类系统重要通知，请务必填写准确并保持可正常访问",
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
   },
   // 折叠表单：folding 项默认收起，由 collapseNode 控制展开/收起

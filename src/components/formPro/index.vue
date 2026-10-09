@@ -21,6 +21,8 @@ import {
   computed,
   watch,
   nextTick,
+  onMounted,
+  onBeforeUnmount,
   useAttrs,
   useSlots,
 } from "vue";
@@ -90,6 +92,29 @@ const onFormValidate = (prop, isValid, message) => {
   if (isValid) delete fieldErrors[prop];
   else fieldErrors[prop] = message || "";
 };
+
+// 给 el-form 原生错误提示（.el-form-item__error）自动补全 title：空间不足被省略为 … 时，
+// 鼠标悬浮可查看完整错误文本。用 MutationObserver 监听错误元素的出现与文本变化，
+// 不依赖校验事件时机（初始校验、异步校验、重新校验均能覆盖）。
+let errorTitleObserver = null;
+onMounted(() => {
+  const root = formRef.value?.$el;
+  if (!root) return;
+  const syncErrorTitles = () => {
+    root.querySelectorAll(".el-form-item__error").forEach((el) => {
+      const text = el.textContent || "";
+      if (text && el.getAttribute("title") !== text) el.setAttribute("title", text);
+    });
+  };
+  syncErrorTitles();
+  errorTitleObserver = new MutationObserver(syncErrorTitles);
+  errorTitleObserver.observe(root, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+});
+onBeforeUnmount(() => errorTitleObserver?.disconnect());
 
 // 一次性「静默」开关：fillMissingDefaults 补默认值引发的 formData 变化，
 // 不向父级回抛（避免「watch formData → 改 items → 补默认值 → formData 再变」多余触发父级 watcher）。
