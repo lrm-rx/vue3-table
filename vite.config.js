@@ -61,6 +61,17 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          // 大体量第三方库独立分包：可单独缓存，且避免单 chunk 过大拖慢首屏
+          manualChunks: {
+            echarts: ['echarts'],
+            katex: ['katex'],
+          },
+        },
+      },
+    },
     server: {
       port: 5173,
       open: false,

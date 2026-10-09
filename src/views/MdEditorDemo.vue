@@ -176,6 +176,40 @@ $$
 
 **超长行内公式**（验证不溢出容器、不出现错乱换行）：$\\displaystyle \\oint_{\\partial\\Omega} P\\,dx + Q\\,dy = \\iint_{\\Omega} \\left(\\dfrac{\\partial Q}{\\partial x} - \\dfrac{\\partial P}{\\partial y}\\right) dx\\,dy$，即二维区域上的格林公式。
 
+## ECharts 图表（本地渲染，不依赖 CDN）
+
+在 \`\`\`echarts 代码块中写入 option 的 JSON 即可渲染图表，使用**本地 echarts 实例**（内网可用，无需 unpkg）：
+
+\`\`\`echarts
+{
+  "title": { "text": "周访问量统计" },
+  "tooltip": { "trigger": "axis" },
+  "xAxis": { "type": "category", "data": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"] },
+  "yAxis": { "type": "value" },
+  "series": [
+    { "name": "访问量", "type": "bar", "data": [120, 200, 150, 80, 70, 110, 130], "itemStyle": { "color": "#fb7299" } }
+  ]
+}
+\`\`\`
+
+折线与饼图组合（多 series、多图表同样本地渲染）：
+
+\`\`\`echarts
+{
+  "tooltip": { "trigger": "item" },
+  "legend": { "bottom": 0 },
+  "series": [
+    { "name": "流量来源", "type": "pie", "radius": ["40%", "70%"], "data": [
+      { "value": 1048, "name": "搜索引擎" },
+      { "value": 735, "name": "直接访问" },
+      { "value": 580, "name": "邮件营销" },
+      { "value": 484, "name": "联盟广告" },
+      { "value": 300, "name": "视频广告" }
+    ] }
+  ]
+}
+\`\`\`
+
 ## 字数统计测试（base64 图片过滤）
 
 下面内嵌了一张 base64 图片（其编码约 90 字符）。

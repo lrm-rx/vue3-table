@@ -14,6 +14,9 @@ import MarkExtension from 'markdown-it-mark'
 // 避免 CDN 不可达、字体加载失败导致的公式排版错乱（重叠、平方根间距异常等）
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+// 本地 echarts：md-editor-v3 默认从 unpkg 加载 echarts@6.1.0，内网环境不可达；
+// 这里注入本地实例，让 ```echarts 代码块的图表渲染不依赖外网
+import * as echarts from 'echarts'
 import { fileToBase64, isImageFile, countMarkdownChars } from './utils'
 import Time from './extensions/Time.vue'
 import DateTimeFooter from './extensions/DateTimeFooter.vue'
@@ -22,7 +25,8 @@ import CharCount from './extensions/CharCount.vue'
 // 全局配置：
 // 1. 注册 markdown-it-mark 扩展（==文本== → <mark>文本</mark>）
 // 2. 注入本地 katex 实例，md-editor-v3 检测到 instance 已存在则跳过 CDN 加载
-// 3. katexConfig：关闭 throwOnError/strict，避免单个不支持的命令导致整块公式红屏/不渲染
+// 3. 注入本地 echarts 实例，使 ```echarts 代码块渲染不依赖 unpkg（内网可用）
+// 4. katexConfig：关闭 throwOnError/strict，避免单个不支持的命令导致整块公式红屏/不渲染
 config({
   markdownItConfig: (md) => {
     md.use(MarkExtension)
@@ -30,6 +34,9 @@ config({
   editorExtensions: {
     katex: {
       instance: katex,
+    },
+    echarts: {
+      instance: echarts,
     },
   },
   katexConfig: (k) => ({
