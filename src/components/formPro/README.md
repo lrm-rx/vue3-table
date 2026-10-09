@@ -65,7 +65,7 @@ const items = ref([
 | `rules` | 单字段校验规则 |
 | `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
-| `itemRender` | `{ name, props, options }` 渲染内置控件（ElInput/ElSelect/...） |
+| `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/...）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染） |
 | `render(h, ctx)` | JSX 自定义渲染控件，`ctx = { value, data }` |
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
 | `visible` / `visibleMethod(data)` | 条件显隐（`visibleMethod` 返回 `false` 表示隐藏） |
@@ -149,7 +149,116 @@ const submitData = formRef.value.getSubmitData(); // 已过滤隐藏字段值
 
 ---
 
-## 7. ⚠️ 注意：watch formData → 改 items 会不会死循环？
+## 7. 选择类控件的 options（三种赋值方式）
+
+`itemRender.options` 用于 `ElSelect` / `ElRadioGroup` / `ElCheckboxGroup` 等选择类控件，支持**三种形态**，可按需选用：
+
+| 形态 | 写法 | 适用场景 |
+|---|---|---|
+| ① 静态数组 | `options: [{ label, value }]` | 选项固定不变 |
+| ② 响应式 ref | `options: levelOptions`（ref） | 选项由**后端接口异步返回** |
+| ③ 函数 | `options: (ctx) => Option[]` | 选项与**其他字段联动（级联）** |
+
+> 选项解析发生在**渲染期**：读取响应式数据会被 Vue 追踪，因此「接口数据到位」或「联动字段变化」都会**自动重渲染**，无需手动刷新。
+
+### ① 静态数组（最简，向后兼容）
+
+```js
+{
+  prop: "gender",
+  label: "性别",
+  itemRender: {
+    name: "ElSelect",
+    props: { placeholder: "请选择" },
+    options: [
+      { label: "男", value: "male" },
+      { label: "女", value: "female" },
+    ],
+  },
+}
+```
+
+### ② 后端接口异步返回（传 ref）
+
+把接口结果写入一个响应式 `ref`，直接把该 ref 赋给 `options`。数据回来时组件自动渲染，**不需要**监听、不需要手动赋值。
+
+```vue
+<script setup>
+import { ref, onMounted } from "vue";
+
+const levelOptions = ref([]);
+
+// 真实项目里替换为你的接口请求
+const fetchLevels = () => axios.get("/api/levels").then((r) => r.data);
+
+onMounted(async () => {
+  levelOptions.value = await fetchLevels(); // 到位后自动渲染
+});
+
+const items = ref([
+  {
+    prop: "level",
+    label: "职级",
+    itemRender: { name: "ElSelect", props: { placeholder: "请选择职级" }, options: levelOptions },
+  },
+]);
+</script>
+```
+
+> ⚠️ **不要**让函数形态直接 `return Promise`（如 `options: () => fetchLevels()`）——render 是同步的，Promise 会被当作空数组。异步数据一律用 **ref** 承载。
+
+### ③ 与其他字段联动 / 级联（传函数）
+
+`options` 写成函数，接收 `ctx = { data, value, prop }`，其中 `ctx.data` 是**当前表单数据**。依据某个已选字段返回对应选项，依赖变化时自动重渲染。
+
+```js
+const cityMap = {
+  广东: [{ label: "广州", value: "gz" }, { label: "深圳", value: "sz" }],
+  浙江: [{ label: "杭州", value: "hz" }, { label: "宁波", value: "nb" }],
+};
+
+const items = ref([
+  {
+    prop: "province",
+    label: "省份",
+    itemRender: {
+      name: "ElSelect",
+      options: [
+        { label: "广东", value: "广东" },
+        { label: "浙江", value: "浙江" },
+      ],
+      // 切换省份时清空已选城市，避免残留失效值
+      events: { change: () => (formData.value.city = "") },
+    },
+  },
+  {
+    prop: "city",
+    label: "城市",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择城市" },
+      // 函数形态：依据当前已选省份联动
+      options: (ctx) => cityMap[ctx.data.province] || [],
+    },
+  },
+]);
+```
+
+> 建议在联动源字段的 `itemRender.events.change` 里清空被联动字段的已选值，防止「选项已变但旧值残留」。
+
+### 选项对象结构
+
+每个选项支持 `{ label, value, props }`，其中 `props` 会透传给 `el-option` / `el-radio` / `el-checkbox`（如 `disabled`）：
+
+```js
+{ label: "P8（专家）", value: "p8", props: { disabled: true } }
+```
+
+> 完整可运行示例见 [FormProDemo.vue](../../../views/FormProDemo.vue)（`level` 演示 ref 异步、`province→city` 演示函数级联）；纯函数 `resolveFieldOptions` 的单测见 `tests/unit/formProUtils.test.js`。
+
+---
+
+## 8. ⚠️ 注意：watch formData → 改 items 会不会死循环？
 
 ### 结论
 **写法不当会触发，但根因是「watch 里写回了它所监听的源」，与组件无关。**
@@ -198,6 +307,6 @@ watch(formData, () => {
 
 ---
 
-## 8. 事件
+## 9. 事件
 
 `defineEmits` 仅声明 `update:modelValue`；`inheritAttrs: false`，其余 `onXxx` 监听器全部进入 `$attrs` 并原样透传到内部 `<el-form>`。因此 **el-form 的原生事件（如 `validate`）及任意自定义事件均正常触发**，无需手动重 emit。

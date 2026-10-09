@@ -35,7 +35,9 @@
  *     itemRender: {                 // 配置式渲染（element-plus 组件名 + props + options）
  *       name: 'ElInput',
  *       props: { placeholder: '请输入' },
- *       options: [{ label, value }],  // ElSelect/ElRadio/ElCheckbox 选项
+ *       options: [{ label, value }],  // ElSelect/ElRadio/ElCheckbox 选项，支持三种形态：
+ *                                    //   ① 静态数组；② (ctx)=>Option[] 函数（ctx.data 联动）；
+ *                                    //   ③ 响应式 ref（后端异步数据到位自动重渲染）
  *       events: { change: () => {} },
  *     },
  *   }
@@ -163,6 +165,36 @@ export const collectFieldProps = (items = []) => {
     if (isFieldItem(item)) set.add(item.prop);
   }
   return [...set];
+};
+
+/**
+ * 解析 itemRender.options：支持「静态数组 / 函数」两种形态，
+ * 统一返回选项数组（非法形态兜底为空数组）。
+ *
+ * 设计目的——解决选择类组件的 options 赋值痛点：
+ *   1. 静态数组：options: [{ label, value }]（原有能力，原样兼容）
+ *   2. 函数（级联联动）：options: (ctx) => Option[]
+ *      —— ctx = { data, value, prop }，data 为当前表单数据，
+ *         据此可实现「A 字段变化 → B 字段选项联动」。
+ *   3. 后端异步数据：由调用方把接口结果写入响应式 ref，再以
+ *      options: () => someRef.value 或直接传 ref 的形式提供；
+ *      因解析发生在 render 期间，读取 ref 会被 Vue 追踪依赖，
+ *      数据到位后自动重渲染，无需手动刷新。
+ *
+ * 注意：函数若返回 Promise / 非数组（如尚未加载完成），此处按空数组处理，
+ *       渲染不会报错；异步数据请用 ref 承载，不要让 options 直接返回 Promise。
+ *
+ * @param {Array|Function} options  选项配置
+ * @param {Object} ctx              渲染上下文 { data, value, prop }
+ * @returns {Array} 选项数组
+ */
+export const resolveFieldOptions = (options, ctx = {}) => {
+  if (typeof options === "function") {
+    const resolved = options(ctx);
+    return Array.isArray(resolved) ? resolved : [];
+  }
+  if (Array.isArray(options)) return options;
+  return [];
 };
 
 /**

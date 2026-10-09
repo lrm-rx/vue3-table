@@ -3,12 +3,13 @@
  * FormPro 内部：渲染单个「分组块」（匿名组或具名分组）。
  * 拆分为子组件，使 index.vue 模板保持简洁，同时 JSX 渲染逻辑独立可测。
  */
-import { computed, ref, useSlots, h, resolveComponent, mergeProps } from "vue";
+import { computed, ref, useSlots, h, resolveComponent, mergeProps, isRef } from "vue";
 import { ElRow, ElCol, ElFormItem, ElIcon, ElTooltip, ElTag } from "element-plus";
 import { ArrowRight, ArrowDown, ArrowUp } from "@element-plus/icons-vue";
 import {
   GRID_COLS,
   resolveVisibleEntries,
+  resolveFieldOptions,
 } from "./utils.js";
 
 const props = defineProps({
@@ -85,11 +86,17 @@ const renderByItemRender = (ir, item, ctx) => {
     "onUpdate:modelValue": (v) => setField(item.prop, v),
   };
   const children = [];
-  if (Array.isArray(ir.options) && ir.options.length) {
+  // 解析 options：支持 静态数组 / 函数(ctx) / 响应式 ref 三种形态。
+  // 先解包 ref（Vue 耦合），再交给纯函数 resolveFieldOptions 处理数组/函数。
+  // 读取发生在 render 期间 → ref 与函数内读取的响应式数据都会被 Vue 追踪依赖，
+  // 后端数据到位或联动字段变化时自动重渲染。
+  const rawOptions = isRef(ir.options) ? ir.options.value : ir.options;
+  const optionsList = resolveFieldOptions(rawOptions, ctx);
+  if (optionsList.length) {
     const optComp = pickOptionComponent(ir.name);
     if (optComp) {
       const isOptionTag = /select/i.test(ir.name);
-      for (const opt of ir.options) {
+      for (const opt of optionsList) {
         // el-option：value 必填，label 为显示文本；
         // el-radio / el-checkbox：label 即值，显示文本走默认插槽
         const optProps = isOptionTag

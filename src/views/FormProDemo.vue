@@ -2,7 +2,7 @@
 /**
  * FormPro 配置式表单演示：覆盖分组 / 列数 / 条件显隐 / 插入项 / JSX / itemRender / 插槽 等特性。
  */
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import {
   ElMessage,
   ElButton,
@@ -33,6 +33,8 @@ const formData = ref({
   role: "admin",
   hobbies: ["read"],
   level: "p6",
+  skill: "vue",
+  permissions: ["read", "write"],
 });
 
 // 运行时可切换的列数（演示 columns 动态生效）
@@ -53,6 +55,82 @@ const rules = {
   level: [{ required: true, message: "请选择职级", trigger: "change" }],
   zip: [
     { pattern: /^\d{6}$/, message: "邮编必须为 6 位数字", trigger: "blur" },
+  ],
+};
+
+// —— 演示：选择类组件 options 的多种赋值方式 ——
+// ①【后端接口异步返回】：把结果写入响应式 ref，itemRender.options 直接传该 ref
+//    （组件内 isRef 自动解包）。数据到位后因 render 期读取被 Vue 追踪，自动重渲染。
+// ②【级联联动】：options 写成函数，接收 ctx = { data, value, prop }，
+//    依据当前表单数据返回对应选项；依赖字段变化时自动重渲染。
+// ③【选项 props 透传】：选项对象支持 { label, value, props }，props 透传给 el-option 等（如 disabled）。
+// ④【编辑回填】：异步 options 到位后，已有默认值会自动匹配回显选中态。
+const levelOptions = ref([]);
+// 模拟后端接口：500ms 后返回职级列表（真实场景替换为 axios 请求）
+// 注：P8 带 props.disabled，演示「选项 props 透传」
+const fetchLevels = () =>
+  new Promise((resolve) => {
+    setTimeout(() => {
+      resolve([
+        { label: "P5（初级）", value: "p5" },
+        { label: "P6（中级）", value: "p6" },
+        { label: "P7（高级）", value: "p7" },
+        { label: "P8（专家）", value: "p8", props: { disabled: true } },
+      ]);
+    }, 500);
+  });
+
+// 模拟技能列表：异步加载，用于演示「ref 异步 + filterable 可搜索 + 编辑回填」
+const skillOptions = ref([]);
+const fetchSkills = () =>
+  new Promise((resolve) => {
+    setTimeout(() => {
+      resolve([
+        { label: "Vue", value: "vue" },
+        { label: "React", value: "react" },
+        { label: "TypeScript", value: "ts" },
+        { label: "Vite", value: "vite" },
+        { label: "Node.js", value: "node" },
+        { label: "Webpack", value: "webpack" },
+      ]);
+    }, 600);
+  });
+
+// 并行加载所有异步选项；到位后自动渲染，已有默认值自动回显
+onMounted(async () => {
+  const [levels, skills] = await Promise.all([fetchLevels(), fetchSkills()]);
+  levelOptions.value = levels;
+  skillOptions.value = skills;
+});
+
+// 级联联动数据一：省份 → 城市
+const cityMap = {
+  广东: [
+    { label: "广州", value: "gz" },
+    { label: "深圳", value: "sz" },
+    { label: "东莞", value: "dg" },
+  ],
+  浙江: [
+    { label: "杭州", value: "hz" },
+    { label: "宁波", value: "nb" },
+  ],
+  江苏: [
+    { label: "南京", value: "nj" },
+    { label: "苏州", value: "suzhou" },
+  ],
+};
+
+// 级联联动数据二：角色 → 权限（演示 ElCheckboxGroup 的函数形态 options）
+const permissionMap = {
+  admin: [
+    { label: "读取", value: "read" },
+    { label: "写入", value: "write" },
+    { label: "删除", value: "delete" },
+    { label: "管理", value: "admin" },
+  ],
+  viewer: [
+    { label: "读取", value: "read" },
+    { label: "导出", value: "export" },
   ],
 };
 
@@ -141,7 +219,6 @@ const items = ref([
   {
     prop: "enabled",
     label: "是否启用",
-    tip: "关闭后该账号将无法登录系统",
     itemRender: { name: "ElSwitch" },
   },
   // 插入项：在表单项之间插入自定义内容（render = JSX）
@@ -216,13 +293,30 @@ const items = ref([
         <ElButton
           size="small"
           onClick={() => {
-            ctx.data.role = ctx.value === "admin" ? "viewer" : "admin";
+            const next = ctx.value === "admin" ? "viewer" : "admin";
+            ctx.data.role = next;
+            // 级联清理：切换角色后，移除不在新权限选项中的值，避免残留失效值
+            const valid = new Set((permissionMap[next] || []).map((o) => o.value));
+            ctx.data.permissions = (ctx.data.permissions || []).filter((v) =>
+              valid.has(v)
+            );
           }}
         >
           切换
         </ElButton>
       </div>
     ),
+  },
+  // 级联联动示例二：角色 → 权限。ElCheckboxGroup 的 options 为函数，依据 data.role 返回；
+  // 切换角色（上方「切换」按钮）时已级联清理失效值。
+  {
+    prop: "permissions",
+    label: "权限",
+    tip: "选项随「角色」动态变化（ElCheckboxGroup 函数形态 options）",
+    itemRender: {
+      name: "ElCheckboxGroup",
+      options: (ctx) => permissionMap[ctx.data.role] || [],
+    },
   },
   {
     prop: "hobbies",
@@ -238,19 +332,57 @@ const items = ref([
       ],
     },
   },
+  // 级联联动示例：省份 → 城市。城市 options 为函数，依据 data.province 返回；
+  // 切换省份时通过 events.change 清空已选城市，避免残留失效值。
+  {
+    prop: "province",
+    label: "省份",
+    tip: "选择省份后，城市选项将联动更新",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择省份" },
+      options: [
+        { label: "广东", value: "广东" },
+        { label: "浙江", value: "浙江" },
+        { label: "江苏", value: "江苏" },
+      ],
+      events: { change: () => (formData.value.city = "") },
+    },
+  },
+  {
+    prop: "city",
+    label: "城市",
+    tip: "选项随「省份」动态变化（函数形态 options）",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择城市" },
+      // 函数形态：ctx.data 为当前表单数据，据此联动
+      options: (ctx) => cityMap[ctx.data.province] || [],
+    },
+  },
+  // 后端异步示例：options 直接传响应式 ref（levelOptions），
+  // onMounted 模拟接口返回后自动渲染，无需手动刷新；默认值 p6 演示「编辑回填」，
+  // P8 带 props.disabled 演示「选项 props 透传」。
   {
     prop: "level",
     label: "职级",
-    tip: "P5~P8 对应不同的薪资带宽",
+    tip: "异步加载（ref）+ 编辑回填（默认 p6）；P8 为禁用项（props 透传）",
     itemRender: {
       name: "ElSelect",
       props: { placeholder: "请选择职级" },
-      options: [
-        { label: "P5", value: "p5" },
-        { label: "P6", value: "p6" },
-        { label: "P7", value: "p7" },
-        { label: "P8", value: "p8" },
-      ],
+      options: levelOptions,
+    },
+  },
+  // 异步 + 可搜索示例：options 为 ref（异步），props.filterable 开启本地搜索；
+  // 默认值 vue 演示编辑回填。
+  {
+    prop: "skill",
+    label: "技能",
+    tip: "异步加载 + 可搜索（filterable）；默认值 vue 演示编辑回填",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择技能", filterable: true, clearable: true },
+      options: skillOptions,
     },
   },
   // 插槽式控件：引用外部 #remark 具名插槽

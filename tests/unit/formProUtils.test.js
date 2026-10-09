@@ -15,6 +15,7 @@ import {
   collectFieldProps,
   deriveDefaultValue,
   buildInitialData,
+  resolveFieldOptions,
 } from "../../src/components/formPro/utils.js";
 
 describe("formPro utils", () => {
@@ -287,6 +288,37 @@ describe("formPro utils", () => {
       const items = [{ prop: "a", itemRender: { name: "ElInput" } }];
       expect(buildInitialData(items)).toEqual({ a: "" });
       expect(buildInitialData(items, null)).toEqual({ a: "" });
+    });
+  });
+
+  describe("resolveFieldOptions（options 多形态解析）", () => {
+    const opts = [
+      { label: "P5", value: "p5" },
+      { label: "P6", value: "p6" },
+    ];
+    it("静态数组原样返回", () => {
+      expect(resolveFieldOptions(opts)).toEqual(opts);
+    });
+    it("函数形态：接收 ctx 并返回数组（级联联动）", () => {
+      const fn = (ctx) =>
+        ctx.data.type === "company"
+          ? [{ label: "企业专属", value: "ent" }]
+          : opts;
+      expect(resolveFieldOptions(fn, { data: { type: "personal" } })).toEqual(opts);
+      expect(resolveFieldOptions(fn, { data: { type: "company" } })).toEqual([
+        { label: "企业专属", value: "ent" },
+      ]);
+    });
+    it("函数返回非数组（如 Promise / undefined）兜底为空数组，不报错", () => {
+      expect(resolveFieldOptions(() => Promise.resolve(opts))).toEqual([]);
+      expect(resolveFieldOptions(() => undefined)).toEqual([]);
+      expect(resolveFieldOptions(() => null)).toEqual([]);
+    });
+    it("非法形态（非数组非函数）兜底为空数组", () => {
+      expect(resolveFieldOptions(undefined)).toEqual([]);
+      expect(resolveFieldOptions(null)).toEqual([]);
+      expect(resolveFieldOptions("abc")).toEqual([]);
+      expect(resolveFieldOptions(42)).toEqual([]);
     });
   });
 });
