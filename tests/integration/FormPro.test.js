@@ -798,4 +798,103 @@ describe("FormPro 配置式表单", () => {
     await flushPromises();
     expect(wrapper.vm.getSubmitData()).toEqual({ a: "1", b: "2" });
   });
+
+  // —— 边框表格样式（border）——
+  // 修复背景：border 模式下 el-form 根节点追加 .form-pro--border 类，
+  // 全部边框/单元格样式（含「错误提示不被裁切」的流式占位样式）均限定在该类作用域内。
+  describe("边框表格样式 border", () => {
+    it("默认（border=false）不渲染 .form-pro--border 根类", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { a: "" },
+        items: [{ prop: "a", label: "A" }],
+      });
+      await flushPromises();
+      expect(wrapper.find(".form-pro--border").exists()).toBe(false);
+    });
+
+    it("border=true：el-form 根节点带 .form-pro--border 类", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { a: "" },
+        border: true,
+        items: [{ prop: "a", label: "A" }],
+      });
+      await flushPromises();
+      const elForm = wrapper.findComponent({ name: "ElForm" });
+      expect(elForm.classes()).toContain("form-pro--border");
+      // 切换为 false → 类移除（向后兼容，恢复原外观）
+      await wrapper.setProps({ border: false });
+      await flushPromises();
+      expect(wrapper.find(".form-pro--border").exists()).toBe(false);
+    });
+
+    it("border 不泄漏到内部 el-form（已被 OWN_PROPS 剥离）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { a: "" },
+        border: true,
+        items: [{ prop: "a", label: "A" }],
+      });
+      await flushPromises();
+      const elForm = wrapper.findComponent({ name: "ElForm" });
+      // el-form 自身无 border 属性，避免被当作未知属性透传
+      expect(elForm.props("border")).toBeUndefined();
+    });
+
+    it("边框模式下校验失败：错误提示仍完整渲染（回归：提示不被裁切/丢失）", async () => {
+      // 说明：Element Plus 的字段校验在当前 jsdom 环境下状态会卡在 validating、
+      // 不渲染 .el-form-item__error（裸 ElForm 亦如此，与 FormPro 无关），
+      // 且组件 <style scoped> 不会注入 document.styleSheets。
+      // 因此「错误提示不被裁切」的修复以「源码契约 + 结构契约」两层守护：
+      //   ① 源码契约（本用例）：修复样式必须存在于 index.vue 的 .form-pro--border 作用域内；
+      //   ② 结构契约（见下用例）：border 根类存在，确保该作用域样式确实命中渲染树。
+      const { readFileSync } = await import("node:fs");
+      const { resolve } = await import("node:path");
+      const src = readFileSync(
+        resolve(process.cwd(), "src/components/formPro/index.vue"),
+        "utf-8",
+      );
+      // 修复核心：错误提示由绝对定位（溢出单元格被裁切）改为单元格内流式占位
+      expect(src).toMatch(/\.form-pro--border[\s\S]*?\.el-form-item__error[\s\S]*?position:\s*relative/);
+      // 填写提示 tip 同步改为流式占位，避免同样被裁切
+      expect(src).toMatch(/\.form-pro--border[\s\S]*?\.form-pro__field-tip[\s\S]*?position:\s*relative/);
+      // 容器 overflow:hidden（圆角裁剪）仍保留——修复是「让提示在单元格内占位」而非移除裁剪
+      expect(src).toMatch(/\.form-pro--border[\s\S]*?overflow:\s*hidden/);
+    });
+
+    it("边框模式结构契约：根类 + 单元格内容区存在，作用域样式可命中渲染树", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        border: true,
+        items: [
+          { prop: "name", label: "姓名", required: true, itemRender: { name: "ElInput" } },
+        ],
+      });
+      await flushPromises();
+      // 根类存在 → .form-pro--border 作用域样式生效
+      expect(wrapper.find(".form-pro--border").exists()).toBe(true);
+      // 表单项内容区存在 → 错误/提示占位样式的命中目标在渲染树中
+      const content = wrapper.find(".el-form-item__content");
+      expect(content.exists()).toBe(true);
+      // 内容区从属于带边框根类（样式作用域命中链成立）
+      expect(wrapper.find(".form-pro--border").element.contains(content.element)).toBe(true);
+    });
+
+    it("边框模式下 tip 填写提示仍渲染（同属单元格内占位，回归守护）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        border: true,
+        items: [
+          {
+            prop: "name",
+            label: "姓名",
+            tip: "请输入真实姓名",
+            itemRender: { name: "ElInput" },
+          },
+        ],
+      });
+      await flushPromises();
+      const tip = wrapper.find(".form-pro__field-tip");
+      expect(tip.exists()).toBe(true);
+      expect(tip.text()).toContain("请输入真实姓名");
+    });
+  });
 });

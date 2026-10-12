@@ -30,6 +30,8 @@ const props = defineProps({
   fieldErrors: { type: Object, default: () => ({}) },
   // 由父级传入的「字段 prop → el-form-item 实例」映射，渲染时回填，供父级暴露
   formItemRefs: { type: Object, default: () => ({}) },
+  // 边框表格样式开关：开启后在行/列单元格上追加修饰类，由 index.vue 的样式绘制边框
+  border: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["toggle-group", "toggle-all"]);
@@ -307,7 +309,10 @@ const render = () => {
     return renderInsertEntry(e);
   });
   const row = (
-    <ElRow gutter={props.gutter} class="form-pro__row">
+    <ElRow
+      gutter={props.gutter}
+      class={{ "form-pro__row": true, "form-pro__row--border": props.border }}
+    >
       {colNodes}
     </ElRow>
   );

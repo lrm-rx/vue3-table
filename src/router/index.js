@@ -44,6 +44,12 @@ const routes = [
         meta: { title: "配置式表单 FormPro", icon: "Document" },
       },
       {
+        path: "form-border",
+        name: "FormProBorder",
+        component: () => import("@/views/FormProBorderDemo.vue"),
+        meta: { title: "FormPro 边框表格样式", icon: "Document" },
+      },
+      {
         path: "float-ball",
         name: "FloatBall",
         component: () => import("@/views/FloatBallDemo.vue"),

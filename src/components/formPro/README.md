@@ -49,6 +49,7 @@ const items = ref([
 | `groupCollapsible` | Boolean | `true` | 分组默认是否可折叠（`group.collapsible` 可覆盖） |
 | `removeHiddenValues` | Boolean | `false` | 移除因 `visible`/`visibleMethod` 隐藏的字段值（见 §6） |
 | `autoFillDefaults` | Boolean | `true` | 按 items 自动补全缺失字段的默认值（见 §5） |
+| `border` | Boolean | `false` | 边框表格样式：外框 + 单元格网格线 + label 表头底色（见 §11） |
 
 > 其余属性（`labelWidth`/`labelPosition`/`rules`/`inline`/`disabled` 等）一律透传给内部 `<el-form>`。
 
@@ -369,3 +370,26 @@ watch(formData, () => {
 - `prefix` / `suffix` 作用于**控件内容区**，与 label 区域的 `titlePrefix` / `titleSuffix`（标题前后缀图标）相互独立。
 - 仅当配置了 `prefix` 或 `suffix` 时才渲染包裹容器（`.form-pro__field-control-wrap`）；未配置时 DOM 与原结构完全一致，零侵入。
 - 渲染函数内请勿返回 Promise（render 同步执行）。
+
+---
+
+## 11. 边框表格样式（border）
+
+开启 `border` 后，表单渲染为**带边框的表格外观**：外层整框 + 单元格网格线，label 区域带浅灰底色与右侧分隔线（类似「表头单元格」），适用于信息录入、详情描述类表单。
+
+```vue
+<FormPro
+  v-model="formData"
+  :items="items"
+  border          <!-- 开启边框表格样式 -->
+  label-width="100px"
+/>
+```
+
+**要点**：
+- 默认 `false`，完全向后兼容；仅在显式开启时追加 `.form-pro--border` 容器类与单元格网格线。
+- 推荐配合 `gutter="0"`（默认即为 0）使用，使单元格边框首尾相连、无间隙；`label-width` 建议固定值，表头观感更整齐。
+- 分组标题在边框模式下自动作为「分段标题行」渲染（占满整行、带底色与底部分隔线）。
+- 不影响数据双向绑定、校验、显隐、折叠等全部现有能力，仅为纯样式增强。
+
+> 完整示例见 [FormProBorderDemo.vue](../../../views/FormProBorderDemo.vue)。

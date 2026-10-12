@@ -63,6 +63,9 @@ const props = defineProps({
   // 自动补全初始值：根据 items 配置为未声明的字段填充合理默认值（Switch→false，CheckboxGroup→[]，其余→""），
   // 免去逐个声明 ""。item.defaultValue 可指定固定默认值；用户在 modelValue 中已提供的值始终优先。默认 true。
   autoFillDefaults: { type: Boolean, default: true },
+  // 边框表格样式：开启后表单渲染为带边框的表格外观（外框 + 单元格网格线 + label 表头底色），
+  // 适用于信息录入/详情描述类表单。默认 false，保持原外观（向后兼容）。推荐配合 gutter=0 使用。
+  border: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -217,7 +220,7 @@ watch(
 const getSubmitData = () => buildSubmitData(formData);
 
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
-const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "groupCollapsible", "removeHiddenValues", "autoFillDefaults"];
+const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border"];
 const attrs = useAttrs();
 const slots = useSlots();
 const formPropsComputed = computed(() => {
@@ -371,7 +374,12 @@ defineExpose(ownExposed);
 </script>
 
 <template>
-  <el-form ref="formRef" v-bind="formPropsComputed" @validate="onFormValidate">
+  <el-form
+    ref="formRef"
+    v-bind="formPropsComputed"
+    :class="{ 'form-pro--border': border }"
+    @validate="onFormValidate"
+  >
     <FormBlock
       v-for="(block, idx) in blocks"
       :key="idx"
@@ -383,6 +391,7 @@ defineExpose(ownExposed);
       :gutter="gutter"
       :title-colon="titleColon"
       :field-errors="fieldErrors"
+      :border="border"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :all-collapsed="allGroupsCollapsed"
@@ -398,4 +407,86 @@ defineExpose(ownExposed);
     <slot />
   </el-form>
 </template>
+
+<style lang="scss" scoped>
+// —— 边框表格样式（border 模式）——
+// .form-pro--border 挂在 <el-form> 根节点（本组件模板内，携带 scoped 属性）；
+// 内部 el-row / el-col / el-form-item 由 FormBlock 的 render 函数动态生成，
+// 深层节点不会带 scoped 属性，需用 :deep() 命中。
+// 视觉：外层整框 + 圆角；每个单元格（el-col）右侧/下侧网格线；
+//       label 区域带浅灰底色与右侧分隔线，呈现「表头单元格」观感。
+// 内部交汇线为单线；外层右/下边与单元格线叠加为 2px，形成轻微框架强调。
+.form-pro--border {
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  background-color: var(--el-bg-color);
+
+  // 单元格：右、下网格线；box-sizing 保证边框计入宽度不撑破栅格
+  :deep(.el-col) {
+    border-right: 1px solid var(--el-border-color);
+    border-bottom: 1px solid var(--el-border-color);
+    box-sizing: border-box;
+  }
+
+  // 消除 el-form-item 默认底边距，使内容填满单元格高度
+  :deep(.el-form-item) {
+    margin-bottom: 0;
+    height: 100%;
+  }
+
+  // label 单元格：浅灰底色 + 右侧分隔线，撑满单元格高度并垂直居中
+  :deep(.el-form-item__label) {
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    box-sizing: border-box;
+    background-color: var(--el-fill-color-light);
+    border-right: 1px solid var(--el-border-color);
+  }
+
+  // 控件区：上下留白容纳错误/提示文案；允许换行，使文案在控件下方另起一行流式占位
+  :deep(.el-form-item__content) {
+    padding: 4px 10px;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+  }
+
+  // —— 修复：校验错误提示被单元格边框裁切 ——
+  // Element Plus 默认 .el-form-item__error 为 position:absolute、top:100%，
+  // 会溢出到单元格之外，被下一行单元格背景与容器 overflow:hidden 裁切遮挡。
+  // 边框模式下改为「单元格内流式占位」：相对定位 + 占满一行，文案在控件下方显示，
+  // 单元格（行）随之增高，从根本上避免溢出裁切；不抬 z-index、不改层叠上下文。
+  :deep(.el-form-item__error) {
+    position: relative;
+    top: auto;
+    width: 100%;
+    padding-top: 2px;
+  }
+
+  // 同理：填写提示 tip（.form-pro__field-tip）原亦为绝对定位 top:100%，
+  // 边框模式下改为流式占位，避免被裁切。
+  :deep(.form-pro__field-tip) {
+    position: relative;
+    top: auto;
+    width: 100%;
+    padding-top: 2px;
+  }
+
+  // 分组块在边框模式下去掉默认底边距，由单元格网格线统一分隔
+  :deep(.form-pro__group) {
+    margin-bottom: 0;
+  }
+  // 分组标题行：在边框表格内作为「分段标题」，占满整行、带底色
+  :deep(.form-pro__group-header) {
+    padding: 8px 12px;
+    background-color: var(--el-fill-color-lighter, #fafafa);
+    border-bottom: 1px solid var(--el-border-color);
+  }
+  :deep(.form-pro__group-body) {
+    padding-top: 0;
+  }
+}
+</style>
 
