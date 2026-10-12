@@ -66,7 +66,7 @@ const items = ref([
 | `rules` | 单字段校验规则 |
 | `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
-| `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/...）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染） |
+| `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/.../UploadPro）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染）。内置 `UploadPro` 上传控件见 §12 |
 | `render(h, ctx)` | JSX 自定义渲染控件，`ctx = { value, data }` |
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
 | `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(h, ctx) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
@@ -116,6 +116,7 @@ formRef.value.getFormItem("email").clearValidate();
 |---|---|
 | `ElSwitch` | `false` |
 | `ElCheckboxGroup` | `[]` |
+| `UploadPro` / 名称含 Upload 的控件 | `[]` |
 | 其余（Input/Select/Radio/DatePicker/InputNumber…） | `""` |
 | 指定了 `item.defaultValue` | 该值（优先级最高） |
 
@@ -393,3 +394,115 @@ watch(formData, () => {
 - 不影响数据双向绑定、校验、显隐、折叠等全部现有能力，仅为纯样式增强。
 
 > 完整示例见 [FormProBorderDemo.vue](../../../views/FormProBorderDemo.vue)。
+
+---
+
+## 12. 上传集成（内置 UploadPro）
+
+表单内置上传控件 `UploadPro`（文件：`UploadPro.vue` + `uploadUtils.js`），对 Element Plus `el-upload` 二次封装，**完整保留 el-upload 的属性 / 事件 / 实例方法**，并补齐四个开箱能力：
+
+1. **照片墙粘贴上传**：`list-type="picture-card"` 时触发卡片内 `+` 号下方渲染「点击此处粘贴图片」入口，点击该入口（已拦截冒泡，**不会弹出文件选择窗**）聚焦后 `Ctrl+V` 即可粘贴截图 / 复制的图片；点击卡片其他区域（`+` 号 / 空白处）仍正常打开文件选择。粘贴文件走 el-upload 原生链路（`handleStart` 入队 → `beforeUpload` 校验 → 进度 → 成功回填），不另造上传请求。
+2. **内置图片预览**：点击墙内图片弹出 `el-dialog + el-image`（`preview-src-list` / `initial-index`），支持左右切换、缩放、旋转。
+3. **非图片文件预览预留**：`text` / `picture` 列表中，每个文件在「打勾 / 打叉」状态图标**之前**显示眼睛图标，点击（或点击文件名）触发 `preview` 事件，作为后续文件预览组件的挂载点（本组件不实现非图片预览）。
+4. **拖拽区宽高自定义**：`drag` 模式下通过 `dragWidth` / `dragHeight` 设置区域宽高（数字按 px，字符串如 `'100%'`、`'480px'` 原样生效）。
+
+### 配置方式
+
+```js
+{
+  prop: "photos",
+  label: "现场照片",
+  required: true,
+  itemRender: {
+    name: "UploadPro", // 内置控件，无需全局注册
+    props: {
+      listType: "picture-card", // text | picture | picture-card（默认 picture-card）
+      multiple: true,
+      limit: 8,
+      accept: "image/*",
+      maxSizeMb: 5, // 内置大小校验，超限自动拦截提示
+      // 真实上传二选一：
+      action: "/api/upload", // ① el-upload 原生 action
+      httpRequest: (option) => request(option), // ② 自定义请求（option.file / option.onProgress）
+      // 其余 el-upload 属性（headers/data/name/withCredentials/autoUpload/beforeUpload…）
+      // 未在 UploadPro 显式声明的，一律透传给内部 el-upload
+    },
+    events: {
+      // 非图片预览触发：payload = { file, name, url, index, fileList }
+      preview: ({ name, url }) => filePreviewRef.value.open({ name, url }),
+      // el-upload 原生事件同样可用：success / error / remove / progress / change / exceed
+    },
+  },
+}
+```
+
+### UploadPro Props
+
+| Prop | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `modelValue` (v-model) | Array | `[]` | 成功文件数组：`string[]`（URL）或 `{ name, url }[]`（`valueFormat` 控制输出） |
+| `listType` | String | `picture-card` | 同 el-upload：`text` / `picture` / `picture-card` |
+| `showFileList` | Boolean | `true` | 同 el-upload |
+| `drag` | Boolean | `false` | 同 el-upload，拖拽上传 |
+| `multiple` / `accept` / `limit` / `disabled` / `autoUpload` | - | el-upload 默认 | 常用 el-upload 属性显式透出 |
+| `pasteable` | Boolean | `true` | 照片墙是否显示粘贴入口（`+` 号下方文字，仅 picture-card 生效） |
+| `pasteText` | String | `点击此处粘贴图片` | 粘贴入口文案 |
+| `dragWidth` / `dragHeight` | Number/String | `""` | 拖拽区宽高；数字 → px，字符串原样；不传用 el-upload 默认 |
+| `dragText` | String | `将文件拖到此处，或点击上传` | 拖拽区文案（支持简单 HTML） |
+| `buttonText` / `buttonType` | String | `点击上传` / `primary` | text / picture 模式触发按钮 |
+| `tip` | String | `""` | el-upload 下方提示（也可用 `#tip` 插槽） |
+| `maxSizeMb` | Number | `0` | 单文件大小上限（MB），内置 beforeUpload 拦截；0 不限制 |
+| `responseKey` | String | `data.url` | 成功响应中 URL 的 lodash-get 路径；取不到回退 `response.url` / 字符串响应 |
+| `resolveResponse` | Function | - | `(response, file) => { name, url } | url`，自定义响应解析，优先级最高 |
+| `valueFormat` | String | `file` | `file` → `{name,url}[]`；`url` → `string[]` |
+| `showExceedMessage` / `showErrorMessage` | Boolean | `true` | 超限 / 失败默认提示开关 |
+
+> 其余 el-upload 属性（`action` / `headers` / `method` / `data` / `name` / `withCredentials` / `httpRequest` / `directory` / `crossorigin`）经 `$attrs` 原样透传内部 `el-upload`；`beforeUpload` / `beforeRemove` 由组件包装（内置大小校验 + 用户钩子串联，用户钩子照常生效）。
+
+### 事件
+
+| 事件 | 说明 |
+|---|---|
+| `update:modelValue` | 成功文件列表变化（仅 success 项），用于 v-model |
+| `preview` | **非图片文件预览触发**（眼睛图标 / 文件名点击）；payload `{ file, name, url, index, fileList }` —— 后续预览组件挂载点 |
+| `success` / `error` / `remove` / `progress` / `change` / `exceed` | 与 el-upload 同名事件，参数签名一致 |
+
+### 实例方法（ref）
+
+el-upload 暴露的 **5 个方法全部提供便捷代理**：
+
+- `uploadRef` —— 原始 el-upload 实例（需要更底层访问时使用）
+- `abort(file?)` —— 取消上传请求（不传 file 取消全部）
+- `submit()` —— 手动上传已入队文件（配合 `autoUpload: false`）
+- `clearFiles(states?)` —— 清空文件列表（可按状态过滤）
+- `handleStart(rawFile)` —— 编程式添加文件到队列
+- `handleRemove(file)` —— 编程式移除文件（传 UploadFile 或原始 File）
+- `pasteImages(files)` —— 编程式粘贴：直接传入 `File[]`（仅图片）走同一上传链路
+
+### 插槽
+
+| 插槽 | 说明 |
+|---|---|
+| 默认插槽 | 整体自定义触发区（对应 el-upload 的 default 插槽）；不传时按模式渲染内置内容：拖拽文案 / 照片墙 `+` / 上传按钮 |
+| `tip` | 上传区下方提示内容；不传时渲染 `tip` prop 文案 |
+| `file` | 由组件内部接管（照片墙缩略图 / 列表行 + 眼睛图标 + 状态角标），不对外透出 |
+
+### v-model 数据形态
+
+```js
+// 默认 valueFormat='file'
+photos: [
+  { name: "a.png", url: "https://example.com/a.png" },
+];
+// valueFormat='url'
+photos: ["https://example.com/a.png"]; // 文件名按 URL 末段自动推导
+```
+
+编辑回填时直接把历史文件数组传入即可（自动归一化为 success 态，el-upload 不会重新上传）。字段无需手动声明空数组，`autoFillDefaults` 会为 `UploadPro` 字段补 `[]`。
+
+### 多上传项与粘贴投递
+
+同一表单可配置任意多个上传项；每个 `UploadPro` 实例的文件列表、预览弹窗、粘贴入口相互独立。粘贴采用**单入口 + 焦点投递**：点击卡片内粘贴入口（或聚焦到墙内）后按 `Ctrl+V`，只投递到当前实例，不会一次粘贴触发多路上传；粘贴入口的点击已阻止冒泡，不会误弹文件选择窗；粘贴内容非图片时不拦截，保持浏览器原生行为。
+
+> 完整示例见 [FormProUploadDemo.vue](../../../views/FormProUploadDemo.vue)（照片墙 / 单图 / 附件眼睛事件 / 缩略图 / 两个不同尺寸拖拽区）。
+

@@ -54,6 +54,7 @@ declare module 'vue' {
     ElSwitch: typeof import('element-plus/es')['ElSwitch']
     ElTable: typeof import('element-plus/es')['ElTable']
     ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
+    ElTag: typeof import('element-plus/es')['ElTag']
     FilterCheckbox: typeof import('./../components/tablePro/filters/FilterCheckbox.vue')['default']
     FilterDateRange: typeof import('./../components/tablePro/filters/FilterDateRange.vue')['default']
     FilterInput: typeof import('./../components/tablePro/filters/FilterInput.vue')['default']
@@ -71,6 +72,7 @@ declare module 'vue' {
     TablePro: typeof import('./../components/tablePro/index.vue')['default']
     TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
     Time: typeof import('./../components/mdEditor/extensions/Time.vue')['default']
+    UploadPro: typeof import('./../components/formPro/UploadPro.vue')['default']
     VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
   }
   export interface GlobalDirectives {
@@ -122,6 +124,7 @@ declare global {
   const ElSwitch: typeof import('element-plus/es')['ElSwitch']
   const ElTable: typeof import('element-plus/es')['ElTable']
   const ElTableColumn: typeof import('element-plus/es')['ElTableColumn']
+  const ElTag: typeof import('element-plus/es')['ElTag']
   const FilterCheckbox: typeof import('./../components/tablePro/filters/FilterCheckbox.vue')['default']
   const FilterDateRange: typeof import('./../components/tablePro/filters/FilterDateRange.vue')['default']
   const FilterInput: typeof import('./../components/tablePro/filters/FilterInput.vue')['default']
@@ -139,5 +142,6 @@ declare global {
   const TablePro: typeof import('./../components/tablePro/index.vue')['default']
   const TextareaPopoverEdit: typeof import('./../components/tablePro/editors/TextareaPopoverEdit.vue')['default']
   const Time: typeof import('./../components/mdEditor/extensions/Time.vue')['default']
+  const UploadPro: typeof import('./../components/formPro/UploadPro.vue')['default']
   const VirtualList: typeof import('./../components/comment/components/VirtualList.vue')['default']
 }

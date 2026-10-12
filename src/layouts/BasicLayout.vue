@@ -13,6 +13,7 @@ import {
   EditPen,
   Document,
   Aim,
+  Upload,
   Fold,
   Expand,
 } from "@element-plus/icons-vue";
@@ -35,6 +36,7 @@ const iconMap = {
   EditPen,
   Document,
   Aim,
+  Upload,
 };
 
 // 菜单数据：取当前布局下的子路由

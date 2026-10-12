@@ -50,6 +50,12 @@ const routes = [
         meta: { title: "FormPro 边框表格样式", icon: "Document" },
       },
       {
+        path: "form-upload",
+        name: "FormProUpload",
+        component: () => import("@/views/FormProUploadDemo.vue"),
+        meta: { title: "FormPro 上传集成", icon: "Upload" },
+      },
+      {
         path: "float-ball",
         name: "FloatBall",
         component: () => import("@/views/FloatBallDemo.vue"),

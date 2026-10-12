@@ -11,6 +11,19 @@ import {
   resolveVisibleEntries,
   resolveFieldOptions,
 } from "./utils.js";
+import UploadPro from "./UploadPro.vue";
+
+// FormPro 内置控件映射：itemRender.name 命中时直接使用随包组件，
+// 无需在 main.js 全局注册（render 函数中 resolveComponent 无法命中
+// unplugin-vue-components 的按需自动导入）。
+const BUILTIN_ITEM_RENDERS = {
+  uploadpro: UploadPro,
+};
+
+const resolveItemRenderComponent = (name) => {
+  const hit = BUILTIN_ITEM_RENDERS[String(name || "").toLowerCase()];
+  return hit || resolveComponent(name);
+};
 
 const props = defineProps({
   block: { type: Object, required: true },
@@ -79,7 +92,7 @@ const pickOptionComponent = (name) => {
 };
 
 const renderByItemRender = (ir, item, ctx) => {
-  const comp = resolveComponent(ir.name);
+  const comp = resolveItemRenderComponent(ir.name);
   // 内部 v-model 绑定放在 ir.props 之后，确保用户在 itemRender.props 中误写
   // modelValue / onUpdate:modelValue 不会破坏组件的双向同步。
   const bindProps = {

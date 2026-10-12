@@ -207,6 +207,7 @@ export const resolveFieldOptions = (options, ctx = {}) => {
  * 推导规则（基于 itemRender.name，忽略大小写）：
  *   - Switch        → false
  *   - CheckboxGroup → []
+ *   - Upload / UploadPro（el-upload 系列）→ []
  *   - 其余（Input/Select/Radio/DatePicker/InputNumber…）→ ""
  * 若 item 显式声明了 defaultValue，则优先使用它（作为该项的固定默认值）。
  */
@@ -215,6 +216,7 @@ export const deriveDefaultValue = (item) => {
   const name = String(item?.itemRender?.name || "").toLowerCase();
   if (name.includes("switch")) return false;
   if (name.includes("checkbox")) return [];
+  if (name.includes("upload")) return [];
   return "";
 };
 
