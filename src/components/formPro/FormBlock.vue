@@ -177,6 +177,41 @@ const buildLabel = (item) => {
   return h("span", { class: "form-pro__title" }, children);
 };
 
+// —— 控件前后缀（prefix / suffix）：在 el-form-item 内容区、控件的前后渲染文本/元素 ——
+// 支持两种形态：
+//   ① 字符串 → 渲染为纯文本（如 "￥"、"个"、"元"）
+//   ② 函数 (h, ctx) => VNode → 自定义渲染，ctx = { value, prop, data }，
+//      可读取当前字段值与表单数据，实现「有 xxx 个」等动态文本。
+// 应用场景：输入框前加货币符号、后加单位；或展示与当前值联动的描述文本。
+const resolveFieldAffix = (val, ctx) => {
+  if (val == null || val === "") return null;
+  if (typeof val === "function") return val(h, ctx);
+  return h("span", { class: "form-pro__field-affix-text" }, String(val));
+};
+
+const renderFieldContent = (item) => {
+  const ctx = {
+    value: props.formData[item.prop],
+    prop: item.prop,
+    data: props.formData,
+  };
+  const control = renderFieldControl(item);
+  const prefixNode = resolveFieldAffix(item.prefix, ctx);
+  const suffixNode = resolveFieldAffix(item.suffix, ctx);
+  // 无前后缀时直接返回控件，保持原有 DOM 结构不变（零侵入）
+  if (!prefixNode && !suffixNode) return control;
+  const children = [
+    prefixNode
+      ? h("span", { class: "form-pro__field-prefix" }, [prefixNode])
+      : null,
+    h("div", { class: "form-pro__field-control" }, [control]),
+    suffixNode
+      ? h("span", { class: "form-pro__field-suffix" }, [suffixNode])
+      : null,
+  ].filter(Boolean);
+  return h("div", { class: "form-pro__field-control-wrap" }, children);
+};
+
 const renderFieldEntry = (entry) => {
   const { item, span, required } = entry;
   // 填写/选择提示 tip：位于校验错误提示同一位置（控件下方），颜色为 success 主色调。
@@ -203,7 +238,7 @@ const renderFieldEntry = (entry) => {
     {
       label: () => buildLabel(item),
       default: () => {
-        const nodes = [renderFieldControl(item)];
+        const nodes = [renderFieldContent(item)];
         if (showTip) {
           nodes.push(h("div", { class: "form-pro__field-tip", title: tip }, tip));
         }
@@ -362,6 +397,38 @@ defineExpose({ entries });
 :deep(.form-pro__title-colon) {
   margin-left: 2px;
   font-weight: normal;
+}
+// 控件前后缀容器：prefix + 控件 + suffix 横向排列、垂直居中。
+// 控件按自身宽度渲染（不撑满），前后缀紧贴控件，多余空白留在后缀之后。
+// 仅在配置了 prefix / suffix 时渲染；无前后缀时 DOM 与原结构一致（零侵入）。
+// （DOM 由 render 函数生成，需 :deep 命中）
+:deep(.form-pro__field-control-wrap) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+:deep(.form-pro__field-prefix),
+:deep(.form-pro__field-suffix) {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--el-text-color-regular);
+  font-size: var(--el-font-size-base, 14px);
+  line-height: 1;
+  white-space: nowrap;
+}
+// 控件容器：不撑满（flex:0 1 auto），按控件自身宽度收缩。
+// 这样前后缀紧贴控件渲染（如 el-input-number 默认 150px，「元」紧跟其后），
+// 多余空白留在后缀之后，而非把后缀推到容器最右端。
+// min-width:0 允许内部控件在空间不足时正确收缩。
+:deep(.form-pro__field-control) {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+// 前后缀纯文本节点（字符串形态）的样式占位
+:deep(.form-pro__field-affix-text) {
+  display: inline;
 }
 // 字段「填写/选择提示」：与 el-form-item 错误提示共用同一位置（控件正下方，绝对定位），
 // 颜色为 success 主色调。仅在字段未校验失败时渲染；校验失败时由 el-form-item 错误提示占据该位置。

@@ -27,6 +27,8 @@ const tableData = ref([
 const formData = ref({
   name: "张三",
   age: 28,
+  price: 99.5,
+  count: 10,
   gender: "male",
   enabled: true,
   type: "personal",
@@ -184,6 +186,34 @@ const items = ref([
     itemRender: {
       name: "ElInputNumber",
       props: { min: 0, max: 150, controlsPosition: "right" },
+    },
+  },
+  // —— 演示：控件前后缀 prefix / suffix ——
+  // ① 静态文本：控件前加货币符号、后加单位
+  {
+    prop: "price",
+    label: "价格",
+    prefix: "￥",
+    suffix: "元",
+    tip: "prefix/suffix 在控件前后渲染（非 label 区域）",
+    itemRender: {
+      name: "ElInputNumber",
+      props: { min: 0, precision: 2, controlsPosition: "right" },
+    },
+  },
+  // ② 动态文本：suffix 为函数，读取当前值渲染「当前输入：N 个」，值变化自动重渲染
+  {
+    prop: "count",
+    label: "数量",
+    suffix: (h, ctx) => (
+      <span style={{ color: "var(--el-text-color-secondary)" }}>
+        当前输入：{ctx.value ?? 0} 个
+      </span>
+    ),
+    tip: "函数形态可读取 ctx.value 实现与当前值联动的动态文本",
+    itemRender: {
+      name: "ElInputNumber",
+      props: { min: 0, controlsPosition: "right" },
     },
   },
   {

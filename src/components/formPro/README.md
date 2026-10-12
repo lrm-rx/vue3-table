@@ -68,6 +68,7 @@ const items = ref([
 | `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/...）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染） |
 | `render(h, ctx)` | JSX 自定义渲染控件，`ctx = { value, data }` |
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
+| `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(h, ctx) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
 | `visible` / `visibleMethod(data)` | 条件显隐（`visibleMethod` 返回 `false` 表示隐藏） |
 | `removeValueOnHidden` | 项级：隐藏时是否移除值（覆盖表单级 `removeHiddenValues`） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
@@ -310,3 +311,61 @@ watch(formData, () => {
 ## 9. 事件
 
 `defineEmits` 仅声明 `update:modelValue`；`inheritAttrs: false`，其余 `onXxx` 监听器全部进入 `$attrs` 并原样透传到内部 `<el-form>`。因此 **el-form 的原生事件（如 `validate`）及任意自定义事件均正常触发**，无需手动重 emit。
+
+---
+
+## 10. 控件前后缀（prefix / suffix）
+
+在 `el-form-item` 的**内容区**、控件的**前/后**渲染文本或自定义元素（与 label 无关）。典型场景：输入框前加货币符号、后加单位；或展示与当前值联动的描述文本。
+
+### 两种形态
+
+| 形态 | 写法 | 适用场景 |
+|---|---|---|
+| ① 字符串 | `prefix: "￥"` / `suffix: "个"` | 静态文本（单位、符号、量词） |
+| ② 渲染函数 | `(h, ctx) => VNode` | 需要读取当前值的**动态文本**，ctx = `{ value, prop, data }` |
+
+### ① 静态文本（单位 / 符号）
+
+```js
+{
+  prop: "price",
+  label: "价格",
+  prefix: "￥",          // 控件前：货币符号
+  suffix: "元",          // 控件后：单位
+  itemRender: { name: "ElInputNumber", props: { min: 0, precision: 2 } },
+}
+```
+
+渲染效果：`￥ [ 输入框 ] 元`，三者横向排列、垂直居中。**控件按自身宽度渲染**（如 `ElInputNumber` 默认 150px），前后缀紧贴控件，多余空白留在后缀之后——单位不会被推到容器最右端。
+
+### ② 动态文本（与当前值联动）
+
+函数形态接收 `ctx`，可读取 `ctx.value`（当前字段值）与 `ctx.data`（整个表单数据），实现「有 xxx 个」等动态描述：
+
+```js
+{
+  prop: "count",
+  label: "数量",
+  // 读取当前值，渲染「当前输入：N 个」；值变化时自动重渲染
+  suffix: (h, ctx) => h("span", { style: { color: "#909399" } },
+    `当前输入：${ctx.value ?? 0} 个`),
+  itemRender: { name: "ElInputNumber", props: { min: 0 } },
+}
+```
+
+也可前后都配、或只配一侧：
+
+```js
+{
+  prop: "phone",
+  label: "手机号",
+  prefix: "+86",
+  itemRender: { name: "ElInput", props: { placeholder: "请输入手机号" } },
+}
+```
+
+**关键约束**：
+- `prefix` / `suffix` 作用于**控件内容区**，与 label 区域的 `titlePrefix` / `titleSuffix`（标题前后缀图标）相互独立。
+- 仅当配置了 `prefix` 或 `suffix` 时才渲染包裹容器（`.form-pro__field-control-wrap`）；未配置时 DOM 与原结构完全一致，零侵入。
+- 渲染函数内请勿返回 Promise（render 同步执行）。
