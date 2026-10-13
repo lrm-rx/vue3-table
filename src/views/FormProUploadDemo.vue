@@ -1,7 +1,7 @@
 <script setup lang="jsx">
 /**
  * FormPro + UploadPro 上传能力演示：
- *  1. 照片墙：复制粘贴上传 + 内置 el-dialog/el-image 大图预览
+ *  1. 照片墙：复制粘贴上传 + 内置 el-image 全屏大图预览（无 el-dialog）
  *  2. 非图片文件：文件列表眼睛图标 → preview 事件（文件预览组件预留触发点）
  *  3. 同一表单配置多个上传项（照片墙 / 单图 / 附件 / 缩略图 / 拖拽）
  *  4. 拖拽上传区域自定义宽高（dragWidth / dragHeight）

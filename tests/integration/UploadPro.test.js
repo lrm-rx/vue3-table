@@ -168,7 +168,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     expect(hosts[1].findAll(".el-upload-list__item").length).toBe(0);
   });
 
-  it("点击墙内缩略图（整图可点）打开 el-dialog + el-image 预览", async () => {
+  it("点击墙内缩略图（整图可点）打开 el-image 内置查看器预览（无 el-dialog）", async () => {
     const wrapper = mountUpload({
       modelValue: [
         { name: "a.png", url: "https://example.com/a.png" },
@@ -183,8 +183,8 @@ describe("UploadPro 照片墙（picture-card）", () => {
     expect(thumbs.length).toBe(2);
     await thumbs[1].trigger("click");
     await flushPromises();
-    const dialog = wrapper.findComponent({ name: "ElDialog" });
-    expect(dialog.props("modelValue")).toBe(true);
+    // 无 el-dialog 外壳；隐藏 el-image 宿主持有预览集
+    expect(wrapper.findComponent({ name: "ElDialog" }).exists()).toBe(false);
     const img = wrapper.findComponent({ name: "ElImage" });
     expect(img.props("previewSrcList")).toEqual([
       "https://example.com/a.png",
@@ -192,6 +192,9 @@ describe("UploadPro 照片墙（picture-card）", () => {
     ]);
     // 点击第二张 → initial-index 定位到 1
     expect(img.props("initialIndex")).toBe(1);
+    // 查看器已唤起（teleport 到 body）
+    expect(document.body.querySelector(".el-image-viewer__wrapper")).toBeTruthy();
+    wrapper.unmount();
   });
 
   it("点击 hover 操作层（透明覆盖层，真实点击落点）同样打开预览", async () => {
@@ -202,20 +205,19 @@ describe("UploadPro 照片墙（picture-card）", () => {
     await wrapper.find(".el-upload-list__item-actions").trigger("click");
     await flushPromises();
     expect(
-      wrapper.findComponent({ name: "ElDialog" }).props("modelValue"),
-    ).toBe(true);
+      wrapper.findComponent({ name: "ElImage" }).props("previewSrcList"),
+    ).toEqual(["https://example.com/a.png"]);
+    wrapper.unmount();
   });
 
-  it("dialog 打开后自动唤起 el-image-viewer 大图查看器（teleport 到 body）", async () => {
+  it("点击图片直接唤起 el-image-viewer 大图查看器（teleport 到 body，无 dialog）", async () => {
     document.body.innerHTML = "";
     const wrapper = mountUpload({
       modelValue: [{ name: "a.png", url: "https://example.com/a.png" }],
     });
     await flushPromises();
     await wrapper.find(".upload-pro__card-thumb").trigger("click");
-    // 等待 dialog after-enter（jsdom 下过渡时长为 0，下一帧即触发 opened）
     await flushPromises();
-    await new Promise((r) => setTimeout(r, 60));
     expect(document.body.querySelector(".el-image-viewer__wrapper")).toBeTruthy();
     wrapper.unmount();
   });
@@ -229,8 +231,9 @@ describe("UploadPro 照片墙（picture-card）", () => {
     await wrapper.find(".el-upload-list--picture-card .el-upload-list__item").trigger("click");
     await flushPromises();
     expect(
-      wrapper.findComponent({ name: "ElDialog" }).props("modelValue"),
-    ).toBe(true);
+      wrapper.findComponent({ name: "ElImage" }).props("previewSrcList"),
+    ).toEqual(["https://example.com/a.png"]);
+    wrapper.unmount();
   });
 
   it("照片墙 hover 操作层删除按钮可移除文件并回抛 v-model", async () => {
@@ -312,8 +315,9 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     await flushPromises();
     expect(wrapper.emitted("preview")).toBeFalsy();
     expect(
-      wrapper.findComponent({ name: "ElDialog" }).props("modelValue"),
-    ).toBe(true);
+      wrapper.findComponent({ name: "ElImage" }).props("previewSrcList"),
+    ).toEqual(["https://example.com/a.png"]);
+    wrapper.unmount();
   });
 });
 
@@ -401,7 +405,7 @@ describe("UploadPro 统一 #file 插槽的内部分支（isCard v-if / v-else）
     expect(wrapper.find(".upload-pro__eye").exists()).toBe(false);
   });
 
-  it("切换后两分支的预览行为仍然正确（列表眼睛 → preview；卡片缩略图 → 内置 dialog）", async () => {
+  it("切换后两分支的预览行为仍然正确（列表眼睛 → preview；卡片缩略图 → 内置查看器）", async () => {
     const wrapper = mountUpload({
       modelValue: [
         { name: "a.pdf", url: "https://example.com/a.pdf" },
@@ -422,9 +426,11 @@ describe("UploadPro 统一 #file 插槽的内部分支（isCard v-if / v-else）
     await flushPromises();
     await wrapper.findAll(".upload-pro__card-thumb")[1].trigger("click");
     await flushPromises();
-    expect(
-      wrapper.findComponent({ name: "ElDialog" }).props("modelValue"),
-    ).toBe(true);
+    // 预览集仅含成功图片（a.pdf 被过滤），b.png 定位到 0
+    const img = wrapper.findComponent({ name: "ElImage" });
+    expect(img.props("previewSrcList")).toEqual(["https://example.com/b.png"]);
+    expect(img.props("initialIndex")).toBe(0);
+    wrapper.unmount();
   });
 
   it("结构守卫：模板中只声明一个 #file 插槽（分支在插槽内部 v-if/v-else）", () => {

@@ -10,8 +10,9 @@
  *       UploadPro 实例内就上传到哪一个，多个上传项互不干扰），粘贴文件通过
  *       el-upload 暴露的 handleStart 入队、submit 触发，完整复用 beforeUpload
  *       校验、进度、成功回填链路，不另造一套上传请求；
- *     - 内置图片预览：el-dialog + el-image（preview-src-list / initial-index），
- *       点击墙内图片即打开，支持左右切换、缩放、旋转；
+ *     - 内置图片预览：组件内隐藏一个 el-image 作宿主，点击图片调用其
+ *       showPreview() 唤起内置全屏查看器（preview-src-list / initial-index，
+ *       teleport 到 body），支持左右切换、缩放、旋转，无需 el-dialog 外壳；
  *  3. 非图片文件（text / picture 列表 + show-file-list）：自定义 #file 渲染，
  *     在打勾 / 打叉状态图标「之前」放置眼睛图标，点击触发 preview 事件，
  *     作为后续接入文件预览组件的预留触发机制（本组件不实现非图片预览）；
@@ -32,7 +33,7 @@ import {
   useAttrs,
   useSlots,
 } from "vue";
-import { ElUpload, ElButton, ElIcon, ElDialog, ElImage, ElProgress, ElMessage } from "element-plus";
+import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage } from "element-plus";
 import {
   Plus,
   Upload as UploadIcon,
@@ -251,14 +252,14 @@ const pasteImages = (files) => {
 };
 
 // —— 预览 ——
-// 图片预览弹窗状态（每个 UploadPro 实例独立，多个上传项互不影响）
+// 图片预览状态（每个 UploadPro 实例独立，多个上传项互不影响）。
+// 不包 el-dialog：模板末尾渲染一个隐藏的 el-image 作为查看器宿主，
+// 点击时更新 urls / index 后调用其 showPreview() 唤起全屏查看器。
 const preview = reactive({
-  visible: false,
   urls: [],
   index: 0,
   key: 0,
 });
-const imageHostRef = ref(null);
 const elImageRef = ref(null);
 
 /** 构造非图片 preview 事件载荷（后续预览组件可直接消费） */
@@ -275,7 +276,7 @@ const buildPreviewPayload = (file) => {
 };
 
 /** 打开图片预览：以当前所有成功图片为预览集，定位到被点击的张 */
-const openImagePreview = (file) => {
+const openImagePreview = async (file) => {
   const images = fileList.value.filter(
     (f) => f.status === "success" && isImageFile(f),
   );
@@ -291,41 +292,22 @@ const openImagePreview = (file) => {
   preview.urls = urls;
   preview.index = idx < 0 ? 0 : idx;
   preview.key += 1;
-  preview.visible = true;
+  // 等隐藏 el-image 按新 previewSrcList / initialIndex 重渲染后唤起查看器。
+  // 查看器由 ElImage 内部维护并 teleport 到 body，关闭（Esc / X / 点遮罩）
+  // 也由其自行处理，无需外层联动
+  await nextTick();
+  elImageRef.value?.showPreview?.();
 };
 
 /**
  * 统一预览入口：
- *  - 图片（照片墙 / 图片文件）→ 内置 el-dialog + el-image 预览；
+ *  - 图片（照片墙 / 图片文件）→ 内置 el-image 查看器预览；
  *  - 非图片文件 → 抛 preview 事件（预留外部预览组件挂载点）。
  */
 const handlePreview = (file) => {
   if (!file || file.status === "uploading") return;
   if (isImageFile(file)) openImagePreview(file);
   else emit("preview", buildPreviewPayload(file));
-};
-
-// 弹窗打开后自动进入 el-image 大图查看器：
-// 不依赖 dialog 过渡的 @opened 回调（jsdom / 某些场景不触发），改为 watch visible，
-// ElImage 挂载后调用其实例暴露的 showPreview()（点击处理器挂在内层 img 上，
-// 直接 click 外层 .el-image 不会触发预览）。
-// 再延迟一个宏任务：el-dialog 自带 focus-trap，viewer 也有 focus-trap，
-// 需等 dialog 的 trap 安定后再唤起 viewer，避免双 trap 激活顺序竞态导致 viewer 闪退
-watch(
-  () => preview.visible,
-  async (visible) => {
-    if (!visible) return;
-    await nextTick();
-    setTimeout(() => {
-      elImageRef.value?.showPreview?.();
-    }, 0);
-  },
-);
-
-// 大图查看器关闭（Esc / X / 点遮罩）→ 联动关闭外层 dialog。
-// 注：关闭后 .el-dialog 节点会被 EP 保留在 display:none 的 overlay 中（非未关闭）
-const closePreview = () => {
-  preview.visible = false;
 };
 
 // 自定义文件行删除（非图片列表 #file 插槽内）
@@ -575,29 +557,20 @@ defineExpose({
       </template>
     </ElUpload>
 
-    <!-- 图片预览：el-dialog + el-image(preview-src-list) -->
-    <ElDialog
-      v-model="preview.visible"
-      title="图片预览"
-      width="800px"
-      append-to-body
-    >
-      <div ref="imageHostRef" class="upload-pro__preview-body">
-        <ElImage
-          v-if="preview.visible && preview.urls.length"
-          :key="preview.key"
-          ref="elImageRef"
-          class="upload-pro__preview-image"
-          :src="preview.urls[preview.index]"
-          :preview-src-list="preview.urls"
-          :initial-index="preview.index"
-          :hide-on-click-modal="true"
-          preview-teleported
-          fit="contain"
-          @close="closePreview"
-        />
-      </div>
-    </ElDialog>
+    <!-- 图片预览：隐藏的 el-image 仅作查看器宿主（display:none），
+         查看器本体 teleport 到 body 全屏展示，关闭由 el-image 自行处理 -->
+    <ElImage
+      v-if="preview.urls.length"
+      :key="preview.key"
+      ref="elImageRef"
+      class="upload-pro__preview-image"
+      :src="preview.urls[preview.index]"
+      :preview-src-list="preview.urls"
+      :initial-index="preview.index"
+      :hide-on-click-modal="true"
+      preview-teleported
+      fit="contain"
+    />
   </div>
 </template>
 
@@ -750,19 +723,8 @@ defineExpose({
   color: var(--el-color-danger);
 }
 
-// —— 预览弹窗 ——
-.upload-pro__preview-body {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 300px;
-  background-color: var(--el-fill-color-light);
-  border-radius: 4px;
-}
+// —— 预览宿主：el-image 本体不展示，仅消费其 teleport 到 body 的全屏查看器 ——
 .upload-pro__preview-image {
-  width: 100%;
-  height: 70vh;
-  max-height: 70vh;
-  cursor: zoom-in;
+  display: none;
 }
 </style>
