@@ -609,6 +609,12 @@ defineExpose({
 }
 
 // —— 照片墙卡片 ——
+// 卡片尺寸：覆盖 EP 默认 146×146，统一收窄为 98×98（触发卡 + 已上传列表项）
+:deep(.el-upload--picture-card),
+:deep(.el-upload-list--picture-card .el-upload-list__item) {
+  width: 98px;
+  height: 98px;
+}
 // 整图可点：缩略图悬浮显示放大光标
 :deep(.upload-pro__card-thumb) {
   cursor: zoom-in;
@@ -628,7 +634,7 @@ defineExpose({
 }
 
 // —— 照片墙触发卡片内部：+ 号 + 粘贴入口 垂直布局 ——
-// 卡片本体是 148×148 的 inline-flex（EP 内置），inner 占满后垂直居中排列
+// 卡片本体是 98×98 的 inline-flex（见上方尺寸覆盖），inner 占满后垂直居中排列
 .upload-pro__card-inner {
   display: inline-flex;
   flex-direction: column;
