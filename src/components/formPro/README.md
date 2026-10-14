@@ -67,9 +67,9 @@ const items = ref([
 | `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
 | `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/.../UploadPro）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染）。内置 `UploadPro` 上传控件见 §12 |
-| `render(h, ctx)` | JSX 自定义渲染控件，`ctx = { value, data }` |
+| `render(ctx, h)` | JSX 自定义渲染控件，`ctx = { value, prop, data }`（ctx 在前；h 仅在需要手写 VNode 时使用，JSX 中可省略） |
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
-| `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(h, ctx) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
+| `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(ctx, h) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
 | `visible` / `visibleMethod(data)` | 条件显隐（`visibleMethod` 返回 `false` 表示隐藏） |
 | `removeValueOnHidden` | 项级：隐藏时是否移除值（覆盖表单级 `removeHiddenValues`） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
@@ -325,7 +325,7 @@ watch(formData, () => {
 | 形态 | 写法 | 适用场景 |
 |---|---|---|
 | ① 字符串 | `prefix: "￥"` / `suffix: "个"` | 静态文本（单位、符号、量词） |
-| ② 渲染函数 | `(h, ctx) => VNode` | 需要读取当前值的**动态文本**，ctx = `{ value, prop, data }` |
+| ② 渲染函数 | `(ctx, h) => VNode` | 需要读取当前值的**动态文本**，ctx = `{ value, prop, data }` |
 
 ### ① 静态文本（单位 / 符号）
 
@@ -343,14 +343,14 @@ watch(formData, () => {
 
 ### ② 动态文本（与当前值联动）
 
-函数形态接收 `ctx`，可读取 `ctx.value`（当前字段值）与 `ctx.data`（整个表单数据），实现「有 xxx 个」等动态描述：
+函数形态第一个参数为 `ctx`，可读取 `ctx.value`（当前字段值）与 `ctx.data`（整个表单数据），实现「有 xxx 个」等动态描述；第二个参数 `h` 仅手写 VNode 时才需要，纯 JSX 可省略：
 
 ```js
 {
   prop: "count",
   label: "数量",
   // 读取当前值，渲染「当前输入：N 个」；值变化时自动重渲染
-  suffix: (h, ctx) => h("span", { style: { color: "#909399" } },
+  suffix: (ctx, h) => h("span", { style: { color: "#909399" } },
     `当前输入：${ctx.value ?? 0} 个`),
   itemRender: { name: "ElInputNumber", props: { min: 0 } },
 }

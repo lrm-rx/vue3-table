@@ -144,7 +144,7 @@ const items = ref([
     group: true,
     title: "基本信息",
     allToggle: true,
-    render: (h) => (
+    render: () => (
       <>
         <ElTooltip
           content="带 * 号为必填项，请确保填写完整后再提交"
@@ -205,7 +205,7 @@ const items = ref([
   {
     prop: "count",
     label: "数量",
-    suffix: (h, ctx) => (
+    suffix: (ctx) => (
       <span style={{ color: "var(--el-text-color-secondary)" }}>
         当前输入：{ctx.value ?? 0} 个
       </span>
@@ -254,7 +254,7 @@ const items = ref([
   // 插入项：在表单项之间插入自定义内容（render = JSX）
   {
     span: 24,
-    render: (h) => (
+    render: () => (
       <ElDivider contentPosition="left">
         <ElTag type="info" size="small">
           以下为动态字段：当「类型=企业」时显示公司名称
@@ -316,7 +316,7 @@ const items = ref([
     prop: "role",
     label: "角色",
     tip: "admin 拥有全部权限，viewer 仅可查看",
-    render: (h, ctx) => (
+    render: (ctx) => (
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <ElTag type={ctx.value === "admin" ? "danger" : "success"}>
           当前：{ctx.value}

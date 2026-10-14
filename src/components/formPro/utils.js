@@ -30,7 +30,7 @@
  *     visibleMethod: (data) => boolean,  // 动态显隐（data 为当前表单数据）
  *     removeValueOnHidden: true, // 隐藏时是否移除其值（提交时不传）；覆盖表单级 removeHiddenValues
  *     // 控件渲染三选一（优先级 render > slot > itemRender）：
- *     render: (h, ctx) => h(...),   // JSX 渲染函数；ctx = { value, prop, data, form }
+ *     render: (ctx, h) => h(...),  // JSX 渲染函数；ctx = { value, prop, data, form }
  *     slot: 'username',             // 引用外部具名插槽 #username，props { value, prop, data, form }
  *     itemRender: {                 // 配置式渲染（element-plus 组件名 + props + options）
  *       name: 'ElInput',
@@ -43,13 +43,13 @@
  *     // 控件前后缀（在控件的前/后渲染文本或元素，非 label 区域）：
  *     prefix: '￥',                  // 字符串 → 渲染为纯文本（如货币符号、单位前缀）
  *     suffix: '元',                  // 字符串 → 渲染为纯文本（如单位、量词后缀）
- *     // 也可传函数 (h, ctx) => VNode，ctx = { value, prop, data }，
- *     // 可读取当前字段值实现动态文本，如 suffix: (h, ctx) => `有 ${ctx.value} 个`
+ *     // 也可传函数 (ctx, h) => VNode，ctx = { value, prop, data }，
+ *     // 可读取当前字段值实现动态文本，如 suffix: (ctx) => `有 ${ctx.value} 个`
  *   }
  *
  *   // 插入项（无 prop，在表单项之间插入任意组件/元素，不包裹 el-form-item）：
  *   { slot: 'divider' }            // 引用外部具名插槽
- *   { render: (h) => h('div', '分隔') }  // JSX
+ *   { render: (ctx, h) => h('div', '分隔') }  // JSX
  *   { span: 24 }  // 可带 span 控制占位宽度，默认 24（整行）
  */
 

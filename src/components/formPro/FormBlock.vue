@@ -75,7 +75,7 @@ const renderFieldControl = (item) => {
     prop: item.prop,
     data: props.formData,
   };
-  if (typeof item.render === "function") return item.render(h, ctx);
+  if (typeof item.render === "function") return item.render(ctx, h);
   const slotName = item.slot || item.prop;
   if (slots[slotName]) return slots[slotName](ctx);
   const ir = item.itemRender;
@@ -195,12 +195,12 @@ const buildLabel = (item) => {
 // —— 控件前后缀（prefix / suffix）：在 el-form-item 内容区、控件的前后渲染文本/元素 ——
 // 支持两种形态：
 //   ① 字符串 → 渲染为纯文本（如 "￥"、"个"、"元"）
-//   ② 函数 (h, ctx) => VNode → 自定义渲染，ctx = { value, prop, data }，
+//   ② 函数 (ctx, h) => VNode → 自定义渲染，ctx = { value, prop, data }，
 //      可读取当前字段值与表单数据，实现「有 xxx 个」等动态文本。
 // 应用场景：输入框前加货币符号、后加单位；或展示与当前值联动的描述文本。
 const resolveFieldAffix = (val, ctx) => {
   if (val == null || val === "") return null;
-  if (typeof val === "function") return val(h, ctx);
+  if (typeof val === "function") return val(ctx, h);
   return h("span", { class: "form-pro__field-affix-text" }, String(val));
 };
 
@@ -273,7 +273,7 @@ const renderCollapseNode = (entry) => {
   // 默认展开/收起按钮；支持 item.render / item.slot 自定义
   let content;
   if (typeof item.render === "function") {
-    content = item.render(h, { collapsed, toggle, data: props.formData });
+    content = item.render({ collapsed, toggle, data: props.formData }, h);
   } else if (item.slot && slots[item.slot]) {
     content = slots[item.slot]({ collapsed, toggle, data: props.formData });
   } else {
@@ -306,7 +306,7 @@ const renderInsertEntry = (entry) => {
   const { item, span } = entry;
   let content = null;
   if (typeof item.render === "function") {
-    content = item.render(h, { data: props.formData });
+    content = item.render({ data: props.formData }, h);
   } else if (item.slot && slots[item.slot]) {
     content = slots[item.slot]({ data: props.formData });
   }
@@ -339,7 +339,7 @@ const render = () => {
   // 渲染提示信息等元素；该区域独立于可点击区，点击不会触发分组折叠。
   const renderGroupExtra = () => {
     const ctx = { group, collapsed: props.collapsed, data: props.formData };
-    if (typeof group.render === "function") return group.render(h, ctx);
+    if (typeof group.render === "function") return group.render(ctx, h);
     if (group.slot && slots[group.slot]) return slots[group.slot](ctx);
     return null;
   };

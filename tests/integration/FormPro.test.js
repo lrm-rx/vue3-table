@@ -171,14 +171,14 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).map((i) => i.props("label"))).toEqual(["B"]);
   });
 
-  it("JSX 渲染：item.render(h, ctx) 产出控件", async () => {
+  it("JSX 渲染：item.render(ctx, h) 产出控件", async () => {
     const wrapper = mountFormPro({
       modelValue: { name: "jsx-val" },
       items: [
         {
           prop: "name",
           label: "名称",
-          render: (h, ctx) => h("div", { class: "custom-jsx" }, `值=${ctx.value}`),
+          render: (ctx, h) => h("div", { class: "custom-jsx" }, `值=${ctx.value}`),
         },
       ],
     });
@@ -193,7 +193,7 @@ describe("FormPro 配置式表单", () => {
         items: [
           { prop: "a", label: "A" },
           { slot: "myDivider" },
-          { render: (h) => h("div", { class: "insert-render" }, "插入内容") },
+          { render: (ctx, h) => h("div", { class: "insert-render" }, "插入内容") },
           { prop: "b", label: "B" },
         ],
       },
@@ -676,7 +676,7 @@ describe("FormPro 配置式表单", () => {
           group: true,
           title: "G1",
           allToggle: true,
-          render: (h) => h("span", { class: "group-tip-render" }, "提示信息"),
+          render: (ctx, h) => h("span", { class: "group-tip-render" }, "提示信息"),
         },
         { prop: "a", label: "A" },
       ],
