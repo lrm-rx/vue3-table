@@ -16,6 +16,9 @@ import {
   deriveDefaultValue,
   buildInitialData,
   resolveFieldOptions,
+  addItems,
+  removeItems,
+  updateItems,
 } from "../../src/components/formPro/utils.js";
 
 describe("formPro utils", () => {
@@ -319,6 +322,205 @@ describe("formPro utils", () => {
       expect(resolveFieldOptions(null)).toEqual([]);
       expect(resolveFieldOptions("abc")).toEqual([]);
       expect(resolveFieldOptions(42)).toEqual([]);
+    });
+  });
+
+  // ===================== 运行时 items 增删改 =====================
+  const field = (prop, extra = {}) => ({ prop, label: prop, ...extra });
+  const baseItems = () => [
+    { group: true, title: "G" },
+    field("a"),
+    field("b"),
+    field("c"),
+    { slot: "tip" },
+  ];
+
+  describe("addItems（新增：单个/批量/定位）", () => {
+    it("默认追加到末尾，单个数组与单项写法等价", () => {
+      const items = baseItems();
+      const ret = addItems(items, field("d"));
+      expect(items.map((i) => i.prop)).toEqual([
+        undefined,
+        "a",
+        "b",
+        "c",
+        undefined,
+        "d",
+      ]);
+      expect(ret).toBe(items); // 返回同一引用
+      addItems(items, [field("e"), field("f")]);
+      expect(items.map((i) => i.prop).slice(-2)).toEqual(["e", "f"]);
+    });
+    it("position='start' 插到开头（分组头之前）", () => {
+      const items = baseItems();
+      addItems(items, field("x"), "start");
+      expect(items[0]).toMatchObject({ prop: "x" });
+    });
+    it("数字索引：指定位置插入，越界钳制", () => {
+      const items = baseItems();
+      addItems(items, field("x"), 2); // 插到 b（索引2）之前
+      expect(items.map((i) => i.prop)).toEqual([
+        undefined,
+        "a",
+        "x",
+        "b",
+        "c",
+        undefined,
+      ]);
+      addItems(items, field("y"), 999);
+      expect(items.at(-1)).toMatchObject({ prop: "y" });
+      addItems(items, field("z"), -5);
+      expect(items[0]).toMatchObject({ prop: "z" });
+    });
+    it("{ before } / { after } 按 prop 锚点定位", () => {
+      const items = baseItems();
+      addItems(items, field("x"), { before: "b" });
+      addItems(items, field("y"), { after: "b" });
+      expect(items.map((i) => i.prop)).toEqual([
+        undefined,
+        "a",
+        "x",
+        "b",
+        "y",
+        "c",
+        undefined,
+      ]);
+    });
+    it("锚点 prop 不存在时回退追加末尾", () => {
+      const items = baseItems();
+      addItems(items, field("x"), { after: "nonexistent" });
+      expect(items.at(-1)).toMatchObject({ prop: "x" });
+    });
+    it("空 entries / null 项 / 非法 items 为安全 no-op", () => {
+      const items = baseItems();
+      const snapshot = [...items];
+      addItems(items, []);
+      addItems(items, [null, undefined]);
+      expect(items).toEqual(snapshot);
+      expect(addItems(null, field("x"))).toBeNull();
+    });
+  });
+
+  describe("removeItems（删除：单个/批量/谓词）", () => {
+    it("单个 prop 删除并返回被删项", () => {
+      const items = baseItems();
+      const removed = removeItems(items, "b");
+      expect(removed).toHaveLength(1);
+      expect(removed[0]).toMatchObject({ prop: "b" });
+      expect(items.map((i) => i.prop)).toEqual([undefined, "a", "c", undefined]);
+    });
+    it("批量 prop 一次删除，返回顺序与原数组一致", () => {
+      const items = baseItems();
+      const removed = removeItems(items, ["a", "c", "x-not-exist"]);
+      expect(removed.map((i) => i.prop)).toEqual(["a", "c"]);
+      expect(items.map((i) => i.prop)).toEqual([undefined, "b", undefined]);
+    });
+    it("谓词可删除无 prop 的分组头 / 插入项", () => {
+      const items = baseItems();
+      const removed = removeItems(
+        items,
+        (it) => it.group === true || it.slot === "tip",
+      );
+      expect(removed).toHaveLength(2);
+      expect(items.map((i) => i.prop)).toEqual(["a", "b", "c"]);
+    });
+    it("无命中返回空数组且数组不变；非法入参安全", () => {
+      const items = baseItems();
+      expect(removeItems(items, "zzz")).toEqual([]);
+      expect(items).toHaveLength(5);
+      expect(removeItems(null, "a")).toEqual([]);
+      expect(removeItems(items, null)).toEqual([]);
+    });
+  });
+
+  describe("updateItems（更新：浅合并 / 点路径 / 函数补丁）", () => {
+    it("单个 prop：顶层键整体赋值", () => {
+      const items = baseItems();
+      const touched = updateItems(items, "a", { visible: false, required: true });
+      expect(touched).toHaveLength(1);
+      expect(items[1]).toMatchObject({ prop: "a", visible: false, required: true });
+    });
+    it("批量 prop 更新", () => {
+      const items = baseItems();
+      updateItems(items, ["a", "b"], { span: 12 });
+      expect(items[1].span).toBe(12);
+      expect(items[2].span).toBe(12);
+      expect(items[3].span).toBeUndefined();
+    });
+    it("谓词更新命中的字段项", () => {
+      const items = baseItems();
+      const touched = updateItems(
+        items,
+        (it) => ["a", "c"].includes(it.prop),
+        { tip: "x" },
+      );
+      expect(touched.map((i) => i.prop)).toEqual(["a", "c"]);
+    });
+    it("点路径深设：只改嵌套叶子，不破坏兄弟字段（禁用联动）", () => {
+      const items = [
+        field("a", {
+          itemRender: { name: "ElInput", props: { placeholder: "p", clearable: true } },
+        }),
+      ];
+      updateItems(items, "a", { "itemRender.props.disabled": true });
+      expect(items[0].itemRender.props).toEqual({
+        placeholder: "p",
+        clearable: true,
+        disabled: true,
+      });
+      expect(items[0].itemRender.name).toBe("ElInput");
+    });
+    it("批量 + 点路径：一次禁用多个控件，各自兄弟 props 不破坏", () => {
+      const items = [
+        field("a", { itemRender: { name: "ElInput", props: { placeholder: "pa" } } }),
+        field("b", { itemRender: { name: "ElInput", props: { placeholder: "pb" } } }),
+        field("c", { itemRender: { name: "ElInput", props: { placeholder: "pc" } } }),
+      ];
+      const touched = updateItems(items, ["a", "c"], {
+        "itemRender.props.disabled": true,
+      });
+      expect(touched.map((i) => i.prop)).toEqual(["a", "c"]);
+      expect(items[0].itemRender.props).toEqual({ placeholder: "pa", disabled: true });
+      expect(items[1].itemRender.props).toEqual({ placeholder: "pb" });
+      expect(items[2].itemRender.props).toEqual({ placeholder: "pc", disabled: true });
+    });
+    it("批量隐藏：多项 visible:false 经可见性解析全部排除，恢复后重新可见", () => {
+      const items = baseItems(); // [分组头, a, b, c, 插入项]
+      // 走真实渲染链路：先分组切分，再逐块解析可见项
+      const fieldProps = () =>
+        splitIntoGroups(items)
+          .flatMap((b) => resolveVisibleEntries(b.items, { formSpan: 24 }))
+          .filter((e) => e.kind === "field")
+          .map((e) => e.item.prop);
+      updateItems(items, ["a", "c"], { visible: false });
+      const hiddenProps = collectHiddenValueProps(items, {}, true);
+      expect([...hiddenProps].sort()).toEqual(["a", "c"]);
+      expect(fieldProps()).toEqual(["b"]);
+      updateItems(items, ["a", "c"], { visible: true });
+      expect(fieldProps()).toEqual(["a", "b", "c"]);
+    });
+    it("点路径整体替换 options 数组（异步联动），不按索引合并", () => {
+      const items = [
+        field("city", { itemRender: { name: "ElSelect", options: [{ label: "旧", value: 1 }] } }),
+      ];
+      const next = [{ label: "新A", value: "a" }, { label: "新B", value: "b" }];
+      updateItems(items, "city", { "itemRender.options": next });
+      expect(items[0].itemRender.options).toEqual(next);
+    });
+    it("函数补丁：按每项动态生成", () => {
+      const items = baseItems();
+      updateItems(items, (it) => it.prop === "a", (it) => ({
+        label: `${it.prop}-改`,
+      }));
+      expect(items[1].label).toBe("a-改");
+      expect(items[2].label).toBe("b");
+    });
+    it("非法入参安全兜底", () => {
+      const items = baseItems();
+      expect(updateItems(null, "a", { x: 1 })).toEqual([]);
+      expect(updateItems(items, "a", null)).toEqual([]);
+      expect(updateItems(items, null, { x: 1 })).toEqual([]);
+      expect(items[1].label).toBe("a");
     });
   });
 });

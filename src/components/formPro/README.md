@@ -104,6 +104,7 @@ formRef.value.getFormItem("email").clearValidate();
 **FormPro 自身方法**：
 - `getSubmitData()` —— 返回已按 `removeHiddenValues` 过滤的提交数据（见 §6）
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`
+- 运行时动态配置：`addItems(entries, position?)` / `removeItems(target)` / `updateItems(target, patch)` —— 增删改 items（联动禁用/显隐、异步 options，详见 §13）
 - `formData` —— 内部完整数据（含隐藏字段值）
 
 ---
@@ -505,4 +506,133 @@ photos: ["https://example.com/a.png"]; // 文件名按 URL 末段自动推导
 同一表单可配置任意多个上传项；每个 `UploadPro` 实例的文件列表、图片预览、粘贴入口相互独立。粘贴采用**单入口 + 焦点投递**：点击卡片内粘贴入口（或聚焦到墙内）后按 `Ctrl+V`，只投递到当前实例，不会一次粘贴触发多路上传；粘贴入口的点击已阻止冒泡，不会误弹文件选择窗；粘贴内容非图片时不拦截，保持浏览器原生行为。
 
 > 完整示例见 [FormProUploadDemo.vue](../../../views/FormProUploadDemo.vue)（照片墙 / 单图 / 附件眼睛事件 / 缩略图 / 两个不同尺寸拖拽区）。
+
+---
+
+## 13. 运行时动态增删改 items（addItems / removeItems / updateItems）
+
+表单配置并非总是静态的：某字段没填时另一个字段要**禁用/隐藏**、某下拉的选项要**等接口返回后才有**（耗时不确定）。三个实例方法直接对 `items` 做**原地增删改**（保持数组引用，父级 `ref` 自动响应式更新），单个与批量统一入口。
+
+> 纯函数版本同样从 `utils.js` 导出（`addItems / removeItems / updateItems`），第一个参数为 items 数组，可脱离组件使用。
+
+### API
+
+| 方法 | 签名 | 说明 |
+|---|---|---|
+| `addItems(entries, position?)` | `entries: Object \| Object[]`；`position` 见下 | 新增一项或多项，返回 items 引用。新增字段的 formData 默认值**立即自动补全**（§5） |
+| `removeItems(target)` | `target: prop \| prop[] \| (item)=>boolean` | 删除一项或多项，返回被删除项数组；被删字段的 **formData 键同步清理**，提交不留孤儿值 |
+| `updateItems(target, patch)` | `patch: Object \| (item)=>Object` | 更新一项或多项，返回命中项数组。顶层键整体赋值；键含 `.` 时按路径深设（lodash `set`） |
+
+**target 选择器**（三个方法统一）：
+
+```js
+"email"                       // 单个：按 item.prop 精确匹配
+["zip", "address"]            // 批量：多个 prop
+(it) => it.temporary === true // 谓词：还能选中无 prop 的分组头 / 插入项
+```
+
+**position（addItems）**：
+
+| 取值 | 含义 |
+|---|---|
+| `'end'`（默认） | 追加到末尾 |
+| `'start'` | 插入开头 |
+| `number` | 插入到该索引（越界自动钳制到 `[0, length]`） |
+| `{ before: 'prop' }` / `{ after: 'prop' }` | 插到某字段前/后；锚点不存在时回退追加末尾 |
+
+### 场景一：未满足条件时禁用 / 显示其他字段
+
+```js
+// —— 禁用：点路径只改 disabled，placeholder 等兄弟 props 不受影响 ——
+// 单个
+formRef.value.updateItems("company", { "itemRender.props.disabled": true });
+formRef.value.updateItems("company", { "itemRender.props.disabled": false }); // 恢复
+// 批量：一次禁用多个，未在数组中的字段不受影响
+formRef.value.updateItems(["company", "jobTitle", "taxNo"], {
+  "itemRender.props.disabled": true,
+});
+formRef.value.updateItems(["company", "jobTitle", "taxNo"], {
+  "itemRender.props.disabled": false, // 批量恢复
+});
+
+// —— 隐藏：visible:false 的项不渲染，后续项自动前移回流 ——
+// 单个
+formRef.value.updateItems("zip", { visible: false });
+formRef.value.updateItems("zip", { visible: true }); // 恢复
+// 批量：一次隐藏 / 显示多个（隐藏字段值是否随提交移除见 §6）
+formRef.value.updateItems(["zip", "address"], { visible: false });
+formRef.value.updateItems(["zip", "address"], { visible: true });
+```
+
+> 批量操作对**控件类型无要求**：target 里的 prop 可以混合 Input / Select / DatePicker 等，patch 会统一写到每个命中项；各控件是否消费 `disabled` 属性由 Element Plus 自身决定。
+
+点路径支持任意深度，例如 `'itemRender.props.disabled'`、`'rules[0].required'`；**顶层键是整体赋值**，因此 `itemRender`、`options` 等会整体替换而非按索引合并。需要按每项当前值动态决定补丁时传函数：
+
+```js
+formRef.value.updateItems(
+  (it) => it.prop?.startsWith("tmp_"),
+  (it) => ({ tip: `临时字段 ${it.label}` }),
+);
+```
+
+#### 批量禁用 / 隐藏的测试用例说明
+
+这两类联动既有**纯函数级**断言（不依赖组件，验证配置被正确改写），也有**真实组件级**断言（挂载 FormPro + Element Plus，验证 DOM 真的禁用 / 不渲染）：
+
+| 层级 | 用例 | 断言要点 |
+|---|---|---|
+| 单元 | 批量 + 点路径禁用 | `updateItems(["a","c"], {"itemRender.props.disabled":true})` 后仅 a/c 的 props 增加 `disabled:true`；b 完全不变；a/c 各自原有的 `placeholder` 等兄弟 props 保留；返回值仅含 a/c |
+| 单元 | 批量隐藏与恢复 | `updateItems(["a","c"], {visible:false})` 后，走真实渲染链路 `splitIntoGroups → resolveVisibleEntries` 只剩 b；`collectHiddenValueProps` 正确收集到 a/c；再批量 `visible:true` 后顺序还原为 a、b、c |
+| 集成 | 批量点路径禁用 | 3 个真实 ElInput，批量禁用其中 2 个后 DOM 中带 `disabled` 属性的 input 数量 0→2，第 3 个可正常输入；批量恢复后 2→0 |
+| 集成 | 批量 visible 隐藏 | `["name","enabled"]` 一次隐藏后 ElFormItem 只剩「年龄」（中间项移除后后续项自动回流）；批量恢复后渲染顺序仍为 姓名、年龄、启用 |
+
+- 单元用例见 [formProUtils.test.js](../../../tests/unit/formProUtils.test.js) 的 `updateItems` describe（「批量 + 点路径」「批量隐藏」两组）。
+- 集成用例见 [FormPro.test.js](../../../tests/integration/FormPro.test.js) 的 `运行时动态配置：addItems / removeItems / updateItems` describe（「批量点路径一次禁用多个控件」「批量 visible=false 一次隐藏多项」两组）。
+- 边界已覆盖：未命中项不受影响、禁用后再恢复不残留属性、隐藏恢复后渲染顺序与原配置一致、混合控件类型统一写入。
+- 谓词形态 target（`(item)=>boolean`）与 prop 数组走同一条匹配 / 写入路径，行为完全相同；单元 describe 中「谓词更新命中的字段项」已对谓词批量更新另有覆盖。
+
+### 场景二：下拉 options 依赖另一字段，接口耗时不确定
+
+接口返回时机不可控，**返回后直接写入配置**即可——无需 ref 中转，也不关心请求耗时多久：
+
+```js
+const onGroupChange = async (group) => {
+  formData.value.resource = ""; // 先清旧值
+  formRef.value.updateItems("resource", {
+    "itemRender.props.loading": true,
+    "itemRender.options": [],
+  });
+  const options = await fetchResources(group); // 耗时不确定
+  // 防竞态：返回时若用户已切换分组，丢弃过期结果
+  if (formData.value.resourceGroup !== group) return;
+  formRef.value.updateItems("resource", {
+    "itemRender.props.loading": false,
+    "itemRender.options": options, // 数组整体替换
+  });
+};
+```
+
+> 与 §7 的两种既有方式如何取舍：options 依赖字段**同步联动**用函数形态 `options: (ctx) => [...]`；**一次性后端加载**用 ref；需要在交互事件（change）里**命令式拉取并带 loading / 防竞态**时，用本节的 `updateItems`。
+
+### 场景三：动态插入 / 删除整块字段
+
+```js
+// 单个：插到「出生日期」之后
+formRef.value.addItems(
+  { prop: "emergency", label: "紧急联系人", itemRender: { name: "ElInput" } },
+  { after: "birthday" },
+);
+
+// 批量：一次插入多项（保持数组顺序）
+formRef.value.addItems([fieldA, fieldB], { before: "address" });
+
+// 批量删除：formData 中对应键一并清理
+formRef.value.removeItems(["emergency", "favColor", "notify"]);
+```
+
+### 性能与实现说明
+
+- 三个方法均为**单次 O(n) 遍历**：批量操作先一次性建立 `prop → 索引` 映射（`Map`），批量删除收集索引后倒序 `splice`，不存在逐项 `find` 的 O(n·k) 开销。
+- 原地修改（`splice` / 属性赋值），不产生新数组引用，Vue 响应式只触发一次相关更新。
+- 纯函数实现与 Vue/EP 解耦（基于 lodash-es 的 `castArray / isFunction / isPlainObject / isNumber / set`），可在工具脚本、单测中直接复用。
 

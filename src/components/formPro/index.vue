@@ -14,6 +14,7 @@
  *  5. JSX 渲染：item.render(ctx, h) 渲染控件（ctx 在前，h 极少使用时可省略）
  *  6. 表单项间插入组件/元素：无 field 的项即为插入项，用 slot 或 render 渲染
  *  7. 条件显隐自动回流：隐藏项不渲染，el-col 流式布局后续项自动前移
+ *  8. 运行时动态配置：实例方法 addItems / removeItems / updateItems 增删改 items（联动禁用/显隐、异步 options）
  */
 import {
   ref,
@@ -34,6 +35,9 @@ import {
   buildInitialData,
   deriveDefaultValue,
   isFieldItem,
+  addItems as addItemsConfig,
+  removeItems as removeItemsConfig,
+  updateItems as updateItemsConfig,
 } from "./utils.js";
 import FormBlock from "./FormBlock.vue";
 
@@ -330,6 +334,29 @@ const ownExposed = {
   getFormItem,
   // 获取提交数据：按 removeHiddenValues 规则移除隐藏字段值（保存/提交时使用）
   getSubmitData,
+  // —— 运行时动态增删改 items（配置项联动：禁用/显隐/异步 options 等）——
+  // 原地修改父级传入的 items 数组（保持引用，父级 ref 自动响应式更新）。
+  // position：'end' | 'start' | number | { before: prop } | { after: prop }
+  addItems(entries, position) {
+    addItemsConfig(props.items, entries, position);
+    // 立即为新增字段补全 formData 默认值，无需等待 items watcher 的下一个 tick
+    fillMissingDefaults();
+    return props.items;
+  },
+  // target：prop | prop[] | (item)=>boolean；返回被删除的项
+  removeItems(target) {
+    const removed = removeItemsConfig(props.items, target);
+    // 同步清理被删字段的值，避免提交数据残留「孤儿值」（删除响应式键自动回抛父级）
+    for (const item of removed) {
+      if (isFieldItem(item) && item.prop in formData) delete formData[item.prop];
+    }
+    return removed;
+  },
+  // patch：顶层键整体赋值，或点路径深设（如 'itemRender.props.disabled' / 'itemRender.options'）；
+  // 也支持 (item)=>patch。返回命中并更新的项
+  updateItems(target, patch) {
+    return updateItemsConfig(props.items, target, patch);
+  },
   // 分组动态折叠：按标题操作单个 / 多个 / 全部分组
   setGroupCollapsed,
   toggleGroup: toggleGroupByTitle,

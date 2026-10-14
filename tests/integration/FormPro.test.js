@@ -897,4 +897,176 @@ describe("FormPro 配置式表单", () => {
       expect(tip.text()).toContain("请输入真实姓名");
     });
   });
+
+  // ===================== 运行时动态配置：实例方法增删改 items =====================
+  describe("运行时动态配置：addItems / removeItems / updateItems", () => {
+    const dynamicItems = () => [
+      { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+      { prop: "age", label: "年龄", itemRender: { name: "ElInputNumber" } },
+      { prop: "enabled", label: "启用", itemRender: { name: "ElSwitch" } },
+    ];
+    const labels = (w) =>
+      w.findAllComponents({ name: "ElFormItem" }).map((i) => i.props("label"));
+
+    it("实例上暴露 addItems / removeItems / updateItems 三个方法", () => {
+      const wrapper = mountFormPro({ modelValue: {}, items: dynamicItems() });
+      expect(typeof wrapper.vm.addItems).toBe("function");
+      expect(typeof wrapper.vm.removeItems).toBe("function");
+      expect(typeof wrapper.vm.updateItems).toBe("function");
+    });
+
+    it("addItems：单个插入到锚点后立即渲染，formData 自动补全空默认值", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "张三" },
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      wrapper.vm.addItems(
+        { prop: "phone", label: "电话", itemRender: { name: "ElInput" } },
+        { after: "name" },
+      );
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["姓名", "电话", "年龄", "启用"]);
+      // autoFillDefaults 立即补值，无需等 watcher
+      expect(wrapper.vm.formData.phone).toBe("");
+    });
+
+    it("addItems：批量插入保持顺序；Switch 推导默认 false", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      wrapper.vm.addItems([
+        { prop: "city", label: "城市", itemRender: { name: "ElInput" } },
+        { prop: "notify", label: "通知", itemRender: { name: "ElSwitch" } },
+      ]);
+      await flushPromises();
+      expect(labels(wrapper).slice(-2)).toEqual(["城市", "通知"]);
+      expect(wrapper.vm.formData.city).toBe("");
+      expect(wrapper.vm.formData.notify).toBe(false);
+    });
+
+    it("removeItems：单个删除后 DOM 移除，formData 键同步清理", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "张三", age: 28 },
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      expect("age" in wrapper.vm.formData).toBe(true);
+      const removed = wrapper.vm.removeItems("age");
+      expect(removed).toHaveLength(1);
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["姓名", "启用"]);
+      expect("age" in wrapper.vm.formData).toBe(false);
+    });
+
+    it("removeItems：批量 prop 删除多项", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "x", age: 1, enabled: true },
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      const removed = wrapper.vm.removeItems(["age", "enabled"]);
+      expect(removed.map((i) => i.prop)).toEqual(["age", "enabled"]);
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["姓名"]);
+      expect(wrapper.vm.formData).not.toHaveProperty("age");
+      expect(wrapper.vm.formData).not.toHaveProperty("enabled");
+    });
+
+    it("updateItems：点路径禁用控件（itemRender.props.disabled）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      const input = () => wrapper.findAll("input")[0];
+      expect(input().attributes("disabled")).toBeUndefined();
+      wrapper.vm.updateItems("name", { "itemRender.props.disabled": true });
+      await flushPromises();
+      expect(input().attributes("disabled")).toBeDefined();
+      // 兄弟 props 不被点路径深设破坏
+      const nameItem = wrapper.props("items")[0];
+      expect(nameItem.itemRender.name).toBe("ElInput");
+    });
+
+    it("updateItems：visible=false 隐藏字段，后续项自动回流", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      wrapper.vm.updateItems("age", { visible: false });
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["姓名", "启用"]);
+    });
+
+    it("updateItems：批量点路径一次禁用多个控件，未命中项不受影响", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "", phone: "", addr: "" },
+        items: [
+          { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+          { prop: "phone", label: "电话", itemRender: { name: "ElInput" } },
+          { prop: "addr", label: "地址", itemRender: { name: "ElInput" } },
+        ],
+      });
+      await flushPromises();
+      const disabledCount = () =>
+        wrapper
+          .findAll("input")
+          .filter((i) => i.attributes("disabled") !== undefined).length;
+      expect(disabledCount()).toBe(0);
+      wrapper.vm.updateItems(["name", "phone"], {
+        "itemRender.props.disabled": true,
+      });
+      await flushPromises();
+      expect(disabledCount()).toBe(2);
+      // 批量恢复
+      wrapper.vm.updateItems(["name", "phone"], {
+        "itemRender.props.disabled": false,
+      });
+      await flushPromises();
+      expect(disabledCount()).toBe(0);
+    });
+
+    it("updateItems：批量 visible=false 一次隐藏多项，恢复后顺序不变", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        items: dynamicItems(),
+      });
+      await flushPromises();
+      wrapper.vm.updateItems(["name", "enabled"], { visible: false });
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["年龄"]);
+      wrapper.vm.updateItems(["name", "enabled"], { visible: true });
+      await flushPromises();
+      expect(labels(wrapper)).toEqual(["姓名", "年龄", "启用"]);
+    });
+
+    it("updateItems：异步返回后整体替换 select 的 options（模拟接口耗时不确定）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { city: "" },
+        items: [
+          {
+            prop: "city",
+            label: "城市",
+            itemRender: { name: "ElSelect", options: [] },
+          },
+        ],
+      });
+      await flushPromises();
+      expect(wrapper.findAllComponents({ name: "ElOption" })).toHaveLength(0);
+      // 模拟接口稍后返回：直接写入配置即可，无需 ref 中转
+      const remoteOptions = [
+        { label: "广州", value: "gz" },
+        { label: "深圳", value: "sz" },
+      ];
+      wrapper.vm.updateItems("city", { "itemRender.options": remoteOptions });
+      await flushPromises();
+      const opts = wrapper.findAllComponents({ name: "ElOption" });
+      expect(opts).toHaveLength(2);
+      expect(opts[0].props("label")).toBe("广州");
+    });
+  });
 });

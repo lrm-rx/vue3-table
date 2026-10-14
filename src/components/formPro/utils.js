@@ -1,3 +1,5 @@
+import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet } from "lodash-es";
+
 /**
  * FormPro 配置处理纯函数（与渲染解耦，便于单测）。
  *
@@ -313,4 +315,140 @@ export const resolveVisibleEntries = (
     }
   }
   return out;
+};
+
+// ===================== 运行时 items 增删改（动态配置） =====================
+// 典型联动场景：
+//   ① 某字段未填写时，禁用 / 隐藏其他字段 → updateItems 写 disabled / visible；
+//   ② 下拉 options 依赖另一字段、经接口（耗时不确定）获取 → 请求返回后
+//      updateItems 写 'itemRender.options'。
+// 三个方法均「原地修改」items 数组（保持引用，父级 ref 自动响应），
+// 单/批量统一入口，O(n) 单次遍历完成，避免逐项 find 的 O(n·k) 开销。
+
+/**
+ * 把「目标选择器」归一化为 item 谓词：
+ *   string            → 按 item.prop 精确匹配（单个）
+ *   (string|number)[] → 批量匹配多个 prop
+ *   Function          → 原样作为谓词 (item) => boolean（可定位无 prop 的分组头/插入项）
+ */
+const toItemMatcher = (target) => {
+  if (isFunction(target)) return target;
+  const props = new Set(castArray(target));
+  return (item) => item != null && props.has(item.prop);
+};
+
+/**
+ * 建立 prop → 索引 的一次性映射（O(n)），定位锚点时避免反复 indexOf。
+ * 无 prop 的项（分组头 / 插入项）不入表，需用谓词选择器定位。
+ */
+const buildPropIndex = (items) => {
+  const map = new Map();
+  for (let i = 0; i < items.length; i++) {
+    const prop = items[i]?.prop;
+    if (prop !== undefined && !map.has(prop)) map.set(prop, i);
+  }
+  return map;
+};
+
+/**
+ * 解析新增位置为数组索引（与 addItems 拆平，保持各函数嵌套层级浅）。
+ * 'end'（默认）追加末尾 | 'start' 开头 | number 指定索引（越界钳制）
+ * | { before: prop } / { after: prop } 锚点定位，锚点不存在回退末尾。
+ */
+const resolveInsertIndex = (items, position) => {
+  if (position === "start") return 0;
+  if (isNumber(position)) return Math.min(Math.max(position, 0), items.length);
+  if (isPlainObject(position)) {
+    const { before, after } = position;
+    const anchor = before !== undefined ? before : after;
+    const at = buildPropIndex(items).get(anchor);
+    if (at === undefined) return items.length;
+    return after !== undefined ? at + 1 : at;
+  }
+  return items.length;
+};
+
+/**
+ * 新增配置项（单个或批量），原地 splice 进 items。
+ *
+ * @param {Array}          items    配置数组（原地修改并返回）
+ * @param {Object|Array}   entries  单个 item 或 item 数组（null/undefined 项自动过滤）
+ * @param {string|number|Object} [position='end'] 插入位置，见 resolveInsertIndex
+ * @returns {Array} 同一个 items 引用
+ *
+ * @example
+ * addItems(items, { prop: 'phone', label: '电话', itemRender: { name: 'ElInput' } }, { after: 'email' })
+ * addItems(items, [itemA, itemB], { before: 'address' })
+ */
+export const addItems = (items, entries, position = "end") => {
+  if (!Array.isArray(items)) return items;
+  const list = castArray(entries).filter((it) => it != null);
+  if (!list.length) return items;
+  items.splice(resolveInsertIndex(items, position), 0, ...list);
+  return items;
+};
+
+/**
+ * 删除配置项（单个或批量），原地修改。
+ *
+ * @param {Array}                 items   配置数组（原地修改）
+ * @param {string|number|Array|Function} target 目标选择器，见 toItemMatcher
+ * @returns {Array} 实际被删除的项（按原顺序）；无命中返回 []
+ *
+ * @example
+ * removeItems(items, 'phone')
+ * removeItems(items, ['phone', 'address'])
+ * removeItems(items, (it) => it.temporary === true)
+ */
+export const removeItems = (items, target) => {
+  if (!Array.isArray(items) || target == null) return [];
+  const match = toItemMatcher(target);
+  const hitIndexes = [];
+  for (let i = 0; i < items.length; i++) {
+    if (match(items[i])) hitIndexes.push(i);
+  }
+  const removed = hitIndexes.map((i) => items[i]);
+  // 倒序删除：splice 的索引位移只影响更大的未处理索引，一次循环完成
+  for (let k = hitIndexes.length - 1; k >= 0; k--) items.splice(hitIndexes[k], 1);
+  return removed;
+};
+
+/**
+ * 应用单个补丁：顶层键整体赋值（options 等数组整体替换，不按 lodash.merge 做索引合并）；
+ * 键含 "." 时按路径深设（lodash set），便于只改嵌套属性而不影响兄弟字段。
+ */
+const applyItemPatch = (item, patch) => {
+  if (!isPlainObject(patch)) return;
+  for (const [key, value] of Object.entries(patch)) {
+    if (key.includes(".")) lodashSet(item, key, value);
+    else item[key] = value;
+  }
+};
+
+/**
+ * 更新配置项（单个或批量），原地修改。
+ *
+ * @param {Array}                 items  配置数组（原地修改）
+ * @param {string|number|Array|Function} target 目标选择器，见 toItemMatcher
+ * @param {Object|Function}      patch  补丁对象，或 (item) => 补丁对象 的生成函数：
+ *   - 顶层键整体赋值：{ visible: false }、{ required: true }
+ *   - 点路径深设：{ 'itemRender.props.disabled': true }、
+ *                 { 'itemRender.options': newOptions }（数组整体替换）
+ * @returns {Array} 命中并被更新的项数组（引用即 items 内原对象）
+ *
+ * @example
+ * updateItems(items, 'email', { 'itemRender.props.disabled': true })
+ * updateItems(items, ['zip', 'address'], { visible: false })
+ * updateItems(items, 'city', { 'itemRender.options': await fetchCities(province) })
+ */
+export const updateItems = (items, target, patch) => {
+  if (!Array.isArray(items) || target == null || patch == null) return [];
+  const match = toItemMatcher(target);
+  const touched = [];
+  for (const item of items) {
+    if (!match(item)) continue;
+    applyItemPatch(item, isFunction(patch) ? patch(item) : patch);
+    touched.push(item);
+  }
+  return touched;
 };

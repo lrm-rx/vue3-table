@@ -136,6 +136,68 @@ const permissionMap = {
   ],
 };
 
+// —— 演示：实例方法 updateItems 写入「耗时不确定」的异步 options ——
+// 资源组 → 资源列表：模拟后端接口，返回耗时 300~1200ms 随机
+const fetchResources = (group) =>
+  new Promise((resolve) => {
+    setTimeout(() => {
+      resolve([
+        { label: `${group} 组-资源 1`, value: `${group}-r1` },
+        { label: `${group} 组-资源 2`, value: `${group}-r2` },
+        { label: `${group} 组-资源 3`, value: `${group}-r3` },
+      ]);
+    }, 300 + Math.random() * 900);
+  });
+
+// 选择资源组后：先清空已选资源并把 resource 置为 loading，
+// 接口返回后通过 formRef.updateItems 写入 options（无需响应式 ref 中转）。
+// 防竞态：返回时若用户已切换分组，丢弃过期结果。
+const onResourceGroupChange = async (group) => {
+  formData.value.resource = "";
+  formRef.value?.updateItems("resource", {
+    "itemRender.props.loading": true,
+    "itemRender.props.placeholder": "资源加载中…",
+    "itemRender.options": [],
+  });
+  const list = await fetchResources(group);
+  if (formData.value.resourceGroup !== group) return;
+  formRef.value?.updateItems("resource", {
+    "itemRender.props.loading": false,
+    "itemRender.props.placeholder": "请选择资源",
+    "itemRender.options": list,
+  });
+};
+
+// —— 演示：运行时 addItems / removeItems 的动态字段配置 ——
+const emergencyItem = {
+  prop: "emergency",
+  label: "紧急联系人",
+  tip: "由 addItems 动态插入（after=birthday），默认值自动补全",
+  itemRender: { name: "ElInput", props: { placeholder: "请输入紧急联系人" } },
+};
+const batchDynamicItems = [
+  {
+    prop: "favColor",
+    label: "偏好颜色",
+    tip: "批量 addItems 一次插入两项",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择偏好颜色" },
+      options: [
+        { label: "红色", value: "red" },
+        { label: "蓝色", value: "blue" },
+        { label: "绿色", value: "green" },
+      ],
+    },
+  },
+  {
+    prop: "notify",
+    label: "短信通知",
+    itemRender: { name: "ElSwitch" },
+  },
+];
+const DYNAMIC_PROPS = ["emergency", "favColor", "notify"];
+
 // 表单配置：覆盖分组 / span / 条件显隐 / 插入项 / JSX / itemRender
 const items = ref([
   // —— 分组 1：基本信息（默认展开，allToggle 显示「折叠全部 / 展开全部」按钮）——
@@ -391,6 +453,31 @@ const items = ref([
       options: (ctx) => cityMap[ctx.data.province] || [],
     },
   },
+  // 异步 options 联动：资源组 change → 接口（耗时随机）→ updateItems 写入 resource 选项
+  {
+    prop: "resourceGroup",
+    label: "资源组",
+    tip: "选择后调用接口，返回后用实例方法 updateItems 写入「资源」选项",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "请选择资源组", clearable: true },
+      options: [
+        { label: "A 组", value: "A" },
+        { label: "B 组", value: "B" },
+      ],
+      events: { change: onResourceGroupChange },
+    },
+  },
+  {
+    prop: "resource",
+    label: "资源",
+    tip: "初始无选项，options 由接口异步写入（含 loading 态与防竞态）",
+    itemRender: {
+      name: "ElSelect",
+      props: { placeholder: "先选择资源组", loading: false },
+      options: [],
+    },
+  },
   // 后端异步示例：options 直接传响应式 ref（levelOptions），
   // onMounted 模拟接口返回后自动渲染，无需手动刷新；默认值 p6 演示「编辑回填」，
   // P8 带 props.disabled 演示「选项 props 透传」。
@@ -439,6 +526,49 @@ const onReset = () => {
 const expandAllGroups = () => formRef.value?.expandAllGroups?.();
 const collapseAllGroups = () => formRef.value?.collapseAllGroups?.();
 const toggleBasicGroup = () => formRef.value?.toggleGroup?.("基本信息");
+
+// —— 运行时增删改 items 演示（绑定在 FormPro 实例上的方法）——
+const hasItem = (prop) => items.value.some((it) => it.prop === prop);
+
+// 单个新增：插到「出生日期」之后；重复点击幂等提示
+const addEmergency = () => {
+  if (hasItem("emergency")) {
+    ElMessage.warning("「紧急联系人」已存在");
+    return;
+  }
+  formRef.value?.addItems(emergencyItem, { after: "birthday" });
+  ElMessage.success("已插入「紧急联系人」");
+};
+// 批量新增：一次插入两项（锚点不存在时自动追加到末尾）
+const addBatchItems = () => {
+  const missing = batchDynamicItems.filter((it) => !hasItem(it.prop));
+  if (!missing.length) {
+    ElMessage.warning("批量字段已存在");
+    return;
+  }
+  formRef.value?.addItems(missing, { after: "emergency" });
+  ElMessage.success(`批量插入 ${missing.length} 项，新增字段默认值已自动补全`);
+};
+// 批量删除：prop 数组；被删字段的 formData 值同步清理
+const removeDynamicItems = () => {
+  const removed = formRef.value?.removeItems(DYNAMIC_PROPS) || [];
+  ElMessage.info(removed.length ? `已删除 ${removed.length} 个动态项及其数据` : "没有可删除的动态项");
+};
+// 改：禁用/启用「邮箱」——点路径更新 itemRender.props.disabled
+const emailDisabled = ref(false);
+const toggleEmailDisabled = () => {
+  emailDisabled.value = !emailDisabled.value;
+  formRef.value?.updateItems("email", {
+    "itemRender.props.disabled": emailDisabled.value,
+  });
+  ElMessage.info(emailDisabled.value ? "邮箱已禁用（未填写时联动）" : "邮箱已启用");
+};
+// 改：显示/隐藏「邮编」——更新 visible，隐藏后布局自动回流
+const zipHidden = ref(false);
+const toggleZipVisible = () => {
+  zipHidden.value = !zipHidden.value;
+  formRef.value?.updateItems("zip", { visible: !zipHidden.value });
+};
 </script>
 
 <template>
@@ -475,6 +605,23 @@ const toggleBasicGroup = () => formRef.value?.toggleGroup?.("基本信息");
       <el-button @click="expandAllGroups">展开全部分组</el-button>
       <el-button @click="collapseAllGroups">收起全部分组</el-button>
       <el-button @click="toggleBasicGroup">切换「基本信息」</el-button>
+      <el-divider direction="vertical" />
+      <!-- 运行时增删改 items（实例方法 addItems / removeItems / updateItems） -->
+      <el-button type="success" plain size="small" @click="addEmergency">
+        动态插入「紧急联系人」
+      </el-button>
+      <el-button type="success" plain size="small" @click="addBatchItems">
+        批量插入 2 项
+      </el-button>
+      <el-button type="danger" plain size="small" @click="removeDynamicItems">
+        删除动态项
+      </el-button>
+      <el-button type="warning" plain size="small" @click="toggleEmailDisabled">
+        {{ emailDisabled ? "启用" : "禁用" }}「邮箱」
+      </el-button>
+      <el-button type="warning" plain size="small" @click="toggleZipVisible">
+        {{ zipHidden ? "显示" : "隐藏" }}「邮编」
+      </el-button>
     </div>
 
     <FormPro
