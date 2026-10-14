@@ -20,5 +20,7 @@ defineProps({
   <div class="md-editor-footer-item">
     <label class="md-editor-footer-label">字数：</label>
     <span>{{ count }}</span>
+    <!-- 后置插槽：用于在字数右侧追加内容（如自动保存倒计时），间距由插槽内容自行控制 -->
+    <slot />
   </div>
 </template>

@@ -21,6 +21,7 @@ import { fileToBase64, isImageFile, countMarkdownChars } from './utils'
 import Time from './extensions/Time.vue'
 import DateTimeFooter from './extensions/DateTimeFooter.vue'
 import CharCount from './extensions/CharCount.vue'
+import AutoSave from './extensions/AutoSave.vue'
 
 // 全局配置：
 // 1. 注册 markdown-it-mark 扩展（==文本== → <mark>文本</mark>）
@@ -138,9 +139,30 @@ const props = defineProps({
     type: Number,
     default: 10,
   },
+  // 是否开启自动保存（到点触发 save 事件，由父组件执行实际保存并回调结果）
+  autoSave: {
+    type: Boolean,
+    default: false,
+  },
+  // 自动保存间隔数值（配合 autoSaveIntervalUnit 解释），默认 30
+  autoSaveInterval: {
+    type: Number,
+    default: 30,
+  },
+  // 自动保存间隔单位：seconds 秒 / minutes 分
+  autoSaveIntervalUnit: {
+    type: String,
+    default: 'seconds',
+    validator: (v) => ['seconds', 'minutes'].includes(v),
+  },
+  // 文章标题：用于自动保存条件判断（标题非空 + 正文非空才启动倒计时）
+  title: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['update:modelValue', 'update:previewTheme'])
+const emit = defineEmits(['update:modelValue', 'update:previewTheme', 'save'])
 
 // 预览主题本地状态（供 PreviewThemeSwitch 切换），与 prop 双向同步
 const previewThemeRef = ref(props.previewTheme)
@@ -177,12 +199,19 @@ const mergedProps = computed(() => {
   delete rest.uploadType
   delete rest.customUpload
   delete rest.maxImageSize
+  delete rest.autoSave
+  delete rest.autoSaveInterval
+  delete rest.autoSaveIntervalUnit
+  delete rest.title
   return rest
 })
 
 // 过滤 base64 图片编码后的正文字数（供自定义页脚 CharCount 展示）
 // 内置 markdownTotal 会把 base64 编码计入字数，这里用 countMarkdownChars 剔除
 const charCount = computed(() => countMarkdownChars(props.modelValue))
+
+// 自动保存条件：标题非空 且 正文（过滤 base64 后）非空
+const canSave = computed(() => !!props.title?.trim() && charCount.value > 0)
 
 // 统一的图片上传处理（覆盖工具栏上传 / 拖拽 / 截图粘贴三种入口）
 const handleUploadImg = async (files, callback) => {
@@ -272,7 +301,15 @@ defineExpose({
       <Time />
     </template>
     <template #defFooters>
-      <CharCount :count="charCount" />
+      <CharCount :count="charCount">
+        <AutoSave
+          :enabled="autoSave"
+          :interval="autoSaveInterval"
+          :interval-unit="autoSaveIntervalUnit"
+          :can-save="canSave"
+          @save="(done) => emit('save', done)"
+        />
+      </CharCount>
       <DateTimeFooter />
     </template>
   </MdEditor>

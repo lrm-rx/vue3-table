@@ -336,25 +336,32 @@ describe('MdEditor —— custom 自定义上传模式', () => {
 
 describe('MdEditor —— 透传原生 attrs（事件 / 额外 props）', () => {
   it('原生事件通过 $attrs 透传到底层 MdEditor', () => {
-    const onSave = vi.fn()
+    const onChange = vi.fn()
     const wrapper = mount(MdEditor, {
       props: { modelValue: '' },
-      attrs: { onSave },
+      attrs: { onChange },
     })
-    // onSave 作为 attr 透传到底层桩组件（桩 inheritAttrs:false 但 attrs 仍可从 vm.$attrs 取）
-    expect(stub(wrapper).vm.$attrs.onSave).toBe(onSave)
+    // 未在本组件声明的事件（如 md-editor-v3 原生事件）通过 $attrs 透传到底层桩组件
+    // 注：save 事件已由本组件声明（用于自动保存），不会进入 $attrs，故此处以 onChange 为例
+    expect(stub(wrapper).vm.$attrs.onChange).toBe(onChange)
   })
 
-  it('本组件自定义 prop（uploadType/customUpload/maxImageSize）不会透传给底层', () => {
+  it('本组件自定义 prop（uploadType/customUpload/maxImageSize 等）不会透传给底层', () => {
     const wrapper = mountEditor({
       uploadType: 'custom',
       customUpload: vi.fn(),
       maxImageSize: 5,
+      autoSave: true,
+      autoSaveInterval: 15,
+      title: '文章标题',
     })
     const p = stub(wrapper).props()
     expect(p.uploadType).toBeUndefined()
     expect(p.customUpload).toBeUndefined()
     expect(p.maxImageSize).toBeUndefined()
+    expect(p.autoSave).toBeUndefined()
+    expect(p.autoSaveInterval).toBeUndefined()
+    expect(p.title).toBeUndefined()
   })
 })
 

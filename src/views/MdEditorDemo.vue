@@ -252,6 +252,14 @@ const theme = ref('light')
 const readOnly = ref(false)
 // 禁用模式（工具栏置灰、不可编辑）
 const disabled = ref(false)
+// 文章标题（自动保存条件之一：标题非空）
+const articleTitle = ref('')
+// 是否开启自动保存
+const autoSave = ref(false)
+// 自动保存间隔数值
+const autoSaveInterval = ref(10)
+// 自动保存间隔单位：seconds 秒 / minutes 分
+const autoSaveIntervalUnit = ref('seconds')
 // 代码高亮主题
 const codeTheme = ref('atom')
 const codeThemeOptions = [
@@ -264,6 +272,33 @@ const customUpload = async (files) => {
   // 演示：实际应上传到后端拿到 URL，这里用 base64 假装是「服务器返回的 URL」
   const urls = await Promise.all(files.map((f) => fileToBase64(f)))
   return urls
+}
+
+// 模拟保存接口：随机成功/失败，耗时 0.5~1.5s
+const mockSaveApi = () => {
+  return new Promise((resolve, reject) => {
+    const delay = 500 + Math.random() * 1000
+    setTimeout(() => {
+      // 90% 概率成功，演示失败态
+      if (Math.random() < 0.9) {
+        resolve({ ok: true })
+      } else {
+        reject(new Error('模拟保存失败'))
+      }
+    }, delay)
+  })
+}
+
+// 自动保存事件：done(true/false) 由父组件在接口结束后回调
+const handleAutoSave = async (done) => {
+  try {
+    await mockSaveApi()
+    ElMessage.success('自动保存已触发（模拟）')
+    done(true)
+  } catch (e) {
+    ElMessage.error('自动保存失败（模拟）')
+    done(false)
+  }
 }
 
 // 字数统计（与编辑器页脚一致：过滤 base64 图片编码）
@@ -332,6 +367,35 @@ const clearContent = () => {
             />
           </el-select>
         </div>
+
+        <div class="md-demo__toolbar md-demo__toolbar--second">
+          <span class="md-demo__label">文章标题</span>
+          <el-input
+            v-model="articleTitle"
+            size="small"
+            placeholder="输入标题后自动保存才会启动"
+            style="width: 240px"
+          />
+
+          <span class="md-demo__label">自动保存</span>
+          <el-switch v-model="autoSave" active-text="开启" inactive-text="关闭" />
+
+          <span class="md-demo__label">单位</span>
+          <el-radio-group v-model="autoSaveIntervalUnit" size="small">
+            <el-radio-button value="seconds">秒</el-radio-button>
+            <el-radio-button value="minutes">分</el-radio-button>
+          </el-radio-group>
+
+          <span class="md-demo__label">间隔</span>
+          <el-select v-model="autoSaveInterval" size="small" style="width: 100px">
+            <el-option
+              v-for="v in autoSaveIntervalUnit === 'seconds' ? [5, 10, 30, 60] : [1, 2, 5, 10]"
+              :key="v"
+              :label="autoSaveIntervalUnit === 'seconds' ? `${v} 秒` : `${v} 分`"
+              :value="v"
+            />
+          </el-select>
+        </div>
       </template>
 
       <div class="md-demo__tip">
@@ -339,7 +403,8 @@ const clearContent = () => {
         <span>
           工具栏集成了 <b>Mark 高亮</b> · <b>Emoji 表情</b> · <b>预览主题切换</b> · <b>插入时间</b> 扩展；
           支持 <b>只读模式</b>（切换「只读」开关查看效果）；
-          图片支持工具栏上传 · 拖拽 · <b>截图粘贴</b>（自动转 base64）
+          图片支持工具栏上传 · 拖拽 · <b>截图粘贴</b>（自动转 base64）。
+          开启<b>自动保存</b>并填写标题与正文后，页脚字数右侧会显示倒计时，到点触发保存事件。
         </span>
       </div>
 
@@ -352,6 +417,11 @@ const clearContent = () => {
         :max-image-size="maxImageSize"
         :theme="theme"
         :code-theme="codeTheme"
+        :title="articleTitle"
+        :auto-save="autoSave"
+        :auto-save-interval="autoSaveInterval"
+        :auto-save-interval-unit="autoSaveIntervalUnit"
+        @save="handleAutoSave"
         style="height: 560px"
       />
 
@@ -386,6 +456,10 @@ const clearContent = () => {
     align-items: center;
     flex-wrap: wrap;
     gap: 8px;
+
+    &--second {
+      margin-top: 8px;
+    }
   }
 
   &__label {

@@ -12,6 +12,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AutoSave: typeof import('./../components/mdEditor/extensions/AutoSave.vue')['default']
     BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
     BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
     CharCount: typeof import('./../components/mdEditor/extensions/CharCount.vue')['default']
@@ -82,6 +83,7 @@ declare module 'vue' {
 
 // For TSX support
 declare global {
+  const AutoSave: typeof import('./../components/mdEditor/extensions/AutoSave.vue')['default']
   const BaseAvatar: typeof import('./../components/comment/base/BaseAvatar.vue')['default']
   const BaseTextarea: typeof import('./../components/comment/base/BaseTextarea.vue')['default']
   const CharCount: typeof import('./../components/mdEditor/extensions/CharCount.vue')['default']
