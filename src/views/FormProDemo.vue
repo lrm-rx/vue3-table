@@ -47,13 +47,11 @@ const onlyRequired = ref(false);
 const removeHiddenValues = ref(false);
 
 // 校验规则（el-form 统一 rules，也可在 item.rules 单独配置）
-// 覆盖多种控件类型，用于充分测试 tip 与校验错误提示的切换
+// 覆盖多种控件类型，用于充分测试 tip 与校验错误提示的切换。
+// 注：邮箱的规则配置在 item 级（见下方 email 项的 rules 字段），
+// 供「必填切换」按钮演示 updateItems 点路径修改 rules 中的规则属性。
 const rules = {
   name: [{ required: true, message: "请输入姓名", trigger: "blur" }],
-  email: [
-    { required: true, message: "请输入邮箱", trigger: "blur" },
-    { type: "email", message: "邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等", trigger: ["blur", "change"] },
-  ],
   level: [{ required: true, message: "请选择职级", trigger: "change" }],
   zip: [
     { pattern: /^\d{6}$/, message: "邮编必须为 6 位数字", trigger: "blur" },
@@ -348,6 +346,12 @@ const items = ref([
   {
     prop: "email",
     label: "邮箱",
+    // item 级 rules：配合「必填切换」按钮，演示 updateItems 点路径修改
+    // rules 中某条规则的属性（rules[0].required），红星与校验实时同步
+    rules: [
+      { required: true, message: "请输入邮箱", trigger: "blur" },
+      { type: "email", message: "邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等，邮箱格式不正确，请输入正确的邮箱格式，如：user@example.com，user@example.cn等", trigger: ["blur", "change"] },
+    ],
     // 长 tip 演示：空间不足时单行省略为 …，鼠标悬浮可通过原生 title 查看完整提示文本
     tip: "请输入可正常接收邮件的有效邮箱地址，该邮箱将用于接收账户激活链接、密码重置邮件以及各类系统重要通知，请务必填写准确并保持可正常访问",
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
@@ -569,6 +573,21 @@ const toggleZipVisible = () => {
   zipHidden.value = !zipHidden.value;
   formRef.value?.updateItems("zip", { visible: !zipHidden.value });
 };
+// 改：rules 联动——点路径修改 email 项 rules[0] 的 required 属性，切换必填。
+// 无需触碰表单级 rules；红星（isItemRequired）与 el-form-item 校验实时同步。
+// （向 rules 追加新规则则用函数补丁整体替换，见 README §13 场景一）
+const emailRequired = ref(true);
+const toggleEmailRequired = () => {
+  emailRequired.value = !emailRequired.value;
+  formRef.value?.updateItems("email", {
+    "rules[0].required": emailRequired.value,
+  });
+  ElMessage.info(
+    emailRequired.value
+      ? "邮箱已设为必填（rules[0].required = true）"
+      : "邮箱已设为选填（rules[0].required = false，红星与必填校验已同步移除）",
+  );
+};
 </script>
 
 <template>
@@ -621,6 +640,9 @@ const toggleZipVisible = () => {
       </el-button>
       <el-button type="warning" plain size="small" @click="toggleZipVisible">
         {{ zipHidden ? "显示" : "隐藏" }}「邮编」
+      </el-button>
+      <el-button type="warning" plain size="small" @click="toggleEmailRequired">
+        {{ emailRequired ? "「邮箱」改为选填" : "「邮箱」设为必填" }}
       </el-button>
     </div>
 
