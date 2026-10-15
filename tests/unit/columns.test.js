@@ -242,15 +242,49 @@ describe("editRender 分流", () => {
     expect(result[0].editRender).toBeUndefined();
   });
 
-  it("字符串式 editRender 命中插槽 → slots.edit 引用 + 对象式标记；未命中则移除配置", () => {
-    const slotFn = () => null;
+  it("字符串式 editRender 命中插槽 → slots.edit 包装函数（含自动弹出钩子）+ 对象式标记；未命中则移除配置", () => {
+    const FakeSelect = { name: "FakeSelect", render: () => null };
+    const slotFn = () => h(FakeSelect);
     const hit = run([{ field: "e", editRender: "edit_e" }], { slots: { edit_e: slotFn } });
-    expect(hit.result[0].slots.edit).toBe("edit_e");
+    // 原为字符串引用，现包装为函数以注入 onVnodeMounted（点击进入编辑后立刻弹出面板）；
+    // vxe 对函数与字符串的处理等价（callSlot），行为不变
+    expect(typeof hit.result[0].slots.edit).toBe("function");
     expect(hit.result[0].editRender).toEqual({ name: "TableProSlotEdit", autofocus: true });
+    const vnode = hit.result[0].slots.edit(scopeFor("e", { e: 1 }, 1));
+    expect(vnode.type).toBe(FakeSelect);
+    expect(typeof vnode.props.onVnodeMounted).toBe("function");
 
     const miss = run([{ field: "e", editRender: "edit_e" }], { slots: {} });
     expect(miss.result[0].slots.edit).toBeUndefined();
     expect(miss.result[0].editRender).toBeUndefined();
+  });
+
+  it("插槽自动弹出：组件 vnode 附加 onVnodeMounted，元素/文本 vnode 不附加", () => {
+    const FakeComp = { name: "FakeComp", render: () => null };
+    const fnEdit = () => h(FakeComp);
+    const fnCol = run([{ field: "a", editRender: fnEdit }]).result[0];
+    const fnVnode = fnCol.slots.edit(scopeFor("a", { a: 1 }, 1));
+    expect(fnVnode.type).toBe(FakeComp);
+    expect(typeof fnVnode.props.onVnodeMounted).toBe("function");
+
+    // 元素 vnode（如普通 input）不包裹，保持原样（原有聚焦行为由 vxe autofocus 兜底）
+    const elCol = run([{ field: "b", editRender: () => h("input") }]).result[0];
+    const elVnode = elCol.slots.edit(scopeFor("b", { b: "x" }, "x"));
+    expect(elVnode.type).toBe("input");
+    expect(elVnode.props?.onVnodeMounted).toBeUndefined();
+  });
+
+  it("对象式 editRender + slots.edit 字符串：包装为函数以附加自动弹出钩子", () => {
+    const FakeComp = { name: "FakeComp2", render: () => null };
+    const slotFn = () => h(FakeComp);
+    const { result } = run(
+      [{ field: "a", editRender: { name: "ElInput" }, slots: { edit: "edit_a" } }],
+      { slots: { edit_a: slotFn } },
+    );
+    expect(typeof result[0].slots.edit).toBe("function");
+    const vnode = result[0].slots.edit(scopeFor("a", { a: 1 }, 1));
+    expect(vnode.type).toBe(FakeComp);
+    expect(typeof vnode.props.onVnodeMounted).toBe("function");
   });
 
   it("对象式 editRender（ElInput）：slots.edit 渲染受控组件并同步编辑本地态", () => {
@@ -373,6 +407,48 @@ describe("editRender 分流", () => {
     const row = { id: 6, a: 1 };
     const vnode = result[0].slots.edit(scopeFor("a", row, 1));
     expect(vnode.props.popperClass).toBe("vxe-table--ignore-clear my-popper");
+  });
+
+  it("弹出面板类（ElCascader/ElColorPicker）自动追加 ignore-clear popperClass", () => {
+    const { result } = run([
+      {
+        field: "region",
+        editRender: {
+          name: "ElCascader",
+          props: {
+            options: [
+              { value: "zj", label: "浙江", children: [{ value: "hz", label: "杭州" }] },
+            ],
+          },
+        },
+      },
+      { field: "color", editRender: { name: "ElColorPicker" } },
+    ]);
+    const row = { id: 7, region: ["zj", "hz"], color: "#409EFF" };
+    const cascaderVnode = result[0].slots.edit(scopeFor("region", row, row.region));
+    expect(cascaderVnode.props.popperClass).toBe("vxe-table--ignore-clear");
+    // options 透传给 ElCascader
+    expect(Array.isArray(cascaderVnode.props.options)).toBe(true);
+    const colorVnode = result[1].slots.edit(scopeFor("color", row, "#409EFF"));
+    expect(colorVnode.props.popperClass).toBe("vxe-table--ignore-clear");
+  });
+
+  it("ElTimePicker 自动注入兜底 valueFormat（EP 对非 ISO 时间字符串解析失败会导致面板崩溃）", () => {
+    const { result } = run([
+      { field: "t1", editRender: { name: "ElTimePicker" } },
+      {
+        field: "t2",
+        editRender: { name: "ElTimePicker", props: { valueFormat: "HH:mm" } },
+      },
+    ]);
+    const row = { id: 8, t1: "09:30:00", t2: "09:30" };
+    // 未配置 valueFormat → 注入默认 "HH:mm:ss"
+    const t1Vnode = result[0].slots.edit(scopeFor("t1", row, row.t1));
+    expect(t1Vnode.props.valueFormat).toBe("HH:mm:ss");
+    expect(t1Vnode.props.modelValue).toBe("09:30:00");
+    // 用户显式配置 valueFormat → 用户配置优先，默认值不覆盖
+    const t2Vnode = result[1].slots.edit(scopeFor("t2", row, row.t2));
+    expect(t2Vnode.props.valueFormat).toBe("HH:mm");
   });
 });
 

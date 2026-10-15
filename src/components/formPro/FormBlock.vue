@@ -3,7 +3,7 @@
  * FormPro 内部：渲染单个「分组块」（匿名组或具名分组）。
  * 拆分为子组件，使 index.vue 模板保持简洁，同时 JSX 渲染逻辑独立可测。
  */
-import { computed, ref, useSlots, h, resolveComponent, mergeProps, isRef } from "vue";
+import { computed, ref, useSlots, h, resolveComponent, mergeProps, isRef, toRaw } from "vue";
 import { ElRow, ElCol, ElFormItem, ElIcon, ElTooltip, ElTag } from "element-plus";
 import { ArrowRight, ArrowDown, ArrowUp } from "@element-plus/icons-vue";
 import {
@@ -143,10 +143,13 @@ const withTip = (node, tip) =>
 const renderTitleIcon = (icon) => {
   if (icon == null) return null;
   // 传入图标组件（如 @element-plus/icons-vue）→ 用 ElIcon 包裹；否则原样渲染
+  // toRaw 防御：调用方若把组件对象塞进 reactive/ref，此处剥离响应式代理，避免
+  // "Vue received a Component that was made a reactive object" 性能警告。
+  const comp = typeof icon === "function" || (icon && typeof icon === "object") ? toRaw(icon) : icon;
   const inner =
-    typeof icon === "function" || (icon && typeof icon === "object")
-      ? h(icon)
-      : icon;
+    typeof comp === "function" || (comp && typeof comp === "object")
+      ? h(comp)
+      : comp;
   return h(ElIcon, { class: "form-pro__title-icon" }, () => inner);
 };
 

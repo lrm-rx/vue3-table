@@ -46,6 +46,34 @@ const statusTextMap = {
   1: { label: "启用", type: "success" },
   0: { label: "禁用", type: "info" },
 };
+const departmentTextMap = {
+  dev: "研发部",
+  product: "产品部",
+  design: "设计部",
+  ops: "运营部",
+  hr: "人事部",
+};
+// 部门插槽编辑列（editRender: 'edit_dept2'）的下拉选项，与 mock 数据 department 取值一致
+const deptSlotOptions = ["技术部", "产品部", "设计部", "运营部", "市场部"];
+// 所在地区列（ElCascader）的级联选项
+const cascaderEditOptions = [
+  {
+    value: "zhejiang",
+    label: "浙江省",
+    children: [
+      { value: "hangzhou", label: "杭州市" },
+      { value: "ningbo", label: "宁波市" },
+    ],
+  },
+  {
+    value: "jiangsu",
+    label: "江苏省",
+    children: [
+      { value: "nanjing", label: "南京市" },
+      { value: "suzhou", label: "苏州市" },
+    ],
+  },
+];
 
 const columns = ref([
   { type: "checkbox", width: 50 },
@@ -159,6 +187,7 @@ const columns = ref([
       props: { options: [] },
     },
     editRender: { name: "ElSelect" },
+   // render: "cell_department",
   },
   {
     field: "status",
@@ -192,7 +221,7 @@ const columns = ref([
   {
     field: "action",
     title: "操作",
-    width: 180,
+    width: "auto",
     fixed: "right",
     render: (params, h) => {
       const row = params.row;
@@ -252,6 +281,58 @@ const columns = ref([
       },
     },
   },
+  // ===== 弹出类编辑控件验证列（二次封装/插槽式接入）=====
+  {
+    field: "dept2",
+    title: "部门插槽编辑",
+    width: 150,
+    sortable: true,
+    // 字符串式 editRender → slots.edit 引用下方 #edit_dept2 具名插槽（内含 el-select）
+    editRender: "edit_dept2",
+  },
+  {
+    field: "workTime",
+    title: "上班时间",
+    width: 150,
+    sortable: true,
+    editRender: { name: "ElTimePicker" },
+  },
+  {
+    field: "regionPath",
+    title: "所在地区",
+    width: 170,
+    // ElCascader 级联面板（弹出面板类编辑控件验证）
+    editRender: {
+      name: "ElCascader",
+      props: { options: cascaderEditOptions, placeholder: "请选择地区" },
+    },
+  },
+  {
+    field: "favColor",
+    title: "偏好颜色",
+    width: 130,
+    // ElColorPicker 取色面板（弹出面板类编辑控件验证）
+    editRender: { name: "ElColorPicker" },
+    // 非编辑态展示色块 + 色值文本（便于识别当前选中颜色）
+    render: ({ cellValue }) =>
+      cellValue ? (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            style={{
+              display: "inline-block",
+              width: "16px",
+              height: "16px",
+              borderRadius: "3px",
+              background: cellValue,
+              verticalAlign: "middle",
+            }}
+          />
+          <span>{cellValue}</span>
+        </span>
+      ) : (
+        ""
+      ),
+  },
 ]);
 
 const editRules = ref({
@@ -292,6 +373,15 @@ const onDataCallback = (data) => {
         item.role
       ] || item.role,
     age: item.age != null ? item.age : 18 + ((Math.random() * 40) | 0),
+    // ===== 弹出类编辑控件验证列的派生字段 =====
+    // dept2：与 department 同源，用于「自定义插槽式编辑（editRender: 'edit_dept2' + el-select）」验证
+    dept2: item.department,
+    // workTime：ElTimePicker 编辑验证
+    workTime: item.workTime || "09:30:00",
+    // regionPath：ElCascader 编辑验证
+    regionPath: item.regionPath || ["zhejiang", "hangzhou"],
+    // favColor：ElColorPicker 编辑验证
+    favColor: item.favColor || "#409EFF",
   }));
   return data;
 };
@@ -561,6 +651,28 @@ const onRemoveSelected = () => {
         <el-button link type="primary" :underline="false">
           <b>@{{ row.account || "" }}</b>
         </el-button>
+      </template>
+
+      <template #cell_department="{ row }">
+        <el-tag size="small" effect="plain">
+          🏢 {{ departmentTextMap[row.department] || row.department || "—" }}
+        </el-tag>
+      </template>
+
+      <template #edit_dept2="{ row }">
+        <el-select
+          :model-value="row.dept2"
+          @update:model-value="(v) => (row.dept2 = v)"
+          placeholder="请选择部门"
+          clearable
+        >
+          <el-option
+            v-for="d in deptSlotOptions"
+            :key="d"
+            :label="d"
+            :value="d"
+          />
+        </el-select>
       </template>
 
       <template #edit_email="{ row }">

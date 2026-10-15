@@ -12,6 +12,7 @@ import {
   provide,
   nextTick,
   onMounted,
+  onBeforeUnmount,
   watch,
   toHandlerKey,
   camelize,
@@ -311,10 +312,13 @@ const clearEditSessions = () => {
 
 // 进入编辑态：用 row[field] 初始化本地值 + 注册即时脏态 watcher
 // 自动弹出由 utils/columns.js 中 buildObjectEditSlotFn 的 onVnodeMounted 钩子处理（更可靠）
+// 同时开启弹出面板保护：编辑期间点击 Element Plus popper（含插槽式编辑器内部的弹层）
+// 不触发 vxe 清除编辑态（详见下方「弹出面板编辑保护」注释）
 const onEditActivated = (params) => {
   const row = params && params.row
   const field = params && params.column && params.column.field
   if (!row || !field) return
+  startPopupClearGuard()
   const key = resolveEditStateKey(row, field)
   const original = row[field]
   editLocalState[key] = original
@@ -348,6 +352,8 @@ const onEditActivated = (params) => {
 // 分流：对象式 editLocalState 存新值 → 写回 row；
 //   函数式/字符串式用户已直接绑 row[field] → 不覆盖 row，以 row[field] 为新值发射
 const onEditClosed = (params) => {
+  // 无论参数是否完整都先关闭弹出面板保护（start/stop 幂等，早退路径也不会泄漏监听）
+  stopPopupClearGuard()
   const row = params && params.row
   const col = params && params.column
   const field = col && col.field
@@ -398,6 +404,46 @@ const onEditClosed = (params) => {
   }
   recomputeChanged();
 }
+
+// ========== 弹出面板编辑保护（插槽式/函数式 editRender 的弹出组件 + 过滤面板内弹层）==========
+// 背景：对象式 editRender（ElSelect/ElDatePicker/ElTimePicker 等）由 columns.js 自动注入
+// popperClass=vxe-table--ignore-clear；但以下两类弹出面板没有该保护：
+//   1. 字符串式（editRender: 'edit_xxx' 引用插槽）与函数式 editRender —— 编辑控件由外部
+//      模板渲染，其内部的 ElSelect/ElDatePicker 等弹出面板 teleport 到 body，不带该类；
+//   2. 表头过滤面板内的弹层（如 FilterDateRange 的 el-date-picker 下拉面板）。
+// 危害：真实用户点击面板（如选择下拉选项）时，mousedown 先触发 vxe 全局清除逻辑：
+//   · 编辑态 → handleClearEdit 经 setTimeout 调度，编辑器先于 click 卸载，选择丢失
+//     （自动化快速点击时 click 侥幸先于定时器执行，人手点击必现「无法选择数据」）；
+//   · 过滤面板 → 误关整个过滤面板，草稿丢失。
+// 方案：编辑态/过滤面板打开期间，在 window 捕获阶段监听 mousedown，为事件目标所在的
+// Element Plus popper 根元素（.el-popper，覆盖 select/date/time/cascader/color-picker/
+// popover/dropdown 等）补加 vxe-table--ignore-clear —— 与 vxe 自带筛选/自定义列面板
+// 同一机制；vxe 的 mousedown 监听挂在 window 冒泡阶段，捕获阶段必然先于其执行。
+const POPUP_CLEAR_GUARD_CLASS = "vxe-table--ignore-clear";
+const onPopupClearGuardMousedown = (e) => {
+  const target = e.target;
+  if (!(target instanceof Element)) return;
+  const popperEl = target.closest(".el-popper");
+  if (!popperEl || popperEl.classList.contains(POPUP_CLEAR_GUARD_CLASS)) return;
+  popperEl.classList.add(POPUP_CLEAR_GUARD_CLASS);
+  // 同一次事件派发内 vxe 的冒泡处理器已能读到该类；下一拍移除，避免残留影响
+  // vxe 对后续「点击面板外部关闭过滤面板/编辑态」的判定
+  setTimeout(() => {
+    popperEl.classList.remove(POPUP_CLEAR_GUARD_CLASS);
+  }, 0);
+};
+let popupClearGuardActive = false;
+const startPopupClearGuard = () => {
+  if (popupClearGuardActive) return;
+  popupClearGuardActive = true;
+  window.addEventListener("mousedown", onPopupClearGuardMousedown, true);
+};
+const stopPopupClearGuard = () => {
+  if (!popupClearGuardActive) return;
+  popupClearGuardActive = false;
+  window.removeEventListener("mousedown", onPopupClearGuardMousedown, true);
+};
+onBeforeUnmount(stopPopupClearGuard);
 
 // ========== 变更跟踪（v-model:cellChanged）==========
 // 监听 vxe-grid 自带的三类本地操作并对外双向绑定「是否存在未保存变更」：
@@ -988,12 +1034,63 @@ const handleFilterPanelClose = (column) => {
   });
 };
 
+// 过滤面板打开后聚焦面板内第一个输入框/文本域：
+// 覆盖 FilterInput / FilterCheckbox 搜索框 / FilterDateRange / FilterNumberRange，
+// 用户打开面板即可直接输入，无需再点一次输入框。
+// 注意：filterConfig.transfer=true 时面板被 Teleport 到 body，必须 document 级查询；
+// vxe 给可见面板加 is--active 类，用它定位当前面板。
+const focusFirstFilterInput = (column) => {
+  const findPanel = () => {
+    const active = Array.from(
+      document.querySelectorAll(".vxe-table--filter-wrapper.is--active"),
+    );
+    if (!active.length) return null;
+    if (active.length === 1) return active[0];
+    // 多个 grid 同时打开过滤面板时，取离当前列头最近的面板
+    const colId = column && column.id;
+    const rootEl = gridRef.value?.getEl?.();
+    const th = colId && rootEl ? rootEl.querySelector(`th[colid="${colId}"]`) : null;
+    if (!th) return active[0];
+    const tr = th.getBoundingClientRect();
+    let best = active[0];
+    let bestDist = Infinity;
+    for (const w of active) {
+      const r = w.getBoundingClientRect();
+      const d = Math.abs(r.top - tr.top) + Math.abs(r.left - tr.left);
+      if (d < bestDist) {
+        bestDist = d;
+        best = w;
+      }
+    }
+    return best;
+  };
+  const tryFocus = () => {
+    const panel = findPanel();
+    const input = panel?.querySelector?.("input, textarea");
+    if (input && typeof input.focus === "function") {
+      input.focus();
+      return true;
+    }
+    return false;
+  };
+  nextTick(() => {
+    // 面板内容随 Vue 渲染挂载，首帧可能尚未就绪 → 延迟一拍重试
+    if (!tryFocus()) setTimeout(tryFocus, 0);
+  });
+};
+
 const onFilterVisible = (payload) => {
   if (!payload || !payload.column) return;
   const column = payload.column;
   if (payload.visible) {
+    // 过滤面板打开期间开启弹出面板保护：面板内弹层（如 FilterDateRange 的
+    // el-date-picker 下拉）被点击时不触发 vxe 误关整个过滤面板
+    startPopupClearGuard();
     handleFilterPanelOpen(column);
+    // 等面板内容挂载完成后聚焦首个输入框
+    focusFirstFilterInput(column);
   } else {
+    stopPopupClearGuard();
     handleFilterPanelClose(column);
   }
 };
@@ -2025,6 +2122,14 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       }
     }
   }
+}
+
+// 修复 width:"auto" 列每次刷新列宽累加：vxe 测量期（data-calc-col）必须让 wrapper
+// 收缩为内容宽度，否则上一次列宽会被当作内容宽度测回（calcCellWidth 每次 +4、每刷新跑 4 次 = +16）。
+// 必须 !important：上方表头 flex 布局规则给 .vxe-header-cell--wrapper 设了 width:100%，
+// :deep() 编译后特异性更高，非 !important 无法覆盖
+.vxe-table[data-calc-col] .vxe-cell > .vxe-cell--wrapper {
+  width: max-content !important;
 }
 
 // body 级兜底：popover 计算位置出错时也不要出现页面级横向滚动条

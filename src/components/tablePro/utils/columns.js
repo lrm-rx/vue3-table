@@ -22,7 +22,7 @@
  *     }),
  *   );
  */
-import { h, markRaw } from "vue";
+import { h, markRaw, cloneVNode } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
   ElInput,
@@ -37,6 +37,8 @@ import {
   ElCheckboxButton,
   ElDatePicker,
   ElTimePicker,
+  ElCascader,
+  ElColorPicker,
   ElSwitch,
   ElRate,
 } from "element-plus";
@@ -58,7 +60,13 @@ const EL_EDIT_MAP = {
   ElInput:        { comp: ElInput },
   ElInputNumber:  { comp: ElInputNumber },
   ElDatePicker:   { comp: ElDatePicker },
-  ElTimePicker:   { comp: ElTimePicker },
+  // defaultProps：合并进编辑控件的兜底 props（优先级低于 editRender.props / cellEditProps）
+  // ElTimePicker 必须带 valueFormat：EP parseDate 对无法解析的字符串返回 undefined
+  // （如 "09:30:00" 非 ISO 格式），parsedValue=undefined 会导致面板渲染崩溃（spinnerDate undefined）
+  ElTimePicker:   { comp: ElTimePicker,   defaultProps: { valueFormat: 'HH:mm:ss' } },
+  // 弹出面板类：cascader 下拉面板 / color-picker 取色面板（popperClass 保护见 POPUP_EDIT_NAMES）
+  ElCascader:     { comp: ElCascader },
+  ElColorPicker:  { comp: ElColorPicker },
   ElSwitch:       { comp: ElSwitch },
   ElRate:         { comp: ElRate },
   ElSelect:       { comp: ElSelect,       wrap: 'ElOption' },
@@ -77,13 +85,15 @@ const resolveEditOptions = (field, editRender, editOptions) => {
   const eo = editOptions || {}
   return Array.isArray(eo[field]) ? eo[field] : []
 }
-// 合并编辑控件 props：editRender.props + editRender.props.props + cellEditProps[field] + v-model
-const mergeEditCompProps = (field, editRender, cellEditProps, extra = {}) => {
+// 合并编辑控件 props：baseProps（EL_EDIT_MAP.defaultProps 兜底）+ editRender.props
+// + editRender.props.props + cellEditProps[field] + v-model
+const mergeEditCompProps = (field, editRender, cellEditProps, extra = {}, baseProps = {}) => {
   const erProps = (editRender && editRender.props) || {}
   const innerProps = erProps.props || {}
   const cep = cellEditProps || {}
   const commonProps = cep[field] || {}
   return {
+    ...baseProps,            // 组件级兜底 props（如 ElTimePicker 的 valueFormat，优先级最低）
     ...erProps,              // editRender.props 顶层（如 activeValue / type）
     ...innerProps,           // editRender.props.props（标准 props 容器）
     ...commonProps,          // 外部 :cell-edit-props 注入（优先级更高）
@@ -126,7 +136,7 @@ export const resolveParamKey = (col, fallbackField) => {
 }
 
 // ========== 单元格编辑：自动聚焦 / 自动弹出面板 ==========
-// 进入编辑态后自动聚焦/展开的组件集合（仅对象配置式 editRender 生效）
+// 进入编辑态后自动聚焦/展开的组件集合（对象配置式按 name 命中；插槽式经 attachSlotAutoOpen 按能力探测）
 //   · 文字输入类：ElInput/ElInputNumber → 聚焦 input（高亮光标，直接打字即可）
 //   · 面板弹出类：ElSelect/ElDatePicker/ElTimePicker/ElCascader/ElColorPicker → 展开面板
 //   · TextareaPopoverEdit：组件内部 onMounted 已处理 popover 打开+聚焦，这里仅占位避免重复逻辑
@@ -167,6 +177,8 @@ const autoOpenPopupComp = (erName, el, proxy) => {
   // ElDatePicker/ElTimePicker/ElCascader/ElColorPicker
   // 组件实例方法（部分版本可能不暴露，跳过即可）
   if (proxy && typeof proxy.handleOpen === 'function') proxy.handleOpen()
+  // ElColorPicker 暴露的是 show()/hide()（无 handleOpen）
+  if (proxy && typeof proxy.show === 'function') proxy.show()
   if (proxy && typeof proxy.focus === 'function') proxy.focus()
   // DOM 事件：在 .el-input__wrapper 上 mousedown + click 触发 ElDatePicker 内部 handleFocus
   //   · 直接在 input 上触发不生效（ElDatePicker 监听 wrapper 而非 input）
@@ -193,16 +205,20 @@ const autoOpenPopupComp = (erName, el, proxy) => {
 const autoOpenOnMounted = (erName) => {
   if (!AUTO_OPEN_EDIT_NAMES.has(erName)) return null
   return (vnode) => {
-    const proxy = vnode && vnode.component && vnode.component.proxy
+    const comp = vnode && vnode.component
+    // 注意：expose() 的方法挂在 component.exposed 上（instance.proxy 拿不到），
+    // 如 ElTimePicker.handleOpen / ElColorPicker.show，必须优先从 exposed 取
+    const api = (comp && (comp.exposed || comp.proxy)) || undefined
+    const proxy = comp && comp.proxy
     const rawEl = (proxy && proxy.$el) || (vnode && vnode.el)
     // 若是 Text/Comment 节点，向上找最近的 Element（Fragment 组件如 ElDatePicker）
     const el = rawEl && rawEl.nodeType === 1 ? rawEl : (rawEl && rawEl.parentElement)
     const trigger = () => {
       try {
         if (AUTO_FOCUS_EDIT_NAMES.has(erName) || erName === 'TextareaPopoverEdit') {
-          autoFocusTextInput(erName, el, proxy)
+          autoFocusTextInput(erName, el, api)
         } else if (AUTO_POPUP_EDIT_NAMES.has(erName)) {
-          autoOpenPopupComp(erName, el, proxy)
+          autoOpenPopupComp(erName, el, api)
         }
       } catch (e) {
         /* ignore */
@@ -212,9 +228,67 @@ const autoOpenOnMounted = (erName) => {
   }
 }
 
-// 弹出面板类编辑控件（下拉/日期/时间面板 teleport 到 body，点击面板时 vxe 会判定为"编辑单元格外部"而退出编辑态）
+// 插槽式编辑（函数式/字符串式 editRender、slots.edit 字符串）的自动弹出：
+// 用户插槽渲染的组件 tablePro 未知，按能力探测（点击单元格进入编辑后立刻弹出面板）——
+//   · 组件暴露 handleOpen()/show()（ElDatePicker/ElTimePicker/ElCascader/ElColorPicker 等）→ 直接调用
+//   · ElSelect：部分版本未暴露 handleOpen，点击 .el-select__wrapper 触发内部 toggleMenu
+//   · 通用 .el-input__wrapper：mousedown + focus + click（ElDatePicker 系监听 wrapper 而非 input）
+// 普通输入类无需处理：vxe 依据 editRender.autofocus 自动聚焦 cell 内第一个 input/textarea
+const autoOpenSlotVnode = (vnode) => {
+  const comp = vnode && vnode.component
+  const api = (comp && (comp.exposed || comp.proxy)) || undefined
+  const proxy = comp && comp.proxy
+  const rawEl = (proxy && proxy.$el) || (vnode && vnode.el)
+  // Fragment 组件的 vnode.el 可能是 Text/Comment 节点，向上找最近的 Element
+  const el = rawEl && rawEl.nodeType === 1 ? rawEl : (rawEl && rawEl.parentElement)
+  // 1) 组件实例能力：expose() 的方法挂在 component.exposed 上，instance.proxy 拿不到
+  if (api && typeof api.handleOpen === 'function') { api.handleOpen(); return }
+  if (api && typeof api.show === 'function') { api.show(); return }
+  // 2) DOM 兜底
+  if (!el || !el.querySelector) return
+  const selectWrapper = el.querySelector('.el-select__wrapper')
+  if (selectWrapper) {
+    selectWrapper.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    return
+  }
+  const inputWrapper = el.querySelector('.el-input__wrapper')
+  if (!inputWrapper) return
+  inputWrapper.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+  const inputEl = inputWrapper.querySelector('input')
+  if (inputEl && typeof inputEl.focus === 'function') {
+    inputEl.focus()
+    inputEl.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+  }
+  inputWrapper.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+}
+
+// 给插槽式编辑渲染结果附加 onVnodeMounted（挂载后下一拍自动弹出，与对象式 autoOpenOnMounted 对齐）。
+// 仅包裹组件 vnode（元素/文本/Fragment 不处理）；setTimeout(0) 等 Element Plus 内部初始化完成
+const attachSlotAutoOpen = (vnodes) => {
+  const attach = (vn) => {
+    const type = vn && vn.type
+    if (!type || typeof type === 'string' || typeof type === 'symbol') return vn
+    return cloneVNode(vn, {
+      onVnodeMounted: (mountedVn) => {
+        try { setTimeout(() => autoOpenSlotVnode(mountedVn), 0) } catch (e) { /* ignore */ }
+      },
+    })
+  }
+  if (Array.isArray(vnodes)) return vnodes.map(attach)
+  return attach(vnodes)
+}
+
+// 弹出面板类编辑控件（下拉/日期/时间/级联/取色面板 teleport 到 body，点击面板时 vxe 会判定为"编辑单元格外部"而退出编辑态）
 // 给 popper 加上 vxe-table--ignore-clear 类，vxe 全局 mousedown 处理器检测到该类会跳过清除编辑态
-const POPUP_EDIT_NAMES = new Set(['ElSelect', 'ElDatePicker', 'ElTimePicker'])
+// 注：插槽式（editRender: 'edit_xxx'）/函数式 editRender 的弹出组件与过滤面板内弹层
+// 无法在此注入 popperClass，由 index.vue 的「弹出面板编辑保护」（捕获阶段补类）统一兜底
+const POPUP_EDIT_NAMES = new Set([
+  'ElSelect',
+  'ElDatePicker',
+  'ElTimePicker',
+  'ElCascader',
+  'ElColorPicker',
+])
 const IGNORE_CLEAR_CLASS = 'vxe-table--ignore-clear'
 // 合并 popperClass：用户自定义 + ignore-clear（确保点击下拉/日期面板选项时编辑态不被清除）
 const resolvePopperClass = (erName, existing) => {
@@ -392,7 +466,7 @@ export const buildColumns = (config) => {
               columnIndex: scope.$columnIndex,
               $table: scope.$table,
             }
-            return userEdit(params, h)
+            return attachSlotAutoOpen(userEdit(params, h))
           } catch (e) {
             return renderSlotError(e)
           }
@@ -412,7 +486,9 @@ export const buildColumns = (config) => {
       if (col.editable == null) col.editable = true
       const slotName = col.editRender
       if (!col.slots.edit && typeof externalSlots[slotName] === 'function') {
-        col.slots.edit = slotName
+        // 包一层以附加自动弹出钩子（直接赋 slotName 字符串则无法注入 onVnodeMounted）；
+        // vxe 对 slots.edit 函数与字符串的处理等价（callSlot），行为不变
+        col.slots.edit = markRaw((scope) => attachSlotAutoOpen(externalSlots[slotName](scope)))
       }
       // 仅当插槽命中（slots.edit 已就绪）时保留可编辑标记；
       // 插槽缺失时移除配置，避免出现「有编辑图标但点击无控件」的坏列
@@ -476,7 +552,13 @@ export const buildColumns = (config) => {
       extra.onCancel = (e) => emit('textarea-cancel', buildPayload(e?.value ?? editLocalState[stateKey]))
       extra.onConfirm = (e) => emit('textarea-confirm', buildPayload(e?.value ?? editLocalState[stateKey]))
     }
-    const bindProps = mergeEditCompProps(field, col.editRender, cellEditProps, extra)
+    const bindProps = mergeEditCompProps(
+      field,
+      col.editRender,
+      cellEditProps,
+      extra,
+      (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
+    )
     // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
 
     // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
@@ -529,7 +611,11 @@ export const buildColumns = (config) => {
       // markRaw 避免 Vue 深度劫持造成渲染循环或状态丢失
       col.slots.edit = buildObjectEditSlotFn(col, field, Comp, wrapName)
     } else if (editEnabled && typeof col.slots.edit === 'string') {
-      // 用户写 slots.edit: 'edit_xxx' 字符串时直接交给外部具名插槽
+      // 用户写 slots.edit: 'edit_xxx' 字符串：包一层以附加自动弹出钩子，内部仍交给外部具名插槽
+      const slotName = col.slots.edit
+      if (typeof externalSlots[slotName] === 'function') {
+        col.slots.edit = markRaw((scope) => attachSlotAutoOpen(externalSlots[slotName](scope)))
+      }
     }
     // 未提供 render/slots.default 时，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
     if (!col.slots.default) {
