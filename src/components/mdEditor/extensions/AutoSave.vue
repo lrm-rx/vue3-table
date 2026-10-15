@@ -5,7 +5,7 @@
  * 放置在 CharCount 的默认插槽中，显示在字数统计右侧。
  *
  * 功能：
- * 1. 开启且条件满足（标题 + 正文均非空）时启动倒计时，到点触发父组件保存事件。
+ * 1. enabled 为 true 时启动倒计时，到点触发父组件保存事件；enabled 变 false 时立即中断（含保存进行中）。
  * 2. 保存中等待接口反馈，成功显示「自动保存成功」（success 色），失败显示「自动保存失败」（error 色）。
  * 3. 无论成功/失败，均在结果展示 2s 后才进入下一轮倒计时，避免接口耗时不确定导致重叠。
  * 4. 倒计时基于结束时间戳计算，消除 setInterval 漂移；组件卸载时清理全部定时器，避免内存泄露。
@@ -28,11 +28,6 @@ const props = defineProps({
     type: String,
     default: 'seconds',
     validator: (v) => ['seconds', 'minutes'].includes(v),
-  },
-  /** 是否满足保存条件（如标题与正文均非空），由父组件计算后传入 */
-  canSave: {
-    type: Boolean,
-    default: false,
   },
 })
 
@@ -105,19 +100,8 @@ const displayClass = computed(() => {
   }
 })
 
-/**
- * 是否可见：
- * - 未开启时隐藏
- * - 保存中 / 结果展示态保持可见（即便 canSave 中途变为 false，也等本轮结束）
- * - 倒计时态仅在 canSave 为 true 时显示
- */
-const visible = computed(() => {
-  if (!props.enabled) return false
-  if (status.value === 'saving' || status.value === 'success' || status.value === 'error') {
-    return true
-  }
-  return props.canSave
-})
+/** 是否可见：仅由 enabled 决定（enabled 变 false 时立即中断并隐藏） */
+const visible = computed(() => props.enabled)
 
 /** 启动一轮新的倒计时 */
 const startCountdown = () => {
@@ -145,31 +129,29 @@ const triggerSave = () => {
   status.value = 'saving'
   // emit('save', done) —— 父组件在保存接口结束后调用 done(true/false)
   emit('save', (ok) => {
-    if (destroyed) return
+    // 组件已卸载或保存期间被关闭（enabled 变 false）：直接丢弃结果，不进入下一轮
+    if (destroyed || !props.enabled) return
     status.value = ok ? 'success' : 'error'
-    // 结果展示 2s 后再决定是否进入下一轮
+    // 结果展示 2s 后再进入下一轮倒计时
     resultTimer = setTimeout(() => {
-      if (destroyed) return
-      if (props.enabled && props.canSave) {
-        startCountdown()
-      } else {
-        // 条件不再满足：回到计数态但不启动定时器（组件隐藏）
-        status.value = 'counting'
-      }
+      if (destroyed || !props.enabled) return
+      startCountdown()
     }, 2000)
   })
 }
 
-/** 监听开关、保存条件与间隔变化：满足时启动，条件/间隔变化时按需重启 */
+/** 监听开关与间隔变化：开启时启动，关闭时立即中断（含保存进行中），间隔变化时重启 */
 watch(
-  () => [props.enabled, props.canSave, intervalSeconds.value],
-  ([enabled, canSave]) => {
-    const inFlight =
-      status.value === 'saving' || status.value === 'success' || status.value === 'error'
-    if (enabled && canSave && !inFlight) {
-      startCountdown()
-    } else if ((!enabled || !canSave) && status.value === 'counting') {
-      // 仅在倒计时态清理，保存中/结果态让其自然结束
+  () => [props.enabled, intervalSeconds.value],
+  ([enabled]) => {
+    if (enabled) {
+      const inFlight =
+        status.value === 'saving' || status.value === 'success' || status.value === 'error'
+      // 保存中/结果展示态不因间隔变化打断，其余情况启动/重启倒计时
+      if (!inFlight) startCountdown()
+    } else {
+      // 关闭时直接中断自动保存：重置状态并清理全部定时器
+      status.value = 'counting'
       clearAllTimers()
     }
   },

@@ -353,7 +353,7 @@ describe('MdEditor —— 透传原生 attrs（事件 / 额外 props）', () => 
       maxImageSize: 5,
       autoSave: true,
       autoSaveInterval: 15,
-      title: '文章标题',
+      autoSaveIntervalUnit: 'minutes',
     })
     const p = stub(wrapper).props()
     expect(p.uploadType).toBeUndefined()
@@ -361,7 +361,7 @@ describe('MdEditor —— 透传原生 attrs（事件 / 额外 props）', () => 
     expect(p.maxImageSize).toBeUndefined()
     expect(p.autoSave).toBeUndefined()
     expect(p.autoSaveInterval).toBeUndefined()
-    expect(p.title).toBeUndefined()
+    expect(p.autoSaveIntervalUnit).toBeUndefined()
   })
 })
 

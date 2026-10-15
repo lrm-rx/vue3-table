@@ -252,8 +252,6 @@ const theme = ref('light')
 const readOnly = ref(false)
 // 禁用模式（工具栏置灰、不可编辑）
 const disabled = ref(false)
-// 文章标题（自动保存条件之一：标题非空）
-const articleTitle = ref('')
 // 是否开启自动保存
 const autoSave = ref(false)
 // 自动保存间隔数值
@@ -369,14 +367,6 @@ const clearContent = () => {
         </div>
 
         <div class="md-demo__toolbar md-demo__toolbar--second">
-          <span class="md-demo__label">文章标题</span>
-          <el-input
-            v-model="articleTitle"
-            size="small"
-            placeholder="输入标题后自动保存才会启动"
-            style="width: 240px"
-          />
-
           <span class="md-demo__label">自动保存</span>
           <el-switch v-model="autoSave" active-text="开启" inactive-text="关闭" />
 
@@ -404,7 +394,7 @@ const clearContent = () => {
           工具栏集成了 <b>Mark 高亮</b> · <b>Emoji 表情</b> · <b>预览主题切换</b> · <b>插入时间</b> 扩展；
           支持 <b>只读模式</b>（切换「只读」开关查看效果）；
           图片支持工具栏上传 · 拖拽 · <b>截图粘贴</b>（自动转 base64）。
-          开启<b>自动保存</b>并填写标题与正文后，页脚字数右侧会显示倒计时，到点触发保存事件。
+          开启<b>自动保存</b>且正文非空时，页脚字数右侧会显示倒计时，到点触发保存事件；清空内容会立即中断。
         </span>
       </div>
 
@@ -417,7 +407,6 @@ const clearContent = () => {
         :max-image-size="maxImageSize"
         :theme="theme"
         :code-theme="codeTheme"
-        :title="articleTitle"
         :auto-save="autoSave"
         :auto-save-interval="autoSaveInterval"
         :auto-save-interval-unit="autoSaveIntervalUnit"

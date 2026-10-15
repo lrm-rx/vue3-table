@@ -139,7 +139,7 @@ const props = defineProps({
     type: Number,
     default: 10,
   },
-  // 是否开启自动保存（到点触发 save 事件，由父组件执行实际保存并回调结果）
+  // 是否开启自动保存（开启且正文非空时启动倒计时，到点触发 save 事件，由父组件执行实际保存并回调结果）
   autoSave: {
     type: Boolean,
     default: false,
@@ -154,11 +154,6 @@ const props = defineProps({
     type: String,
     default: 'seconds',
     validator: (v) => ['seconds', 'minutes'].includes(v),
-  },
-  // 文章标题：用于自动保存条件判断（标题非空 + 正文非空才启动倒计时）
-  title: {
-    type: String,
-    default: '',
   },
 })
 
@@ -202,7 +197,6 @@ const mergedProps = computed(() => {
   delete rest.autoSave
   delete rest.autoSaveInterval
   delete rest.autoSaveIntervalUnit
-  delete rest.title
   return rest
 })
 
@@ -210,8 +204,9 @@ const mergedProps = computed(() => {
 // 内置 markdownTotal 会把 base64 编码计入字数，这里用 countMarkdownChars 剔除
 const charCount = computed(() => countMarkdownChars(props.modelValue))
 
-// 自动保存条件：标题非空 且 正文（过滤 base64 后）非空
-const canSave = computed(() => !!props.title?.trim() && charCount.value > 0)
+// 自动保存激活条件：autoSave 开启 且 正文（过滤 base64 后）非空
+// 内容清空时立即中断自动保存；内容恢复且开关仍开启时自动重启倒计时
+const autoSaveEnabled = computed(() => props.autoSave && charCount.value > 0)
 
 // 统一的图片上传处理（覆盖工具栏上传 / 拖拽 / 截图粘贴三种入口）
 const handleUploadImg = async (files, callback) => {
@@ -303,10 +298,9 @@ defineExpose({
     <template #defFooters>
       <CharCount :count="charCount">
         <AutoSave
-          :enabled="autoSave"
+          :enabled="autoSaveEnabled"
           :interval="autoSaveInterval"
           :interval-unit="autoSaveIntervalUnit"
-          :can-save="canSave"
           @save="(done) => emit('save', done)"
         />
       </CharCount>
