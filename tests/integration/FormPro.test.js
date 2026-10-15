@@ -1069,4 +1069,396 @@ describe("FormPro 配置式表单", () => {
       expect(opts[0].props("label")).toBe("广州");
     });
   });
+
+  // ===================== 同 tick 父子数据竞态（三方合并，父级免 nextTick） =====================
+  describe("同 tick 父子数据竞态（三方合并）", () => {
+    // 复现 FormProDemo 资源组联动场景：子级 setField 触发 change 的同一 tick 内，
+    // 父级直接改 formData + updateItems——父级修改不应被子级待发出的 emit 覆盖。
+    it("子级 change 事件内父级清空另一字段 + updateItems：父级修改不丢失（免 nextTick）", async () => {
+      const formData = ref({ group: "A", resource: "A-r1" });
+      const items = ref([
+        {
+          prop: "group",
+          label: "资源组",
+          itemRender: {
+            name: "ElSelect",
+            options: [
+              { label: "A 组", value: "A" },
+              { label: "B 组", value: "B" },
+            ],
+            events: {
+              change: () => {
+                formData.value.resource = "";
+                fp.vm.updateItems("resource", {
+                  "itemRender.props.loading": true,
+                  "itemRender.options": [],
+                });
+              },
+            },
+          },
+        },
+        {
+          prop: "resource",
+          label: "资源",
+          itemRender: {
+            name: "ElSelect",
+            options: [{ label: "A 组-资源 1", value: "A-r1" }],
+          },
+        },
+      ]);
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro ref="fp" v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const fp = wrapper.findComponent({ name: "FormPro" });
+      // 模拟用户选择「B 组」：子级 setField + change 事件同步触发（同一 tick）
+      fp.vm.formData.group = "B";
+      items.value[0].itemRender.events.change("B");
+      await flushPromises();
+      expect(formData.value.group).toBe("B");
+      expect(formData.value.resource).toBe(""); // 修复前：被在途 emit 覆盖回 "A-r1"
+      expect(fp.vm.formData.resource).toBe("");
+      // updateItems 的改动同步生效（loading）
+      expect(items.value[1].itemRender.props.loading).toBe(true);
+      expect(items.value[1].itemRender.options).toEqual([]);
+    });
+
+    it("同 tick 子级改 x、父级改 y：两侧修改都保留（互不覆盖）", async () => {
+      const formData = ref({ x: "x0", y: "y0" });
+      const items = ref([
+        { prop: "x", label: "X", itemRender: { name: "ElInput" } },
+        { prop: "y", label: "Y", itemRender: { name: "ElInput" } },
+      ]);
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro ref="fp" v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const fp = wrapper.findComponent({ name: "FormPro" });
+      fp.vm.formData.x = "x1"; // 子级改 x（如用户输入）
+      formData.value.y = "y1"; // 同 tick 父级改 y
+      await flushPromises();
+      expect(formData.value.x).toBe("x1"); // 子级修改不丢
+      expect(formData.value.y).toBe("y1"); // 父级修改也不丢
+      expect(fp.vm.formData).toMatchObject({ x: "x1", y: "y1" });
+    });
+
+    it("父级整体替换 modelValue：父级优先（常用于详情回填）", async () => {
+      const formData = ref({ name: "old", age: 1 });
+      const items = ref([
+        { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+        { prop: "age", label: "年龄", itemRender: { name: "ElInputNumber" } },
+      ]);
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro ref="fp" v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const fp = wrapper.findComponent({ name: "FormPro" });
+      formData.value = { name: "new", age: 30 };
+      await flushPromises();
+      expect(fp.vm.formData.name).toBe("new");
+      expect(fp.vm.formData.age).toBe(30);
+    });
+
+    it("removeItems 删除字段后：已删键不被三方合并 resurrect", async () => {
+      const formData = ref({ name: "张三", age: 28 });
+      const items = ref([
+        { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+        { prop: "age", label: "年龄", itemRender: { name: "ElInputNumber" } },
+      ]);
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro ref="fp" v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const fp = wrapper.findComponent({ name: "FormPro" });
+      fp.vm.removeItems("age");
+      await flushPromises();
+      expect(fp.vm.formData).not.toHaveProperty("age");
+      expect(formData.value).not.toHaveProperty("age");
+      // 再改其他字段触发回抛，age 也不会复活
+      fp.vm.formData.name = "李四";
+      await flushPromises();
+      expect(fp.vm.formData).not.toHaveProperty("age");
+      expect(formData.value).not.toHaveProperty("age");
+    });
+  });
+
+  // ===================== 动态禁用 / 只读：disabledWhen / readonlyWhen =====================
+  describe("disabledWhen / readonlyWhen 动态禁用只读", () => {
+    const linkageItems = () => [
+      {
+        prop: "contact",
+        label: "联系人",
+        itemRender: { name: "ElInput" },
+      },
+      {
+        prop: "phone",
+        label: "电话",
+        disabledWhen: (ctx) => !ctx.data.contact,
+        itemRender: { name: "ElInput" },
+      },
+      {
+        prop: "note",
+        label: "备注",
+        readonlyWhen: (ctx) => !ctx.data.contact,
+        itemRender: { name: "ElInput" },
+      },
+    ];
+    const inputAt = (w, i) => w.findAll("input")[i];
+
+    it("disabledWhen：依赖字段为空时禁用，填写后自动启用", async () => {
+      const wrapper = mountFormPro({ modelValue: {}, items: linkageItems() });
+      await flushPromises();
+      expect(inputAt(wrapper, 1).attributes("disabled")).toBeDefined();
+      // 填写联系人 → 自动启用（render 期求值，无需手动 updateItems）
+      wrapper.vm.formData.contact = "张三";
+      await flushPromises();
+      expect(inputAt(wrapper, 1).attributes("disabled")).toBeUndefined();
+      // 清空 → 重新禁用
+      wrapper.vm.formData.contact = "";
+      await flushPromises();
+      expect(inputAt(wrapper, 1).attributes("disabled")).toBeDefined();
+    });
+
+    it("readonlyWhen：依赖字段为空时只读，填写后恢复可编辑", async () => {
+      const wrapper = mountFormPro({ modelValue: {}, items: linkageItems() });
+      await flushPromises();
+      expect(inputAt(wrapper, 2).attributes("readonly")).toBeDefined();
+      wrapper.vm.formData.contact = "张三";
+      await flushPromises();
+      expect(inputAt(wrapper, 2).attributes("readonly")).toBeUndefined();
+    });
+
+    it("静态 disabled=true 与 disabledWhen 为「或」关系：静态恒禁用", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { contact: "张三" },
+        items: [
+          { prop: "contact", label: "联系人", itemRender: { name: "ElInput" } },
+          {
+            prop: "phone",
+            label: "电话",
+            disabledWhen: () => false,
+            itemRender: { name: "ElInput", props: { disabled: true } },
+          },
+        ],
+      });
+      await flushPromises();
+      expect(inputAt(wrapper, 1).attributes("disabled")).toBeDefined();
+    });
+  });
+
+  // ===================== 声明式异步选项：optionsSource =====================
+  describe("optionsSource 声明式异步选项", () => {
+    // 取第 idx 个 ElSelect 的选项 label（页面内可能有多个 select）
+    const optionLabels = (w, idx = 0) =>
+      w
+        .findAllComponents({ name: "ElSelect" })
+        [idx].findAllComponents({ name: "ElOption" })
+        .map((o) => o.props("label"));
+
+    it("挂载即拉取一次（immediate）并写入 options", async () => {
+      const fetch = vi.fn(async () => [
+        { label: "甲", value: "a" },
+        { label: "乙", value: "b" },
+      ]);
+      const wrapper = mountFormPro({
+        modelValue: {},
+        items: [
+          {
+            prop: "target",
+            label: "目标",
+            itemRender: { name: "ElSelect" },
+            optionsSource: { deps: [], fetch },
+          },
+        ],
+      });
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(optionLabels(wrapper)).toEqual(["甲", "乙"]);
+      // 加载完成后 loading 复位
+      expect(wrapper.props("items")[0].itemRender.props.loading).toBe(false);
+    });
+
+    it("依赖变化：先同步清空本字段值（联动父级），再 loading 拉取新选项", async () => {
+      const formData = ref({ group: "A", resource: "A-r1" });
+      let resolveFetch;
+      const fetch = vi.fn(
+        () => new Promise((r) => (resolveFetch = r)),
+      );
+      const items = ref([
+        {
+          prop: "group",
+          label: "资源组",
+          itemRender: {
+            name: "ElSelect",
+            options: [
+              { label: "A 组", value: "A" },
+              { label: "B 组", value: "B" },
+            ],
+          },
+        },
+        {
+          prop: "resource",
+          label: "资源",
+          itemRender: { name: "ElSelect", options: [] },
+          optionsSource: {
+            deps: ["group"],
+            fetch: (ctx) => fetch(ctx.deps[0]),
+          },
+        },
+      ]);
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro ref="fp" v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1); // 挂载首次
+      resolveFetch([{ label: "A 组-资源 1", value: "A-r1" }]);
+      await flushPromises();
+
+      // 切换资源组 → 清值 + 重新拉取
+      formData.value.group = "B";
+      await flushPromises();
+      expect(formData.value.resource).toBe(""); // 已同步清空（父级同样拿到空值）
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenLastCalledWith("B");
+      expect(items.value[1].itemRender.props.loading).toBe(true); // 拉取中 loading
+
+      resolveFetch([{ label: "B 组-资源 1", value: "B-r1" }]);
+      await flushPromises();
+      expect(optionLabels(wrapper, 1)).toEqual(["B 组-资源 1"]);
+      expect(items.value[1].itemRender.props.loading).toBe(false);
+    });
+
+    it("防竞态：快速连续切换依赖，过期 fetch 结果被丢弃", async () => {
+      const resolvers = [];
+      const fetch = vi.fn(() => new Promise((r) => resolvers.push(r)));
+      const items = ref([
+        { prop: "group", label: "组", itemRender: { name: "ElInput" } },
+        {
+          prop: "resource",
+          label: "资源",
+          itemRender: { name: "ElSelect", options: [] },
+          optionsSource: { deps: ["group"], fetch },
+        },
+      ]);
+      const wrapper = mountFormPro({ modelValue: {}, items: items.value });
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1);
+
+      const fp = wrapper.vm;
+      fp.formData.group = "A";
+      await flushPromises();
+      fp.formData.group = "B";
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(3);
+
+      // 乱序返回：先返回 B（最新），再返回 A（过期）→ A 被丢弃
+      resolvers[2]([{ label: "B 资源", value: "b" }]);
+      await flushPromises();
+      resolvers[1]([{ label: "A 资源", value: "a" }]);
+      await flushPromises();
+      expect(optionLabels(wrapper)).toEqual(["B 资源"]);
+    });
+
+    it("when 不满足：不发请求且清空 options；满足后恢复拉取", async () => {
+      const fetch = vi.fn(async () => [{ label: "资源", value: "r" }]);
+      const items = ref([
+        { prop: "enabled", label: "启用", itemRender: { name: "ElSwitch" } },
+        {
+          prop: "resource",
+          label: "资源",
+          itemRender: { name: "ElSelect", options: [] },
+          optionsSource: {
+            deps: ["enabled"],
+            when: (data) => data.enabled === true,
+            fetch,
+          },
+        },
+      ]);
+      const wrapper = mountFormPro({ modelValue: {}, items: items.value });
+      await flushPromises();
+      // enabled 默认 false → 不请求
+      expect(fetch).not.toHaveBeenCalled();
+      expect(items.value[1].itemRender.options).toEqual([]);
+
+      wrapper.vm.formData.enabled = true;
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(optionLabels(wrapper)).toEqual(["资源"]);
+    });
+
+    it("clearValue=false：依赖变化时保留本字段已选值", async () => {
+      const fetch = vi.fn(async () => [{ label: "资源", value: "r" }]);
+      const wrapper = mountFormPro({
+        modelValue: { group: "A", resource: "keep" },
+        items: [
+          { prop: "group", label: "组", itemRender: { name: "ElInput" } },
+          {
+            prop: "resource",
+            label: "资源",
+            itemRender: { name: "ElSelect", options: [] },
+            optionsSource: { deps: ["group"], fetch, clearValue: false },
+          },
+        ],
+      });
+      await flushPromises();
+      wrapper.vm.formData.group = "B";
+      await flushPromises();
+      expect(wrapper.vm.formData.resource).toBe("keep");
+    });
+
+    it("debounce：窗口期内的连续变化合并为一次请求", async () => {
+      const fetch = vi.fn(async () => [{ label: "资源", value: "r" }]);
+      const wrapper = mountFormPro({
+        modelValue: {},
+        items: [
+          { prop: "kw", label: "关键词", itemRender: { name: "ElInput" } },
+          {
+            prop: "resource",
+            label: "资源",
+            itemRender: { name: "ElSelect", options: [] },
+            optionsSource: { deps: ["kw"], fetch, debounce: 30 },
+          },
+        ],
+      });
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1); // 挂载首次
+      // 防抖窗口内连续输入
+      wrapper.vm.formData.kw = "a";
+      await flushPromises();
+      wrapper.vm.formData.kw = "ab";
+      await flushPromises();
+      wrapper.vm.formData.kw = "abc";
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(1); // 窗口期内未触发
+      await new Promise((r) => setTimeout(r, 60));
+      await flushPromises();
+      expect(fetch).toHaveBeenCalledTimes(2); // 合并为一次
+      expect(fetch.mock.calls[1][0].deps).toEqual(["abc"]);
+    });
+  });
 });

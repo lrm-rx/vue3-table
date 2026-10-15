@@ -10,6 +10,7 @@ import {
   GRID_COLS,
   resolveVisibleEntries,
   resolveFieldOptions,
+  resolveDynamicControlState,
 } from "./utils.js";
 import UploadPro from "./UploadPro.vue";
 
@@ -100,6 +101,12 @@ const renderByItemRender = (ir, item, ctx) => {
     modelValue: ctx.value,
     "onUpdate:modelValue": (v) => setField(item.prop, v),
   };
+  // 动态禁用 / 只读：item.disabledWhen / item.readonlyWhen 依据当前表单数据求值（ctx 同 options 函数形态），
+  // 与静态 itemRender.props.disabled / readonly 为「或」关系（静态 true 恒生效，动态侧只追加不覆盖）。
+  // 求值发生在 render 期间，依赖字段变化时自动重渲染（与函数形态 options 同理）。
+  const dynState = resolveDynamicControlState(item, ctx);
+  if (dynState.disabled) bindProps.disabled = true;
+  if (dynState.readonly) bindProps.readonly = true;
   const children = [];
   // 解析 options：支持 静态数组 / 函数(ctx) / 响应式 ref 三种形态。
   // 先解包 ref（Vue 耦合），再交给纯函数 resolveFieldOptions 处理数组/函数。

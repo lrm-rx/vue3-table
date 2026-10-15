@@ -35,6 +35,10 @@ import {
   buildInitialData,
   deriveDefaultValue,
   isFieldItem,
+  resolveOptionsSourceDeps,
+  resolveOptionsSourceTrigger,
+  shouldFetchOptions,
+  mergeModelValue,
   addItems as addItemsConfig,
   removeItems as removeItemsConfig,
   updateItems as updateItemsConfig,
@@ -123,6 +127,105 @@ onMounted(() => {
 });
 onBeforeUnmount(() => errorTitleObserver?.disconnect());
 
+// —— 声明式异步选项 optionsSource ——
+// item.optionsSource = {
+//   deps: string[] | (data) => any[],    // 依赖字段（任一变化时重新拉取）
+//   fetch: (ctx) => Promise<Option[]>,   // ctx = { data, value, prop, deps }
+//   when: (data) => boolean,             // 可选：不满足时清空 options、不发请求（默认恒 true）
+//   clearValue: boolean,                 // 可选：deps 变化时清空本字段值（默认 true）
+//   debounce: number,                    // 可选：防抖毫秒（输入类依赖用），默认 0
+// }
+// 内置能力：loading 切换（itemRender.props.loading）、防竞态（仅最新一次拉取生效）、
+// 依赖变化自动清空本字段值并同步父级。与 itemRender.options 互斥（optionsSource 接管 options）。
+// 典型场景：「输入/选择/切换 → 请求接口 → 刷新另一字段选项」，免去父级手写
+// change 事件 + updateItems + 防竞态样板代码。
+const optionsSourceState = new Map(); // prop → { deps: any[], token: number, timer: timeout|null }
+
+const execOptionsSource = async (item, st) => {
+  const src = item.optionsSource;
+  const prop = item.prop;
+  const token = ++st.token;
+  // when 不满足：清空选项并返回（不发请求）
+  if (!shouldFetchOptions(src, formData)) {
+    updateItemsConfig(props.items, prop, {
+      "itemRender.props.loading": false,
+      "itemRender.options": [],
+    });
+    return;
+  }
+  updateItemsConfig(props.items, prop, { "itemRender.props.loading": true });
+  try {
+    const list = await src.fetch({
+      data: formData,
+      value: formData[prop],
+      prop,
+      deps: st.deps,
+    });
+    if (token !== st.token) return; // 防竞态：过期结果丢弃
+    updateItemsConfig(props.items, prop, {
+      "itemRender.props.loading": false,
+      "itemRender.options": Array.isArray(list) ? list : [],
+    });
+  } catch {
+    if (token !== st.token) return;
+    updateItemsConfig(props.items, prop, { "itemRender.props.loading": false });
+  }
+};
+
+// 深监听 formData：逐项比对依赖快照，变化时先同步清空本字段值（联动父级），再拉取新选项；
+// immediate：挂载即对每项拉取一次（when 不满足则仅清空选项）。
+// 登记在回抛 watcher 之前：依赖变化引发的「清值」先于「回抛」执行，父级一次收敛。
+watch(
+  formData,
+  () => {
+    const seen = new Set();
+    for (const item of props.items) {
+      if (!isFieldItem(item) || !item.optionsSource) continue;
+      seen.add(item.prop);
+      const src = item.optionsSource;
+      const nextDeps = resolveOptionsSourceDeps(src.deps, formData);
+      let st = optionsSourceState.get(item.prop);
+      if (st && isEqual(st.deps, nextDeps)) continue;
+      const isFirst = !st;
+      if (!st) {
+        st = { deps: nextDeps, token: 0, timer: null };
+        optionsSourceState.set(item.prop, st);
+      } else {
+        st.deps = nextDeps;
+      }
+      const trigger = resolveOptionsSourceTrigger(src, isFirst);
+      // 依赖变化（非首次登记）：清空本字段值（按控件类型推导空值）
+      if (trigger.clearValue) {
+        const cleared = deriveDefaultValue(item);
+        if (!isEqual(formData[item.prop], cleared)) {
+          formData[item.prop] = cleared;
+        }
+      }
+      if (trigger.delay > 0) {
+        clearTimeout(st.timer);
+        st.timer = setTimeout(() => execOptionsSource(item, st), trigger.delay);
+      } else {
+        execOptionsSource(item, st);
+      }
+    }
+    // 清理已被 removeItems 删除的字段状态（含未触发的防抖计时器）
+    for (const [prop, st] of optionsSourceState) {
+      if (!seen.has(prop)) {
+        clearTimeout(st.timer);
+        optionsSourceState.delete(prop);
+      }
+    }
+  },
+  { deep: true, immediate: true },
+);
+// 卸载时：取消未触发的防抖计时器，并使在途 fetch 的防竞态 token 失效（结果不再写入）
+onBeforeUnmount(() => {
+  for (const st of optionsSourceState.values()) {
+    clearTimeout(st.timer);
+    st.token++;
+  }
+});
+
 // 一次性「静默」开关：fillMissingDefaults 补默认值引发的 formData 变化，
 // 不向父级回抛（避免「watch formData → 改 items → 补默认值 → formData 再变」多余触发父级 watcher）。
 let suppressEmit = false;
@@ -148,22 +251,27 @@ const fillMissingDefaults = () => {
   }
 };
 
+// 最近一次「父子双向同步达成一致」的数据快照（浅拷贝），用于三方合并。
+// 背景：同一 tick 内可能同时存在「子级待发出的 emit」（如 setField 刚改了字段）
+// 与「父级直接写入 formData」（如 change 事件里清空另一字段）两股修改。
+// 通过对比 lastSyncedData 可判定每个键是「父级改了 / 子级改了 / 都改了 / 都没改」，
+// 避免任一侧修改被另一侧静默覆盖（父级写入丢失、必须 nextTick 才能生效的 bug 即源于此）。
+let lastSyncedData = { ...formData };
+
 const syncFromParent = (val) => {
-  const incoming = { ...(val || {}) };
-  // buildInitialData 会为所有字段补默认值；但父级 val 可能因 removeHiddenValues
-  // 剔除了隐藏字段的键——此时不应把内部已有的隐藏字段值重置为默认值（会丢失用户输入）。
-  // 因此：内部存在而 val 中缺失的键，保留内部值。
-  const base = props.autoFillDefaults
-    ? buildInitialData(props.items, incoming)
-    : incoming;
-  for (const k of Object.keys(formData)) {
-    if (!(k in incoming) && formData[k] !== undefined) {
-      base[k] = formData[k];
-    }
-  }
-  if (isEqual(base, formData)) return;
+  // 三方合并：以 lastSyncedData 为基准逐键判定父/子侧修改（规则见 utils.mergeModelValue）
+  const merged = mergeModelValue({
+    current: formData,
+    incoming: val,
+    base: lastSyncedData,
+    items: props.items,
+    autoFillDefaults: props.autoFillDefaults,
+  });
+  // merged 即同步后两侧将达成的一致状态（merged 与父级值不一致时，子级随后会 emit 收敛父级）
+  lastSyncedData = { ...merged };
+  if (isEqual(merged, formData)) return;
   for (const k of Object.keys(formData)) delete formData[k];
-  Object.assign(formData, base);
+  Object.assign(formData, merged);
 };
 // 父级 modelValue 变化 → 同步进内部 formData（值未变则跳过，避免回环）
 watch(
@@ -176,11 +284,15 @@ watch(
 // 当 removeHiddenValues 开启时，回抛数据会排除「因 visible / visibleMethod 隐藏」的字段值
 // （onlyRequired 隐藏的字段不受影响，值保留）。
 // suppressEmit 为 true 时（fillMissingDefaults 静默补默认值）跳过本次回抛并复位。
+// 回抛前先 syncFromParent 拉取父级「同 tick 直接写入」的修改（三方合并），
+// 否则本 watcher 基于子级旧状态生成的 snapshot 会覆盖父级尚未同步进来的写入，
+// 表现为「change 事件里父级改 formData + updateItems 不生效，必须 nextTick」。
 watch(
   formData,
-  (val) => {
+  () => {
     if (suppressEmit) return;
-    const snapshot = buildSubmitData(val);
+    syncFromParent(props.modelValue);
+    const snapshot = buildSubmitData(formData);
     if (isEqual(snapshot, props.modelValue)) return;
     emit("update:modelValue", snapshot);
   },

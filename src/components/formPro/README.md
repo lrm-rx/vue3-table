@@ -71,6 +71,8 @@ const items = ref([
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
 | `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(ctx, h) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
 | `visible` / `visibleMethod(data)` | 条件显隐（`visibleMethod` 返回 `false` 表示隐藏） |
+| `disabledWhen(ctx)` / `readonlyWhen(ctx)` | 动态禁用 / 只读：依据当前表单数据求值（`ctx = { value, prop, data }`），render 期自动追踪依赖、随依赖字段变化实时切换；与静态 `itemRender.props.disabled / readonly` 为「或」关系（静态 `true` 恒生效）。只读仅对支持 `readonly` 的控件有效（如 ElInput），选择类控件请用禁用（见 §14） |
+| `optionsSource` | 声明式异步选项：`{ deps, fetch, when?, clearValue?, debounce? }`——「输入/选择/切换 → 请求接口 → 刷新本字段 options」，内置 loading、防竞态、依赖变化自动清空本字段值（见 §14）。与 `itemRender.options` 互斥（配置后由 optionsSource 接管 options） |
 | `removeValueOnHidden` | 项级：隐藏时是否移除值（覆盖表单级 `removeHiddenValues`） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
@@ -542,6 +544,8 @@ photos: ["https://example.com/a.png"]; // 文件名按 URL 末段自动推导
 
 ### 场景一：未满足条件时禁用 / 显示其他字段
 
+> 「某字段没填时禁用/只读其他字段」是高频联动，已下沉为声明式配置 `disabledWhen / readonlyWhen`（见 §14）——优先用声明式；本节命令式 `updateItems` 适用于按钮点击等非数据驱动的场景。
+
 ```js
 // —— 禁用：点路径只改 disabled，placeholder 等兄弟 props 不受影响 ——
 // 单个
@@ -593,6 +597,8 @@ formRef.value.updateItems(
 
 ### 场景二：下拉 options 依赖另一字段，接口耗时不确定
 
+> 「选择/输入/切换 → 请求接口 → 刷新另一字段选项」已下沉为声明式配置 `optionsSource`（见 §14）——内置清值、loading、防竞态、防抖，免去下面这段样板代码；本节命令式写法仍适用于需要在事件里编排多步副作用的复杂场景。
+
 接口返回时机不可控，**返回后直接写入配置**即可——无需 ref 中转，也不关心请求耗时多久：
 
 ```js
@@ -635,4 +641,105 @@ formRef.value.removeItems(["emergency", "favColor", "notify"]);
 - 三个方法均为**单次 O(n) 遍历**：批量操作先一次性建立 `prop → 索引` 映射（`Map`），批量删除收集索引后倒序 `splice`，不存在逐项 `find` 的 O(n·k) 开销。
 - 原地修改（`splice` / 属性赋值），不产生新数组引用，Vue 响应式只触发一次相关更新。
 - 纯函数实现与 Vue/EP 解耦（基于 lodash-es 的 `castArray / isFunction / isPlainObject / isNumber / set`），可在工具脚本、单测中直接复用。
+
+---
+
+## 14. 声明式联动：optionsSource / disabledWhen / readonlyWhen
+
+§13 的两类高频联动——「某字段没填时禁用/只读其他字段」「交互后请求接口刷新另一字段选项」——在父级手写时每个联动点都要重复约 15 行「change 事件 + 清空值 + loading + updateItems + 防竞态」样板代码。已下沉为组件内部的**声明式配置**：父级零事件处理器，全部由 items 声明。
+
+> 完整演示见 [FormProLinkageDemo.vue](../../views/FormProLinkageDemo.vue)（路由 `/form-linkage`）。
+
+### ① optionsSource：声明式异步选项
+
+「输入/选择/切换 → 请求接口 → 刷新本字段 options」一个配置搞定：
+
+```js
+{
+  prop: "resource",
+  label: "资源实例",
+  disabledWhen: (ctx) => !ctx.data.resourceGroup, // 未选资源组时禁用（见 ②）
+  itemRender: { name: "ElSelect", props: { placeholder: "请先选择资源组" } },
+  optionsSource: {
+    deps: ["resourceGroup"],                 // 依赖字段：任一变化重新拉取；也支持 (data) => [data.a, data.b]
+    when: (data) => !!data.resourceGroup,    // 可选：不满足时清空 options、不发请求（默认恒 true）
+    fetch: (ctx) => fetchResources(ctx.deps[0]), // ctx = { data, value, prop, deps }，返回 Promise<Option[]>
+    // clearValue: true,                     // 可选：deps 变化时自动清空本字段值（默认 true；false 保留已选值）
+    // debounce: 400,                        // 可选：防抖毫秒（输入类依赖用；首次拉取不防抖）
+  },
+}
+```
+
+**内置行为**（无需父级操心）：
+
+| 行为 | 说明 |
+|---|---|
+| 挂载即拉取 | `immediate`：挂载时对每项拉取一次（`when` 不满足则仅清空 options，不发请求） |
+| 自动清值 | 依赖变化时先把本字段值清为控件空值（Switch→false / Checkbox→[] / 其余→""），同步回抛父级；`clearValue:false` 可关闭 |
+| loading | 拉取期间自动切换 `itemRender.props.loading` |
+| 防竞态 | 每个字段独立的请求序号，快速连续切换依赖时**仅最新一次**结果生效，过期结果丢弃 |
+| 防抖 | `debounce` 窗口期内的连续变化合并为一次请求（挂载首次拉取不经过防抖） |
+| 状态清理 | 字段被 `removeItems` 删除或组件卸载时，自动清理计时器并使在途请求失效 |
+
+三种触发源同构——区别只在 `deps` 指向的字段控件类型：
+
+```js
+// 输入 → 防抖搜索
+optionsSource: { deps: ["keyword"], debounce: 400, fetch: (ctx) => api.search(ctx.deps[0]) }
+// 选择 → 立即拉取
+optionsSource: { deps: ["group"], fetch: (ctx) => api.list(ctx.deps[0]) }
+// 切换 → when 守卫
+optionsSource: { deps: ["enabled"], when: (d) => d.enabled === true, fetch: () => api.listAll() }
+```
+
+> 与 `itemRender.options` **互斥**：配置 `optionsSource` 后 options 由其接管（静态 options 会在首次拉取/守卫时被覆盖）。
+
+### ② disabledWhen / readonlyWhen：动态禁用 / 只读
+
+```js
+{ prop: "contact", label: "联系人", itemRender: { name: "ElInput" } },
+{
+  prop: "phone",
+  label: "联系电话",
+  disabledWhen: (ctx) => !ctx.data.contact,   // 联系人为空时禁用
+  itemRender: { name: "ElInput" },
+},
+{
+  prop: "note",
+  label: "备用说明",
+  readonlyWhen: (ctx) => !ctx.data.contact,   // 联系人为空时只读
+  itemRender: { name: "ElInput" },
+},
+// 多条件：部门 / 职位任一未选时禁用
+{
+  prop: "entryDate",
+  label: "入职日期",
+  disabledWhen: (ctx) => !ctx.data.dept || !ctx.data.position,
+  itemRender: { name: "ElDatePicker", props: { type: "date", valueFormat: "YYYY-MM-DD" } },
+},
+```
+
+- `ctx = { value, prop, data }`（与函数形态 options 一致），`data` 为当前表单数据。
+- 求值发生在 render 期间，**依赖字段变化时自动重渲染**，无需 `watch` + `updateItems`。
+- 与静态 `itemRender.props.disabled / readonly` 为「或」关系：静态 `true` 恒生效，动态侧只追加不覆盖。
+- `readonly` 仅对支持该属性的控件有效（ElInput 等）；ElSelect / ElDatePicker 等选择类控件请用 `disabledWhen`。
+
+---
+
+## 15. 父子数据同步：三方合并（同 tick 双向写入不丢失）
+
+FormPro 内部维护一份 `formData`（为补全默认值、隐藏值保留等能力），与父级 `v-model` 双向同步。同一 tick 内可能同时存在两股写入：
+
+1. **子级待发出的 emit**：用户在控件里操作，`setField` 已改内部数据，但 emit 尚未 flush；
+2. **父级直接写入**：如 change 事件处理器里 `formData.value.xxx = ""`。
+
+早期版本中，①的 emit 基于子级旧状态生成快照，会**覆盖**②刚写入的值——表现为「父级改 formData + updateItems 同一 tick 不生效，必须 `nextTick` 才能生效」。
+
+现已在内部改为**三方合并**：记录最近一次父子达成一致的数据快照 `lastSyncedData`，同步时逐键对比判定「父级改了 / 子级改了 / 都改了（父级优先）/ 都没改」，并在**回抛前先把父级的在途写入合并进内部**再生成快照。效果：
+
+- change 事件里直接改 `formData.value` + `updateItems` **即时生效，父级无需 nextTick**；
+- 同 tick 内子级改 x、父级改 y，两侧修改都保留，互不覆盖；
+- `removeItems` 删除的字段键不会被在途快照「复活」。
+
+对父级完全透明——既有代码行为不变，只是不再需要 `nextTick` 兜底。
 

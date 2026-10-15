@@ -56,6 +56,12 @@ const routes = [
         meta: { title: "FormPro 上传集成", icon: "Upload" },
       },
       {
+        path: "form-linkage",
+        name: "FormProLinkage",
+        component: () => import("@/views/FormProLinkageDemo.vue"),
+        meta: { title: "FormPro 联动交互", icon: "Connection" },
+      },
+      {
         path: "float-ball",
         name: "FloatBall",
         component: () => import("@/views/FloatBallDemo.vue"),

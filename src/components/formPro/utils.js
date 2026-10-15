@@ -1,4 +1,4 @@
-import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet } from "lodash-es";
+import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqual } from "lodash-es";
 
 /**
  * FormPro 配置处理纯函数（与渲染解耦，便于单测）。
@@ -315,6 +315,124 @@ export const resolveVisibleEntries = (
     }
   }
   return out;
+};
+
+// ===================== 声明式联动（optionsSource / disabledWhen / readonlyWhen） =====================
+// 以下为联动机制的纯决策函数，与组件状态（loading、防抖计时器、防竞态 token）解耦，便于单测；
+// index.vue / FormBlock.vue 负责执行决策结果。
+
+/**
+ * 解析 optionsSource.deps 为「依赖值快照」数组：
+ *   - 数组形态：deps: ['resourceGroup'] → 按字段名从 data 取值 [data.resourceGroup]
+ *   - 函数形态：deps: (data) => [data.a, data.b] → 直接调用（自定义依赖表达式）
+ *   - 函数返回非数组时包装为单元素数组；deps 未配置返回 []
+ * 返回的快照用于逐项 isEqual 比对，任一变化即重新拉取。
+ */
+export const resolveOptionsSourceDeps = (deps, data = {}) => {
+  const raw =
+    typeof deps === "function" ? deps(data) : (deps || []).map((p) => data[p]);
+  return Array.isArray(raw) ? raw : [raw];
+};
+
+/**
+ * optionsSource 单次触发的执行策略（纯函数）：
+ *   - 首次触发（挂载 immediate 登记）：不清值、不防抖，立即拉取
+ *   - 非首次（依赖变化）：clearValue !== false 时清空本字段值；debounce > 0 时走防抖
+ * @param {Object}  src      item.optionsSource 配置
+ * @param {Boolean} isFirst  是否首次触发
+ * @returns {{ clearValue: Boolean, delay: Number }} delay 为防抖毫秒（0 = 立即执行）
+ */
+export const resolveOptionsSourceTrigger = (src = {}, isFirst = false) => {
+  if (isFirst) return { clearValue: false, delay: 0 };
+  return {
+    clearValue: src.clearValue !== false,
+    delay: src.debounce > 0 ? src.debounce : 0,
+  };
+};
+
+/**
+ * optionsSource 的 when 守卫求值：未配置 when 恒可拉取；
+ * 配置后返回 false 表示「不满足条件」——调用方清空 options、不发请求。
+ */
+export const shouldFetchOptions = (src = {}, data = {}) =>
+  typeof src.when === "function" ? !!src.when(data) : true;
+
+/**
+ * 求值 item 的动态禁用 / 只读状态（disabledWhen / readonlyWhen）。
+ * 未配置对应函数时为 false；函数返回值做真值转换。
+ * 与静态 itemRender.props.disabled / readonly 的「或」关系由调用方合并（此处只报动态侧）。
+ *
+ * @param {Object} item 字段项配置
+ * @param {Object} ctx  { value, prop, data } 渲染上下文
+ * @returns {{ disabled: Boolean, readonly: Boolean }}
+ */
+export const resolveDynamicControlState = (item, ctx = {}) => ({
+  disabled:
+    typeof item?.disabledWhen === "function" ? !!item.disabledWhen(ctx) : false,
+  readonly:
+    typeof item?.readonlyWhen === "function" ? !!item.readonlyWhen(ctx) : false,
+});
+
+// ===================== 父子数据同步（三方合并） =====================
+
+/**
+ * v-model 三方合并：把父级传入值合并进子级当前数据，返回合并后的「一致状态」新对象。
+ *
+ * 背景：同一 tick 内可能同时存在「子级待发出的 emit」（如 setField 刚改了字段）
+ * 与「父级直接写入 modelValue」（如 change 事件里清空另一字段）两股修改。
+ * 以 base（最近一次父子达成一致的快照）为基准，逐键判定
+ * 「父级改了 / 子级改了 / 都改了 / 都没改」，避免任一侧修改被另一侧静默覆盖
+ * （父级写入丢失、必须 nextTick 才能生效的 bug 即源于此）。
+ *
+ * 合并规则：
+ *  ① incoming 中存在的键：
+ *     - 父级改了（与 base 深比较不一致）→ 取父级值（含「都改」冲突，父级显式写入优先）；
+ *     - 父级没改 → 保留子级值（子级改了保留新值，都没改两侧本相等）；
+ *     - 特例 childDeleted：子级刚删除该键（removeItems）而父级快照尚未收敛（emit 在途），
+ *       incoming 里的旧值是「残留」而非「父级新增」——跳过，不 resurrect 已删键；
+ *     - 父级没改且子级本就没有该键：跳过——写入 undefined 键会把 base
+ *       污染为「键存在但值为 undefined」，后续无法识别真实的父级新增。
+ *  ② 子级有而 incoming 缺失的键：保留子级值。
+ *     父级值可能因 removeHiddenValues 剔除了隐藏字段的键——不应把内部已有的
+ *     隐藏字段值重置为默认值（会丢失用户输入）。
+ *  ③ autoFillDefaults：items 声明但两侧都缺失的字段补 deriveDefaultValue。
+ *
+ * 纯函数：不修改任何入参，返回新对象；base 的更新与写回 reactive 数据由调用方负责。
+ *
+ * @param {Object}  opts.current          子级当前数据（formData）
+ * @param {Object}  opts.incoming         父级传入值（modelValue，null/undefined 按 {} 处理）
+ * @param {Object}  opts.base             最近一次双向同步达成一致的快照
+ * @param {Array}   opts.items            items 配置（autoFillDefaults 时推导默认值用）
+ * @param {Boolean} opts.autoFillDefaults 是否补全缺失字段默认值
+ * @returns {Object} 合并后的新对象
+ */
+export const mergeModelValue = ({
+  current = {},
+  incoming,
+  base = {},
+  items = [],
+  autoFillDefaults = false,
+} = {}) => {
+  const parent = { ...(incoming || {}) };
+  const merged = {};
+  for (const k of Object.keys(parent)) {
+    const parentChanged = !isEqual(parent[k], base[k]);
+    const childDeleted = current[k] === undefined && base[k] !== undefined;
+    if (childDeleted) continue;
+    if (!parentChanged && current[k] === undefined) continue;
+    merged[k] = parentChanged ? parent[k] : current[k];
+  }
+  for (const k of Object.keys(current)) {
+    if (!(k in parent) && current[k] !== undefined) merged[k] = current[k];
+  }
+  if (autoFillDefaults) {
+    for (const item of items) {
+      if (!isFieldItem(item)) continue;
+      if (merged[item.prop] === undefined)
+        merged[item.prop] = deriveDefaultValue(item);
+    }
+  }
+  return merged;
 };
 
 // ===================== 运行时 items 增删改（动态配置） =====================
