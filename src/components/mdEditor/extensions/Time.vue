@@ -81,8 +81,9 @@ const handleClick = () => {
   border-radius: 2px;
   transition: background-color 0.2s;
 
+  // 与 md-editor 工具栏按钮 hover 背景一致（变量按 light/dark 主题自动切换）
   &:not(:disabled):hover {
-    background-color: var(--md-editor-hover-color, #e8e8e8);
+    background-color: var(--md-bk-color-outstand, #f2f2f2);
   }
 
   // 禁用态：与 md-editor-v3 原生工具栏图标保持一致（置灰 + 禁止光标）

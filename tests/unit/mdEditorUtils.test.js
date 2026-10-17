@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { fileToBase64, isImageFile, countMarkdownChars } from '../../src/components/mdEditor/utils'
+import { fileToBase64, isImageFile, countMarkdownChars, buildCatalogTree, pickActiveHeadingIndex } from '../../src/components/mdEditor/utils'
 
 /** 构造一个伪 File 对象（jsdom 中 new File 可用，但手动构造更可控） */
 const fakeFile = (name, type, size = 1024) => ({ name, type, size })
@@ -127,5 +127,130 @@ describe('countMarkdownChars 字数统计（过滤 base64 图片编码）', () =
     expect(countMarkdownChars(md)).toBe(strip(md).length)
     // 原始长度被 base64 拉高到 2 万+，过滤后应回到个位数到几十的量级
     expect(countMarkdownChars(md)).toBeLessThan(100)
+  })
+})
+
+describe('buildCatalogTree 扁平标题列表 → 树形结构', () => {
+  const h = (level, text, line = 0) => ({ level, text, line })
+
+  it('空输入返回空数组', () => {
+    expect(buildCatalogTree([])).toEqual([])
+    expect(buildCatalogTree(null)).toEqual([])
+    expect(buildCatalogTree(undefined)).toEqual([])
+  })
+
+  it('单层级平铺：全部成为根节点', () => {
+    const tree = buildCatalogTree([h(1, 'A'), h(1, 'B'), h(1, 'C')])
+    expect(tree).toHaveLength(3)
+    expect(tree.map((n) => n.text)).toEqual(['A', 'B', 'C'])
+    expect(tree.every((n) => n.children.length === 0)).toBe(true)
+  })
+
+  it('标准嵌套：h1 > h2 > h3 正确挂接', () => {
+    const tree = buildCatalogTree([
+      h(1, '一'),
+      h(2, '一点一'),
+      h(3, '一点一深'),
+      h(2, '一点二'),
+      h(1, '二'),
+    ])
+    expect(tree).toHaveLength(2)
+    expect(tree[0].text).toBe('一')
+    expect(tree[0].children.map((n) => n.text)).toEqual(['一点一', '一点二'])
+    expect(tree[0].children[0].children.map((n) => n.text)).toEqual(['一点一深'])
+    expect(tree[1].text).toBe('二')
+  })
+
+  it('层级跳跃（h1 → h3）：h3 挂为 h1 子节点', () => {
+    const tree = buildCatalogTree([h(1, '一'), h(3, '跳级')])
+    expect(tree).toHaveLength(1)
+    expect(tree[0].children[0].text).toBe('跳级')
+  })
+
+  it('首个标题不是 h1（h2 先于 h1）：各自独立成根', () => {
+    const tree = buildCatalogTree([h(2, '小二'), h(1, '大一')])
+    expect(tree).toHaveLength(2)
+    expect(tree[0].text).toBe('小二')
+    expect(tree[1].text).toBe('大一')
+  })
+
+  it('同级连续出现：正确弹出栈形成兄弟关系', () => {
+    const tree = buildCatalogTree([
+      h(1, '一'),
+      h(2, '一点一'),
+      h(2, '一点二'),
+      h(2, '一点三'),
+    ])
+    expect(tree[0].children).toHaveLength(3)
+  })
+
+  it('maxDepth 限制层级：超出层级的标题被剔除', () => {
+    const tree = buildCatalogTree(
+      [h(1, '一'), h(2, '一点一'), h(3, '一深'), h(2, '一点二')],
+      2,
+    )
+    expect(tree).toHaveLength(1)
+    expect(tree[0].children.map((n) => n.text)).toEqual(['一点一', '一点二'])
+    // h3 被剔除后，后续同级 h2 仍正确挂回 h1
+  })
+
+  it('maxDepth 剔除中间层后，更深层级一并剔除、有效层级保持挂接', () => {
+    // h2 被剔除 → h3 也超出限制被剔除；最终只剩 h1
+    const tree = buildCatalogTree([h(1, '一'), h(2, '二'), h(3, '三')], 1)
+    expect(tree).toHaveLength(1)
+    expect(tree[0].children).toHaveLength(0)
+  })
+
+  it('maxDepth 为 0 / 负数 / undefined 时不限制层级', () => {
+    const src = [h(1, '一'), h(4, '深层')]
+    expect(buildCatalogTree(src, 0)[0].children).toHaveLength(1)
+    expect(buildCatalogTree(src, -1)[0].children).toHaveLength(1)
+    expect(buildCatalogTree(src, undefined)[0].children).toHaveLength(1)
+  })
+
+  it('节点携带 key / index / text / level / line 元数据', () => {
+    const tree = buildCatalogTree([h(1, 'A', 0), h(2, 'B', 3)])
+    expect(tree[0]).toMatchObject({ key: 'h0', index: 0, text: 'A', level: 1, line: 0 })
+    expect(tree[0].children[0]).toMatchObject({ key: 'h1', index: 1, text: 'B', level: 2, line: 3 })
+  })
+})
+
+describe('pickActiveHeadingIndex 滚动高亮决策', () => {
+  it('空数组返回 -1', () => {
+    expect(pickActiveHeadingIndex([], 100)).toBe(-1)
+    expect(pickActiveHeadingIndex(null, 100)).toBe(-1)
+    expect(pickActiveHeadingIndex(undefined, 100)).toBe(-1)
+  })
+
+  it('滚动位置在首个标题之前：默认高亮第一项（与内置目录行为一致）', () => {
+    expect(pickActiveHeadingIndex([100, 200, 300], 0)).toBe(0)
+    expect(pickActiveHeadingIndex([100, 200, 300], 99)).toBe(0)
+  })
+
+  it('越过哪个标题就高亮哪个（最后一个 top <= scrollTop + offset）', () => {
+    const tops = [100, 200, 300]
+    expect(pickActiveHeadingIndex(tops, 100)).toBe(0)
+    expect(pickActiveHeadingIndex(tops, 150)).toBe(0)
+    expect(pickActiveHeadingIndex(tops, 200)).toBe(1)
+    expect(pickActiveHeadingIndex(tops, 299)).toBe(1)
+    expect(pickActiveHeadingIndex(tops, 300)).toBe(2)
+    expect(pickActiveHeadingIndex(tops, 9999)).toBe(2)
+  })
+
+  it('offset 参与判定：判定线 = scrollTop + offset', () => {
+    const tops = [100, 200, 300]
+    // scrollTop=90 + offset=20 → 判定线 110，越过 top=100
+    expect(pickActiveHeadingIndex(tops, 90, 20)).toBe(0)
+    // scrollTop=180 + offset=20 → 判定线 200，恰好越过 top=200（含等于）
+    expect(pickActiveHeadingIndex(tops, 180, 20)).toBe(1)
+  })
+
+  it('边界相等时视为已越过（<= 判定）', () => {
+    expect(pickActiveHeadingIndex([50], 50)).toBe(0)
+  })
+
+  it('top 相同的多个标题取最后一个', () => {
+    // jsdom 等无布局环境所有 offsetTop 为 0 的场景
+    expect(pickActiveHeadingIndex([0, 0, 0], 0)).toBe(2)
   })
 })

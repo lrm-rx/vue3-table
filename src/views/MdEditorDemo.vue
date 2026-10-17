@@ -258,6 +258,12 @@ const autoSave = ref(false)
 const autoSaveInterval = ref(10)
 // 自动保存间隔单位：seconds 秒 / minutes 分
 const autoSaveIntervalUnit = ref('seconds')
+// 是否显示目录面板
+const catalog = ref(true)
+// 目录面板位置
+const catalogPosition = ref('right')
+// 目录最大展示层级
+const catalogMaxDepth = ref(undefined)
 // 代码高亮主题
 const codeTheme = ref('atom')
 const codeThemeOptions = [
@@ -385,6 +391,29 @@ const clearContent = () => {
               :value="v"
             />
           </el-select>
+
+          <el-divider direction="vertical" />
+
+          <span class="md-demo__label">目录</span>
+          <el-switch v-model="catalog" active-text="显示" inactive-text="隐藏" />
+
+          <template v-if="catalog">
+            <el-radio-group v-model="catalogPosition" size="small">
+              <el-radio-button value="left">左侧</el-radio-button>
+              <el-radio-button value="right">右侧</el-radio-button>
+            </el-radio-group>
+
+            <el-select
+              v-model="catalogMaxDepth"
+              size="small"
+              style="width: 110px"
+              placeholder="层级深度"
+              clearable
+              @clear="catalogMaxDepth = undefined"
+            >
+              <el-option v-for="d in [2, 3, 4, 5, 6]" :key="d" :label="`${d} 级标题`" :value="d" />
+            </el-select>
+          </template>
         </div>
       </template>
 
@@ -395,6 +424,7 @@ const clearContent = () => {
           支持 <b>只读模式</b>（切换「只读」开关查看效果）；
           图片支持工具栏上传 · 拖拽 · <b>截图粘贴</b>（自动转 base64）。
           开启<b>自动保存</b>且正文非空时，页脚字数右侧会显示倒计时，到点触发保存事件；清空内容会立即中断。
+          自定义<b>目录面板</b>可置于编辑器左/右侧，支持层级折叠、滚动跟随高亮、点击平滑定位。
         </span>
       </div>
 
@@ -410,6 +440,9 @@ const clearContent = () => {
         :auto-save="autoSave"
         :auto-save-interval="autoSaveInterval"
         :auto-save-interval-unit="autoSaveIntervalUnit"
+        :catalog="catalog"
+        :catalog-position="catalogPosition"
+        :catalog-max-depth="catalogMaxDepth"
         @save="handleAutoSave"
         style="height: 560px"
       />

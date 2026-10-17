@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 
 // ============ mock element-plus：仅替换 ElMessage 方法，其余保留真实实现 ============
@@ -49,9 +50,23 @@ vi.mock('md-editor-v3', async () => {
       height: { type: [String, Number], default: undefined },
       disabled: { type: Boolean, default: false },
     },
-    emits: ['update:modelValue'],
-    setup(props, { slots }) {
-      return () => h('div', { class: 'md-editor-stub' }, [props.modelValue, slots.defToolbars?.(), slots.defFooters?.()])
+    emits: ['update:modelValue', 'onGetCatalog'],
+    setup(props, { slots, attrs }) {
+      // 真实组件会把 class/style 透传到根元素（如全屏目录的让位 class），
+      // 桩组件 inheritAttrs:false，需手动应用 attrs.class/style 保持行为一致
+      return () =>
+        h('div', { class: ['md-editor-stub', attrs.class], style: attrs.style }, [
+          props.modelValue,
+          slots.defToolbars?.(),
+          slots.defFooters?.(),
+          // 模拟预览滚动容器与标题锚点（[data-line]），供目录组件解析滚动目标
+          h('div', { class: 'md-editor-preview-wrapper' }, [
+            h('h1', { 'data-line': 0 }),
+            h('h2', { 'data-line': 2 }),
+            h('h3', { 'data-line': 3 }),
+            h('h1', { 'data-line': 5 }),
+          ]),
+        ])
     },
   })
   stubHolder.value = MdEditorStub
@@ -400,5 +415,471 @@ describe('MdEditor —— 自定义字数统计页脚（过滤 base64）', () =>
   it('用户可通过 footers prop 覆盖默认页脚配置', () => {
     const wrapper = mountEditor({ footers: [0, 'scrollSwitch'] })
     expect(stub(wrapper).props('footers')).toEqual([0, 'scrollSwitch'])
+  })
+})
+
+describe('MdEditor —— 自定义目录面板', () => {
+  // 标题锚点行号与桩组件预览容器中的 [data-line] 对应
+  const headings = [
+    { text: '一', level: 1, line: 0 },
+    { text: '一点一', level: 2, line: 2 },
+    { text: '一点一深', level: 3, line: 3 },
+    { text: '二', level: 1, line: 5 },
+  ]
+
+  /** 触发底层 onGetCatalog 事件并等待响应式链路完成 */
+  const emitCatalog = async (wrapper, list = headings) => {
+    stub(wrapper).vm.$emit('onGetCatalog', list)
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('默认不渲染目录面板', () => {
+    const wrapper = mountEditor()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    expect(wrapper.classes()).not.toContain('base-md-editor--with-catalog')
+  })
+
+  it('catalog=true 渲染目录面板，默认位于编辑器右侧（DOM 顺序在编辑器之后）', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    expect(wrapper.classes()).toContain('base-md-editor--with-catalog')
+    const children = wrapper.element.children
+    expect(children[0].classList.contains('md-editor-stub')).toBe(true)
+    expect(children[1].classList.contains('base-md-catalog')).toBe(true)
+  })
+
+  it('catalogPosition=left 时目录面板渲染在编辑器之前', async () => {
+    const wrapper = mountEditor({ catalog: true, catalogPosition: 'left' })
+    await emitCatalog(wrapper)
+    expect(wrapper.classes()).toContain('base-md-editor--catalog-left')
+    const children = wrapper.element.children
+    expect(children[0].classList.contains('base-md-catalog')).toBe(true)
+    expect(children[1].classList.contains('md-editor-stub')).toBe(true)
+  })
+
+  it('onGetCatalog 事件驱动目录项渲染，层级越深缩进越大', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items).toHaveLength(4)
+    expect(items.map((i) => i.find('.base-md-catalog__text').text())).toEqual([
+      '一',
+      '一点一',
+      '一点一深',
+      '二',
+    ])
+    // 缩进规则：8 + depth * 14 px
+    expect(items[0].attributes('style')).toContain('padding-left: 8px')
+    expect(items[1].attributes('style')).toContain('padding-left: 22px')
+    expect(items[2].attributes('style')).toContain('padding-left: 36px')
+    expect(items[3].attributes('style')).toContain('padding-left: 8px')
+  })
+
+  it('catalogMaxDepth 限制展示层级，超出层级的标题不渲染', async () => {
+    const wrapper = mountEditor({ catalog: true, catalogMaxDepth: 2 })
+    await emitCatalog(wrapper)
+    const texts = wrapper.findAll('.base-md-catalog__text').map((i) => i.text())
+    expect(texts).toEqual(['一', '一点一', '二'])
+  })
+
+  it('点击目录项将其置为激活态', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+    expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    await wrapper.findAll('.base-md-catalog__item')[3].trigger('click')
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items[3].classes()).toContain('base-md-catalog__item--active')
+    expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
+  })
+
+  // 点击锁定：点击目录项后抑制 scroll-spy，直到滚动到达目标或用户手动滚动。
+  // 修复文档末尾标题滚不到判定线时，高亮被 spy 抢回（点一次不亮、点两次才亮）的问题。
+  // jsdom 中标题 offsetTop 均为 0 → 点击锁定目标 top=0；
+  // 手动把预览容器 scrollTop 拨到 500 模拟「未到达目标」。
+  // 注意：组件在 document 上捕获监听 wheel/scroll，分离 DOM 树中元素事件不经过 document，
+  // 因此这些用例挂载到 document.body（事件在预览元素上真实派发），结束后卸载避免跨用例监听干扰。
+  const flushScrollSpy = () => new Promise((r) => setTimeout(r, 50))
+  const mountAttachedEditor = (props = {}) =>
+    mount(MdEditor, { props: { modelValue: '', ...props }, attachTo: document.body })
+
+  it('点击后未滚动到目标位置时，scroll-spy 不抢回点击高亮', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+    expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+
+    // 未到达目标（scrollTop=500 ≠ 锁定目标 0）时触发滚动事件
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    previewEl.scrollTop = 500
+    previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    // 高亮仍停留在点击项：spy 被锁定抑制（若无锁定，所有 top=0 ≤ 判定线，会激活最后一项）
+    expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    wrapper.unmount()
+  })
+
+  it('用户在编辑器区域手动滚动（wheel）后，解除锁定恢复 scroll-spy', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    previewEl.scrollTop = 500
+    // 用户在预览区滚轮滚动 → 解除锁定
+    previewEl.dispatchEvent(new Event('wheel', { bubbles: true }))
+    previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    // spy 接管：jsdom 中所有标题 top=0、均 ≤ 判定线 → 激活最后一项
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items[3].classes()).toContain('base-md-catalog__item--active')
+    expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
+    wrapper.unmount()
+  })
+
+  it('目录面板自身的滚轮事件不解除点击锁定', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    previewEl.scrollTop = 500
+    // 滚轮发生在目录面板（编辑器区域外）→ 锁定保持
+    wrapper.find('.base-md-catalog').element.dispatchEvent(new Event('wheel', { bubbles: true }))
+    previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    wrapper.unmount()
+  })
+
+  it('点击后滚动到达目标位置，解除锁定恢复 scroll-spy', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+
+    // scrollTop 保持 0 = 锁定目标 → 触发滚动事件即解除锁定并 spy
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    // spy 接管（jsdom 中所有标题 top=0 → 激活最后一项），证明锁定已解除
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items[3].classes()).toContain('base-md-catalog__item--active')
+    expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
+    wrapper.unmount()
+  })
+
+  it('目录面板自身的滚动不触发 spy，也不回拉滚动位置（可滚到底部）', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+    await flushPromises() // 等待点击触发的激活项可见性滚动完成，避免计入后续 spy
+
+    const body = wrapper.find('.base-md-catalog__body').element
+    // 监听激活项回拉调用（ensureActiveVisible 内部使用 body.scrollTo）
+    const scrollToSpy = vi.fn()
+    body.scrollTo = scrollToSpy
+    // 模拟用户把目录滚动到底部（激活项在顶部，已滚出可视区）
+    body.scrollTop = 500
+    body.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    // 目录滚动被 spy 跳过：不发生回拉，滚动位置保持
+    expect(scrollToSpy).not.toHaveBeenCalled()
+    expect(body.scrollTop).toBe(500)
+    // 激活态不受影响
+    expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    wrapper.unmount()
+  })
+
+  it('折叠箭头切换子级显隐', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    // 初始全部展开：4 项
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(4)
+    // 折叠「一」：其两个子级隐藏，仅剩「一」「二」
+    await wrapper.find('.base-md-catalog__item .base-md-catalog__arrow').trigger('click')
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(2)
+    // 再次点击恢复展开
+    await wrapper.find('.base-md-catalog__item .base-md-catalog__arrow').trigger('click')
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(4)
+  })
+
+  it('无标题内容时显示空态提示', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper, [])
+    expect(wrapper.find('.base-md-catalog__empty').exists()).toBe(true)
+    expect(wrapper.find('.base-md-catalog__empty').text()).toBe('暂无目录')
+  })
+
+  it('只读模式不渲染目录面板（MdPreview 无独立滚动容器）', () => {
+    const wrapper = mountEditor({ catalog: true, readOnly: true })
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    expect(wrapper.find('.md-preview-stub').exists()).toBe(true)
+  })
+
+  it('开启目录时工具栏自动排除内置 catalog 按钮', () => {
+    const wrapper = mountEditor({ catalog: true })
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github', 'catalog'])
+  })
+
+  it('toolbarsExclude 已含 catalog 时不重复追加', () => {
+    const wrapper = mountEditor({ catalog: true, toolbarsExclude: ['catalog'] })
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['catalog'])
+  })
+
+  it('未开启目录时 toolbarsExclude 保持原样', () => {
+    const wrapper = mountEditor()
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github'])
+  })
+
+  it('catalog 系列自定义 props 不透传给底层 MdEditor', () => {
+    const wrapper = mountEditor({
+      catalog: true,
+      catalogPosition: 'left',
+      catalogMaxDepth: 3,
+      catalogWidth: 200,
+    })
+    const p = stub(wrapper).props()
+    expect(p.catalog).toBeUndefined()
+    expect(p.catalogPosition).toBeUndefined()
+    expect(p.catalogMaxDepth).toBeUndefined()
+    expect(p.catalogWidth).toBeUndefined()
+  })
+
+  it('catalogWidth 数字宽度转为 px 应用到目录面板，并以 CSS 变量供容器留白计算', () => {
+    const wrapper = mountEditor({ catalog: true, catalogWidth: 300 })
+    expect(wrapper.find('.base-md-catalog').attributes('style')).toContain('width: 300px')
+    // 容器携带 --catalog-width 变量，编辑器 margin 据此为面板留出空间
+    expect(wrapper.attributes('style')).toContain('--catalog-width: 300px')
+  })
+
+  it('目录面板绝对定位贴齐容器上下边缘（高度不超过编辑器）', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    // 面板高度由 CSS 绝对定位 top:0/bottom:0 约束，容器高度仅由编辑器决定；
+    // 此处断言结构前提：面板是 MdEditor 根元素的兄弟节点且容器 relative 定位类存在
+    expect(wrapper.classes()).toContain('base-md-editor--with-catalog')
+    const catalogEl = wrapper.find('.base-md-catalog').element
+    expect(catalogEl.parentElement).toBe(wrapper.element)
+  })
+
+  it('用户通过 attrs 传入的 onGetCatalog 监听与内部目录数据处理并存', async () => {
+    const onGetCatalog = vi.fn()
+    // 注意：用户模板写 @onGetCatalog="fn" 时，Vue 编译后的 vnode prop 是 onOnGetCatalog
+    // （emit 事件名 onGetCatalog → 监听器 key 再加 on 前缀），此处 attrs 模拟编译产物
+    const wrapper = mount(MdEditor, {
+      props: { modelValue: '', catalog: true },
+      attrs: { onOnGetCatalog: onGetCatalog },
+    })
+    stub(wrapper).vm.$emit('onGetCatalog', headings)
+    await flushPromises()
+    expect(onGetCatalog).toHaveBeenCalledWith(headings)
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(4)
+  })
+})
+
+describe('MdEditor —— 工具栏目录切换按钮', () => {
+  // 目录切换按钮在 defToolbars 插槽中的索引（第 5 个子节点）
+  const TOGGLE_INDEX = 4
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('目录在右侧（默认）时，切换按钮位于工具栏最后一位', () => {
+    const wrapper = mountEditor({ catalog: true })
+    const toolbars = stub(wrapper).props('toolbars')
+    expect(toolbars[toolbars.length - 1]).toBe(TOGGLE_INDEX)
+  })
+
+  it('目录在左侧时，切换按钮位于工具栏第一位', () => {
+    const wrapper = mountEditor({ catalog: true, catalogPosition: 'left' })
+    const toolbars = stub(wrapper).props('toolbars')
+    expect(toolbars[0]).toBe(TOGGLE_INDEX)
+  })
+
+  it('未开启目录时，工具栏不注入切换按钮', () => {
+    const wrapper = mountEditor()
+    expect(stub(wrapper).props('toolbars')).not.toContain(TOGGLE_INDEX)
+  })
+
+  it('用户自定义 toolbars 时，切换按钮仍按目录位置注入到首/末位', () => {
+    const right = mountEditor({ catalog: true, toolbars: ['bold', 'italic'] })
+    const rightToolbars = stub(right).props('toolbars')
+    expect(rightToolbars).toEqual(['bold', 'italic', 0, 1, 2, 3, TOGGLE_INDEX])
+
+    const left = mountEditor({ catalog: true, catalogPosition: 'left', toolbars: ['bold', 'italic'] })
+    const leftToolbars = stub(left).props('toolbars')
+    expect(leftToolbars).toEqual([TOGGLE_INDEX, 'bold', 'italic', 0, 1, 2, 3])
+  })
+
+  it('catalogPosition 动态切换时，按钮位置跟随变化', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    expect(stub(wrapper).props('toolbars').at(-1)).toBe(TOGGLE_INDEX)
+    await wrapper.setProps({ catalogPosition: 'left' })
+    expect(stub(wrapper).props('toolbars')[0]).toBe(TOGGLE_INDEX)
+    expect(stub(wrapper).props('toolbars').at(-1)).not.toBe(TOGGLE_INDEX)
+  })
+
+  it('点击切换按钮隐藏/显示目录面板，按钮激活态同步', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    const btn = () => wrapper.find('.md-editor-catalog-toggle-btn')
+    expect(btn().exists()).toBe(true)
+    // 初始：面板显示，按钮激活
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(btn().classes()).toContain('md-editor-catalog-toggle-btn--active')
+
+    // 点击隐藏
+    await btn().trigger('click')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    expect(wrapper.classes()).not.toContain('base-md-editor--with-catalog')
+    expect(btn().classes()).not.toContain('md-editor-catalog-toggle-btn--active')
+
+    // 再次点击恢复显示
+    await btn().trigger('click')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(btn().classes()).toContain('md-editor-catalog-toggle-btn--active')
+  })
+
+  it('catalog prop 动态变更时重置面板显隐状态', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    // 先通过按钮隐藏面板
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    // 关闭再开启 catalog prop：面板应恢复显示（状态重新跟随 prop）
+    await wrapper.setProps({ catalog: false })
+    await wrapper.setProps({ catalog: true })
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+  })
+
+  it('未开启目录时工具栏不渲染切换按钮 DOM', () => {
+    // 按钮 VNode 在插槽中但未被 toolbars 引用，真实编辑器不会渲染；
+    // 桩组件直接渲染插槽全部子节点，因此此处仅断言无按钮激活态（active=false 时按钮存在但无激活 class）
+    const wrapper = mountEditor()
+    expect(wrapper.find('.md-editor-catalog-toggle-btn--active').exists()).toBe(false)
+  })
+
+  it('图标随目录位置镜像：左侧时带翻转 class，右侧时不带', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    const icon = () => wrapper.find('.md-editor-catalog-toggle-btn .md-editor-icon')
+    expect(icon().classes()).not.toContain('md-editor-icon--flip')
+    await wrapper.setProps({ catalogPosition: 'left' })
+    expect(icon().classes()).toContain('md-editor-icon--flip')
+  })
+})
+
+describe('MdEditor —— 全屏模式下的目录面板', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // md-editor-v3 的两种全屏都会在编辑器根元素上加 md-editor-fullscreen class，
+  // 组件内用 MutationObserver 检测（微任务回调），因此 flushPromises + nextTick 后再断言。
+  // 注意：不能直接 classList.add('md-editor-fullscreen') 模拟 ——
+  // 全屏状态变化会引发 Vue 重渲染，vnode class patch 会整体覆盖 DOM class，
+  // 手动加的 class 被抹掉后 observer 再次触发会把状态还原。
+  // 因此拦截该元素 classList.contains，对 md-editor-fullscreen 返回模拟值（不受 patch 影响），
+  // 再用一次临时 class 变更触发 observer 回调。
+  const setFullscreen = async (wrapper, active) => {
+    const el = stub(wrapper).element
+    el.__simFs = active
+    if (!el.__containsPatched) {
+      const orig = el.classList.contains.bind(el.classList)
+      el.classList.contains = (cls) =>
+        cls === 'md-editor-fullscreen' ? !!el.__simFs : orig(cls)
+      el.__containsPatched = true
+    }
+    // 触发真实 DOM class 变更，让 MutationObserver 回调执行
+    el.classList.add('__fs-sim-trigger__')
+    el.classList.remove('__fs-sim-trigger__')
+    await flushPromises()
+    await nextTick()
+  }
+  const enterFullscreen = (wrapper) => setFullscreen(wrapper, true)
+  const exitFullscreen = (wrapper) => setFullscreen(wrapper, false)
+
+  it('进入全屏后目录面板移入编辑器根元素，根元素带全屏让位 class', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    // 非全屏：面板是 .base-md-editor 容器的直接子节点
+    expect(wrapper.element.querySelector(':scope > .base-md-catalog')).not.toBeNull()
+    expect(stub(wrapper).element.contains(wrapper.find('.base-md-catalog').element)).toBe(false)
+
+    await enterFullscreen(wrapper)
+
+    // 面板移入编辑器根元素内部（fixed/Fullscreen API 下兄弟节点不可见，必须在根内才能显示）
+    const panel = stub(wrapper).element.querySelector('.base-md-catalog')
+    expect(panel).not.toBeNull()
+    expect(wrapper.element.querySelector(':scope > .base-md-catalog')).toBeNull()
+    // 根元素带全屏让位 class（右侧），用于 padding 让位与面板定位
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(true)
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog-right')).toBe(true)
+  })
+
+  it('退出全屏后面板回到容器原位，让位 class 移除', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await enterFullscreen(wrapper)
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).not.toBeNull()
+
+    await exitFullscreen(wrapper)
+
+    expect(wrapper.element.querySelector(':scope > .base-md-catalog')).not.toBeNull()
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(false)
+  })
+
+  it('目录在左侧时全屏让位 class 为 left 变体', async () => {
+    const wrapper = mountEditor({ catalog: true, catalogPosition: 'left' })
+    await enterFullscreen(wrapper)
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog-left')).toBe(true)
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog-right')).toBe(false)
+  })
+
+  it('全屏中通过工具栏按钮隐藏面板：面板移除且让位 class 同步消失', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await enterFullscreen(wrapper)
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).not.toBeNull()
+
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).toBeNull()
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(false)
+  })
+
+  it('面板隐藏状态下进入全屏：无面板无让位 class，展开按钮后面板直接出现在编辑器根内', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+    await enterFullscreen(wrapper)
+
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).toBeNull()
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(false)
+
+    // 全屏中展开目录
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).not.toBeNull()
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(true)
+  })
+
+  it('未开启目录时进入全屏：无面板、无让位 class', async () => {
+    const wrapper = mountEditor()
+    await enterFullscreen(wrapper)
+    expect(stub(wrapper).element.querySelector('.base-md-catalog')).toBeNull()
+    expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(false)
   })
 })
