@@ -19,6 +19,7 @@ import {
   mergeProps,
 } from "vue";
 import { cloneDeep, isEqual } from "lodash-es";
+import { nanoid } from "nanoid";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
 import { FILTER_DEFAULTS, isFilterActive } from "./filters/filter-config.js";
@@ -100,7 +101,11 @@ const props = defineProps({
   // false（关闭，默认）：后端参与 —— 过滤/排序参数随 requestApi 远程检索，
   //   FilterCheckbox 选项由 requestFilterAPI 远程提供（未传则仍回退静态 options）。
   localFilterSort: { type: Boolean, default: false },
-  treeConfig: { type: Object, default: () => ({}) },
+  // 树表格配置：仅显式传入时启用（默认 null 走平铺模式）。
+  // 注意不能默认 {}：vxe 收到非空 treeConfig 即进入树模式，getTableData().fullData
+  // 会固定读树快照 tableFullTreeData（仅 loadData 重建），实例方法 insert 插入的
+  // 临时行不会出现在 fullData 中，多选/单选的行映射也会走树分支导致选中记录取不回。
+  treeConfig: { type: Object, default: null },
   expandConfig: { type: Object, default: () => ({}) },
   columnConfig: { type: Object, default: () => ({}) },
   // 单元格编辑配置（vxe editConfig）：keepSource=true 保留源数据用于编辑对比脏数据
@@ -551,12 +556,32 @@ const afterChangeOp = (res) => {
   nextTick(recomputeChanged);
   return res;
 };
-// 顶部插入一行（record 缺省为空行，可携带初始值）
+// 临时添加行主键补齐：vxe 按行主键（rowConfig.keyField，默认 id）记录勾选/单选状态，
+// 临时行不带主键值时 rowid 为空 —— 勾选图标可点亮，但选中记录写入空键，
+// getCheckboxRecords / checkbox-change 事件的 records 取不回该行
+// （radio 路径 vxe 会自动补 row_xxx，checkbox 路径不会）。插入前为缺主键的行
+// 补一个 "row_" + nanoid 的临时 id，保证临时行也能通过单选/多选正常取到行数据。
+const ensureTempRowKey = (record) => {
+  if (!record || typeof record !== "object") return record;
+  const keyField = props.rowConfig?.keyField;
+  // 未显式配置 keyField 时 vxe 使用内部自动行 id，无需补键
+  if (!keyField) return record;
+  const val = record[keyField];
+  if (val === null || val === undefined || val === "") {
+    record[keyField] = `row_${nanoid()}`;
+  }
+  return record;
+};
+// 顶部插入一行（record 缺省为空行，可携带初始值；缺主键时自动补临时 id）
 const insertRow = (record = {}) =>
-  afterChangeOp(gridRef.value?.insert?.(record));
-// 指定位置插入（target 为行对象/行id）
-const insertRowAt = (records, target) =>
-  afterChangeOp(gridRef.value?.insertAt?.(records, target));
+  afterChangeOp(gridRef.value?.insert?.(ensureTempRowKey(record)));
+// 指定位置插入（target 为行对象/行id；records 支持单行或数组，缺主键时自动补临时 id）
+const insertRowAt = (records, target) => {
+  const normalized = Array.isArray(records)
+    ? records.map((r) => ensureTempRowKey(r))
+    : ensureTempRowKey(records);
+  return afterChangeOp(gridRef.value?.insertAt?.(normalized, target));
+};
 // 移除行（数组或单行）
 const removeRows = (rows) => afterChangeOp(gridRef.value?.remove?.(rows));
 
@@ -1613,7 +1638,8 @@ const gridProps = computed(() => {
           }),
       sortConfig: { trigger: "button", ...props.sortConfig },
       filterConfig: { remote: true, ...props.filterConfig },
-      treeConfig: props.treeConfig,
+      // 仅显式传入时转发树配置（undefined 保持平铺模式，见 treeConfig prop 注释）
+      treeConfig: props.treeConfig || undefined,
       expandConfig: props.expandConfig,
       columnConfig: { resizable: true, ...props.columnConfig },
       showOverflow: wrapText.value ? false : "tooltip",

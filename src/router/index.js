@@ -32,6 +32,12 @@ const routes = [
         meta: { title: "表格固定列修复验证", icon: "Grid" },
       },
       {
+        path: "table-insert-selection",
+        name: "TableInsertSelection",
+        component: () => import("@/views/TableInsertSelectionDemo.vue"),
+        meta: { title: "表格临时行选中", icon: "Grid" },
+      },
+      {
         path: "md",
         name: "MdEditor",
         component: () => import("@/views/MdEditorDemo.vue"),
