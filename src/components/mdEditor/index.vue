@@ -17,7 +17,7 @@ import 'katex/dist/katex.min.css'
 // 本地 echarts：md-editor-v3 默认从 unpkg 加载 echarts@6.1.0，内网环境不可达；
 // 这里注入本地实例，让 ```echarts 代码块的图表渲染不依赖外网
 import * as echarts from 'echarts'
-import { fileToBase64, isImageFile, countMarkdownChars } from './utils'
+import { fileToBase64, isImageFile, countMarkdownChars, sanitizeMarkdownHtml } from './utils'
 import Time from './extensions/Time.vue'
 import DateTimeFooter from './extensions/DateTimeFooter.vue'
 import CharCount from './extensions/CharCount.vue'
@@ -30,8 +30,11 @@ import CatalogToggle from './extensions/CatalogToggle.vue'
 // 2. 注入本地 katex 实例，md-editor-v3 检测到 instance 已存在则跳过 CDN 加载
 // 3. 注入本地 echarts 实例，使 ```echarts 代码块渲染不依赖 unpkg（内网可用）
 // 4. katexConfig：关闭 throwOnError/strict，避免单个不支持的命令导致整块公式红屏/不渲染
+// 5. html: true —— 开启源文本原生 HTML 渲染（md-editor-v3 默认关闭）；
+//    渲染产物统一经 DOMPurify 清洗（见 sanitize prop），XSS 攻击面由白名单拦截
 config({
   markdownItConfig: (md) => {
+    md.set({ html: true })
     md.use(MarkExtension)
   },
   editorExtensions: {
@@ -178,6 +181,13 @@ const props = defineProps({
     type: [String, Number],
     default: 240,
   },
+  // HTML 清洗函数：(html: string) => string
+  // 源文本 HTML 渲染已开启（markdown-it html: true），渲染产物经该函数清洗后上屏；
+  // 默认使用 DOMPurify 白名单清洗，可传入自定义函数覆盖（如更严格的标签限制）
+  sanitize: {
+    type: Function,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['update:modelValue', 'update:previewTheme', 'save'])
@@ -266,6 +276,9 @@ const resolvedToolbarsExclude = computed(() =>
 // 过滤 base64 图片编码后的正文字数（供自定义页脚 CharCount 展示）
 // 内置 markdownTotal 会把 base64 编码计入字数，这里用 countMarkdownChars 剔除
 const charCount = computed(() => countMarkdownChars(props.modelValue))
+
+// HTML 清洗函数：优先使用父组件传入的自定义实现，否则使用 DOMPurify 默认清洗
+const resolvedSanitize = computed(() => props.sanitize || sanitizeMarkdownHtml)
 
 // 自动保存激活条件：autoSave 开启 且 正文（过滤 base64 后）非空
 // 内容清空时立即中断自动保存；内容恢复且开关仍开启时自动重启倒计时
@@ -385,6 +398,7 @@ const fsEditorStyle = computed(() =>
       :preview-theme="previewThemeRef"
       :code-theme="codeTheme"
       :language="language"
+      :sanitize="resolvedSanitize"
     />
     <!-- 编辑模式：目录面板 + 编辑器（面板位置由 catalogPosition 决定渲染顺序） -->
     <!-- 面板用 Teleport 包裹：全屏时移入编辑器根元素内部（fixed/Fullscreen API 下兄弟节点不可见），
@@ -414,6 +428,7 @@ const fsEditorStyle = computed(() =>
         :footers="footers"
         :height="height"
         :disabled="disabled"
+        :sanitize="resolvedSanitize"
         :on-upload-img="handleUploadImg"
         :class="fsCatalogClass"
         :style="fsEditorStyle"

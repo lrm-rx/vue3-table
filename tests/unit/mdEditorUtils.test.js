@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
-import { fileToBase64, isImageFile, countMarkdownChars, buildCatalogTree, pickActiveHeadingIndex } from '../../src/components/mdEditor/utils'
+import { fileToBase64, isImageFile, countMarkdownChars, buildCatalogTree, pickActiveHeadingIndex, sanitizeMarkdownHtml } from '../../src/components/mdEditor/utils'
 
 /** 构造一个伪 File 对象（jsdom 中 new File 可用，但手动构造更可控） */
 const fakeFile = (name, type, size = 1024) => ({ name, type, size })
@@ -212,6 +212,77 @@ describe('buildCatalogTree 扁平标题列表 → 树形结构', () => {
     const tree = buildCatalogTree([h(1, 'A', 0), h(2, 'B', 3)])
     expect(tree[0]).toMatchObject({ key: 'h0', index: 0, text: 'A', level: 1, line: 0 })
     expect(tree[0].children[0]).toMatchObject({ key: 'h1', index: 1, text: 'B', level: 2, line: 3 })
+  })
+})
+
+describe('sanitizeMarkdownHtml HTML 清洗（DOMPurify）', () => {
+  it('空值返回空字符串', () => {
+    expect(sanitizeMarkdownHtml('')).toBe('')
+    expect(sanitizeMarkdownHtml(null)).toBe('')
+    expect(sanitizeMarkdownHtml(undefined)).toBe('')
+  })
+
+  it('<script> 标签被剥离，内部文本不留脚本', () => {
+    const out = sanitizeMarkdownHtml('<p>safe</p><script>alert(1)</script>')
+    expect(out).toContain('<p>safe</p>')
+    expect(out).not.toContain('<script')
+    expect(out).not.toContain('alert(1)')
+  })
+
+  it('on* 事件属性被剥离（img onerror / div onclick）', () => {
+    const out = sanitizeMarkdownHtml('<img src="x.png" onerror="alert(1)"><div onclick="alert(2)">t</div>')
+    expect(out).not.toContain('onerror')
+    expect(out).not.toContain('onclick')
+    expect(out).not.toContain('alert(')
+    // 安全部分保留
+    expect(out).toContain('src="x.png"')
+    expect(out).toContain('<div>t</div>')
+  })
+
+  it('javascript: / vbscript: 伪协议链接被中和', () => {
+    const out = sanitizeMarkdownHtml('<a href="javascript:alert(1)">x</a><a href="vbscript:msgbox(1)">y</a>')
+    expect(out).not.toContain('javascript:')
+    expect(out).not.toContain('vbscript:')
+    // 标签与文本本身保留
+    expect(out).toContain('>x</a>')
+    expect(out).toContain('>y</a>')
+  })
+
+  it('<iframe> 被剥离', () => {
+    const out = sanitizeMarkdownHtml('<iframe src="https://evil.example"></iframe><p>ok</p>')
+    expect(out).not.toContain('<iframe')
+    expect(out).toContain('<p>ok</p>')
+  })
+
+  it('常规 markdown 渲染产物完整保留（mark/details/标题锚点/class/style）', () => {
+    const html =
+      '<h1 id="t1">标题</h1>' +
+      '<p><mark>高亮</mark><span class="katex" style="font-size:1em">x</span></p>' +
+      '<details><summary>折叠</summary><p>内容</p></details>'
+    const out = sanitizeMarkdownHtml(html)
+    expect(out).toContain('id="t1"')
+    expect(out).toContain('<mark>高亮</mark>')
+    expect(out).toContain('class="katex"')
+    expect(out).toContain('style=')
+    expect(out).toContain('<details>')
+    expect(out).toContain('<summary>折叠</summary>')
+  })
+
+  it('img 上的 base64 data: URI 保留（组件默认 base64 内联图片）', () => {
+    const html = '<img src="data:image/png;base64,iVBORw0KGgo=" alt="图" title="t">'
+    const out = sanitizeMarkdownHtml(html)
+    expect(out).toContain('data:image/png;base64,iVBORw0KGgo=')
+    expect(out).toContain('alt="图"')
+  })
+
+  it('https 图片链接与任务列表 checkbox 保留', () => {
+    const html =
+      '<img src="https://example.com/a.png" alt="a">' +
+      '<ul><li><input type="checkbox" disabled checked> 已完成</li></ul>'
+    const out = sanitizeMarkdownHtml(html)
+    expect(out).toContain('https://example.com/a.png')
+    expect(out).toContain('<input')
+    expect(out).toContain('checked')
   })
 })
 

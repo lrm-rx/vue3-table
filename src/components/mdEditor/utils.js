@@ -1,3 +1,22 @@
+import DOMPurify from 'dompurify'
+
+/**
+ * 清洗 markdown 渲染产出的 HTML（防 XSS）
+ *
+ * 组件开启了源文本原生 HTML 解析（markdown-it html: true），
+ * 渲染结果必须经 DOMPurify 清洗后才可上屏：剥离 <script>/<iframe>、
+ * on* 事件属性、javascript:/vbscript: 伪协议等攻击面。
+ *
+ * 使用默认配置即可覆盖组件渲染产物的白名单需求：
+ *  - mark / details / summary / input(readonly checkbox) 等 HTML5 标签默认放行
+ *  - class / style / id 属性默认放行（katex 行内样式、标题锚点不受影响）
+ *  - img/source/video/audio 上的 data: URI 默认放行（base64 内联图片不受影响）
+ *
+ * @param {string} html markdown-it 渲染产出的原始 HTML
+ * @returns {string} 清洗后的安全 HTML
+ */
+export const sanitizeMarkdownHtml = (html) => DOMPurify.sanitize(html || '')
+
 /**
  * 将 File 转换为 base64 data URL
  * @param {File} file

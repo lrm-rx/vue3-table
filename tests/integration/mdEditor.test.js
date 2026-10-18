@@ -49,6 +49,7 @@ vi.mock('md-editor-v3', async () => {
       defFooters: { type: Object, default: undefined },
       height: { type: [String, Number], default: undefined },
       disabled: { type: Boolean, default: false },
+      sanitize: { type: Function, default: null },
     },
     emits: ['update:modelValue', 'onGetCatalog'],
     setup(props, { slots, attrs }) {
@@ -80,6 +81,7 @@ vi.mock('md-editor-v3', async () => {
       previewTheme: { type: String, default: '' },
       codeTheme: { type: String, default: '' },
       language: { type: String, default: '' },
+      sanitize: { type: Function, default: null },
     },
     setup(props) {
       return () => h('div', { class: 'md-preview-stub' }, props.modelValue)
@@ -190,6 +192,47 @@ describe('MdEditor 封装组件 —— v-model 与默认 props', () => {
   it('defineExpose 暴露 editorRef 指向底层 MdEditor 实例', () => {
     const wrapper = mountEditor()
     expect(wrapper.vm.editorRef).toBe(stub(wrapper).vm)
+  })
+})
+
+describe('MdEditor —— HTML 渲染与 DOMPurify 清洗', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('默认向底层 MdEditor 注入 DOMPurify 清洗函数（剥离 script / 事件属性）', () => {
+    const wrapper = mountEditor()
+    const sanitize = stub(wrapper).props('sanitize')
+    expect(typeof sanitize).toBe('function')
+    const out = sanitize('<p>ok</p><script>alert(1)</script><img src="x.png" onerror="alert(2)">')
+    expect(out).toContain('<p>ok</p>')
+    expect(out).not.toContain('<script')
+    expect(out).not.toContain('onerror')
+  })
+
+  it('只读模式 MdPreview 同样注入清洗函数', () => {
+    const wrapper = mountEditor({ readOnly: true })
+    const preview = wrapper.findComponent({ name: 'MdPreviewStub' })
+    const sanitize = preview.props('sanitize')
+    expect(typeof sanitize).toBe('function')
+    expect(sanitize('<a href="javascript:alert(1)">x</a>')).not.toContain('javascript:')
+  })
+
+  it('自定义 sanitize prop 覆盖默认 DOMPurify 实现', () => {
+    const custom = vi.fn((html) => `[custom]${html}`)
+    const wrapper = mountEditor({ sanitize: custom })
+    const sanitize = stub(wrapper).props('sanitize')
+    expect(sanitize).toBe(custom)
+    expect(sanitize('<b>1</b>')).toBe('[custom]<b>1</b>')
+    expect(custom).toHaveBeenCalledWith('<b>1</b>')
+  })
+
+  it('默认清洗保留 base64 图片 data: URI 与 mark 标签', () => {
+    const wrapper = mountEditor()
+    const sanitize = stub(wrapper).props('sanitize')
+    const out = sanitize('<img src="data:image/png;base64,AAA=" alt="a"><mark>hi</mark>')
+    expect(out).toContain('data:image/png;base64,AAA=')
+    expect(out).toContain('<mark>hi</mark>')
   })
 })
 
