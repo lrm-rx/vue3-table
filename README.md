@@ -504,6 +504,7 @@ tableProRef.value.selectedId;         // 选中 id
 | `customStorage` | `false` | 是否记忆列状态到 localStorage（需配合 `tableId`） |
 | `toolbarConfig` | `{}` | 额外 vxe toolbar 配置（与默认合并） |
 | `customConfig` | `{}` | 额外 vxe custom 配置 |
+| `columnDragConfig` | `{}` | 额外 vxe columnDragConfig（默认已开 `isPeerDrag`，配合内置 `customConfig.immediate` 支持面板内同级拖拽排序，含分组子列） |
 
 事件：`@refresh`、`@export`、`@search`、`@density-change`、`@toolbar-button-click`。
 

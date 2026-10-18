@@ -141,6 +141,8 @@ const props = defineProps({
   toolbarConfig: { type: Object, default: () => ({}) },
   // 额外传入的 customConfig（与内部默认合并）
   customConfig: { type: Object, default: () => ({}) },
+  // 额外传入的 columnDragConfig（与内部默认合并；默认 isPeerDrag 支持面板内同级拖拽排序，含分组子列）
+  columnDragConfig: { type: Object, default: () => ({}) },
   // 是否需要分页组件（默认 true ）
   pagination: { type: Boolean, default: true },
   pagerConfig: {
@@ -1501,9 +1503,14 @@ const toolbarConfig = computed(() => {
 });
 
 // ========== 列个性化配置 ==========
+// immediate: 拖拽排序实时生效（免点「确定」）；
+// 配合 gridProps 的 columnDragConfig.isPeerDrag，分组列（level>=2）子列也能在面板内同级拖拽排序
 const customConfig = computed(() => ({
   mode: "popover", // 'modal' | 'drawer' | 'popover'
   allowVisible: true,
+  immediate: true,
+  allowSort: true,
+  showSortDragButton: true,
   storage: props.customStorage, // 记忆到 localStorage
   ...props.customConfig,
 }));
@@ -1649,6 +1656,8 @@ const gridProps = computed(() => {
       editRules: props.editRules,
       toolbarConfig: toolbarConfig.value,
       customConfig: customConfig.value,
+      // 面板列拖拽：isPeerDrag 允许同级拖动（含分组子列），需配合 customConfig.immediate
+      columnDragConfig: { isPeerDrag: true, ...props.columnDragConfig },
       // 虚拟滚动：仅使用用户显式传入的配置
       ...(finalVirtualX ? { virtualXConfig: finalVirtualX } : {}),
       ...(finalVirtualY ? { virtualYConfig: finalVirtualY } : {}),

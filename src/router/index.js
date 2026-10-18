@@ -38,6 +38,12 @@ const routes = [
         meta: { title: "表格临时行选中", icon: "Grid" },
       },
       {
+        path: "table-custom-sort",
+        name: "TableCustomSort",
+        component: () => import("@/views/TableCustomSortDemo.vue"),
+        meta: { title: "列个性化拖拽排序", icon: "Sort" },
+      },
+      {
         path: "md",
         name: "MdEditor",
         component: () => import("@/views/MdEditorDemo.vue"),
