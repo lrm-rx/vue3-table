@@ -9,7 +9,8 @@
  * 4. 点击目录项平滑滚动定位：预览区通过 [data-line] 精确匹配标题元素
  *    （不依赖标题 id，规避重复标题文本导致的 id 冲突）
  *
- * 数据来源：父组件通过 MdEditor 的 onGetCatalog 事件拿到扁平标题列表后传入。
+ * 数据来源：父组件通过 MdEditor / MdPreview（只读）的 onGetCatalog 事件拿到扁平标题列表后传入。
+ * 只读模式（previewOnly）宿主为 MdPreview：无独立滚动容器，滚动跟随与点击定位基于页面滚动。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { buildCatalogTree, pickActiveHeadingIndex } from '../utils'
@@ -34,6 +35,11 @@ const props = defineProps({
   theme: {
     type: String,
     default: 'light',
+  },
+  /** 只读模式（宿主为 MdPreview）：无独立滚动容器，滚动跟随与点击定位基于页面滚动（window） */
+  previewOnly: {
+    type: Boolean,
+    default: false,
   },
   /** 高亮判定线 / 点击定位时相对滚动容器顶部的偏移量（px） */
   offsetTop: {
@@ -87,8 +93,9 @@ const toggleCollapse = (key) => {
 /** MdEditor 根 DOM 元素 */
 const getEditorEl = () => props.editorRef?.$el || null
 
-/** 预览滚动容器（preview=false / previewOnly 时不存在） */
-const resolvePreviewEl = () => getEditorEl()?.querySelector('.md-editor-preview-wrapper') || null
+/** 预览容器（标题定位根）：编辑模式为内部滚动容器 preview-wrapper，只读模式为 preview 内容根 */
+const resolvePreviewEl = () =>
+  getEditorEl()?.querySelector('.md-editor-preview-wrapper, .md-editor-preview') || null
 
 /** CodeMirror EditorView（预览不可用时作为滚动同步目标） */
 const resolveEditorView = () => {
@@ -140,6 +147,19 @@ const collectHeadingTops = () => {
 
   const previewEl = resolvePreviewEl()
   if (previewEl) {
+    // 只读模式：无独立滚动容器，滚动发生在页面（window）上，
+    // 用 getBoundingClientRect + scrollY 计算标题的文档绝对位置
+    if (props.previewOnly) {
+      const scrollTop = window.scrollY || document.documentElement?.scrollTop || 0
+      const pairs = []
+      list.forEach((h, i) => {
+        if (!passDepth(h)) return
+        const el = previewEl.querySelector(`[data-line="${h.line}"]`)
+        if (el) pairs.push({ index: i, top: el.getBoundingClientRect().top + scrollTop })
+      })
+      return { pairs, scrollTop }
+    }
+
     const pairs = []
     list.forEach((h, i) => {
       if (!passDepth(h)) return
@@ -240,6 +260,21 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchmove', 'mousedown', 'keydown']
 /** 点击目录项：滚动到对应标题（预览优先，编辑区兜底），并立即置为激活 */
 const scrollToHeading = (item) => {
   activeIndex.value = item.index
+
+  // 只读模式：滚动页面（scrollingElement）到标题的文档绝对位置
+  if (props.previewOnly) {
+    const el = resolvePreviewEl()?.querySelector(`[data-line="${item.line}"]`)
+    if (el) {
+      const top = Math.max(
+        0,
+        el.getBoundingClientRect().top + (window.scrollY || 0) - props.offsetTop,
+      )
+      const container = document.scrollingElement || document.documentElement
+      clickLock = { container, top }
+      smoothScrollTo(container, top)
+    }
+    return
+  }
 
   const previewEl = resolvePreviewEl()
   if (previewEl) {

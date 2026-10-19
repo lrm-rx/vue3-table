@@ -71,7 +71,8 @@ vi.mock('md-editor-v3', async () => {
     },
   })
   stubHolder.value = MdEditorStub
-  // MdPreview 桩组件（只读模式）
+  // MdPreview 桩组件（只读模式）：previewOnly 无 preview-wrapper 包裹，标题锚点直接在
+  // .md-editor-preview 内（与真实 md-editor-v3 结构一致），并支持 onGetCatalog 事件上报
   const MdPreviewStub = defineComponent({
     name: 'MdPreviewStub',
     inheritAttrs: false,
@@ -83,8 +84,18 @@ vi.mock('md-editor-v3', async () => {
       language: { type: String, default: '' },
       sanitize: { type: Function, default: null },
     },
+    emits: ['update:modelValue', 'onGetCatalog'],
     setup(props) {
-      return () => h('div', { class: 'md-preview-stub' }, props.modelValue)
+      return () =>
+        h('div', { class: 'md-preview-stub md-editor-previewOnly' }, [
+          props.modelValue,
+          h('div', { class: 'md-editor-preview' }, [
+            h('h1', { 'data-line': 0 }),
+            h('h2', { 'data-line': 2 }),
+            h('h3', { 'data-line': 3 }),
+            h('h1', { 'data-line': 5 }),
+          ]),
+        ])
     },
   })
   // config 是全局配置函数，桩为 no-op；allToolbar 是默认工具栏数组
@@ -116,6 +127,7 @@ vi.mock('markdown-it-mark', () => ({
 }))
 
 import MdEditor from '../../src/components/mdEditor/index.vue'
+import Catalog from '../../src/components/mdEditor/extensions/Catalog.vue'
 import CharCount from '../../src/components/mdEditor/extensions/CharCount.vue'
 
 const mountEditor = (props = {}) =>
@@ -154,14 +166,14 @@ describe('MdEditor 封装组件 —— v-model 与默认 props', () => {
     expect(p.placeholder).toBe('请输入 Markdown 内容...')
   })
 
-  it('默认排除 github 工具栏图标（toolbarsExclude=["github"]）', () => {
+  it('默认排除 github 与内置 catalog 图标（目录按钮为自定义常驻按钮）', () => {
     const wrapper = mountEditor()
-    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github'])
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github', 'catalog'])
   })
 
-  it('可通过 toolbarsExclude 覆盖默认排除项', () => {
+  it('可通过 toolbarsExclude 覆盖默认排除项（内置 catalog 始终追加排除）', () => {
     const wrapper = mountEditor({ toolbarsExclude: ['github', 'save'] })
-    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github', 'save'])
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github', 'save', 'catalog'])
   })
 
   it('自定义 props 覆盖默认值', () => {
@@ -476,6 +488,12 @@ describe('MdEditor —— 自定义目录面板', () => {
     await flushPromises()
   }
 
+  /** 触发只读宿主 MdPreview 的 onGetCatalog 事件并等待响应式链路完成 */
+  const emitPreviewCatalog = async (wrapper, list = headings) => {
+    wrapper.findComponent({ name: 'MdPreviewStub' }).vm.$emit('onGetCatalog', list)
+    await flushPromises()
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -672,10 +690,39 @@ describe('MdEditor —— 自定义目录面板', () => {
     expect(wrapper.find('.base-md-catalog__empty').text()).toBe('暂无目录')
   })
 
-  it('只读模式不渲染目录面板（MdPreview 无独立滚动容器）', () => {
-    const wrapper = mountEditor({ catalog: true, readOnly: true })
-    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
-    expect(wrapper.find('.md-preview-stub').exists()).toBe(true)
+  it('只读模式同样渲染目录面板（sticky 吸顶布局类，编辑模式留白类不出现）', async () => {
+    const wrapper = mountEditor({ readOnly: true, catalog: true })
+    await emitPreviewCatalog(wrapper)
+    expect(wrapper.classes()).toContain('base-md-editor--readonly-catalog')
+    expect(wrapper.classes()).not.toContain('base-md-editor--with-catalog')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(4)
+  })
+
+  it('只读模式 catalogPosition=left 时使用翻转布局类', async () => {
+    const wrapper = mountEditor({ readOnly: true, catalog: true, catalogPosition: 'left' })
+    await emitPreviewCatalog(wrapper)
+    expect(wrapper.classes()).toContain('base-md-editor--readonly-catalog-left')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+  })
+
+  it('只读模式向目录面板传递 MdPreview 实例与 previewOnly 标记', async () => {
+    const wrapper = mountEditor({ readOnly: true, catalog: true })
+    await emitPreviewCatalog(wrapper)
+    const preview = wrapper.findComponent({ name: 'MdPreviewStub' })
+    const catalogComp = wrapper.findComponent(Catalog)
+    expect(catalogComp.exists()).toBe(true)
+    expect(catalogComp.props('previewOnly')).toBe(true)
+    expect(catalogComp.props('editorRef')).toBe(preview.vm)
+  })
+
+  it('只读模式点击目录项走页面滚动分支并置为激活态', async () => {
+    const wrapper = mountEditor({ readOnly: true, catalog: true })
+    await emitPreviewCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[1].trigger('click')
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items[1].classes()).toContain('base-md-catalog__item--active')
+    expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
   })
 
   it('开启目录时工具栏自动排除内置 catalog 按钮', () => {
@@ -688,9 +735,9 @@ describe('MdEditor —— 自定义目录面板', () => {
     expect(stub(wrapper).props('toolbarsExclude')).toEqual(['catalog'])
   })
 
-  it('未开启目录时 toolbarsExclude 保持原样', () => {
+  it('目录切换按钮常驻：未开启目录时 toolbarsExclude 也排除内置 catalog', () => {
     const wrapper = mountEditor()
-    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github'])
+    expect(stub(wrapper).props('toolbarsExclude')).toEqual(['github', 'catalog'])
   })
 
   it('catalog 系列自定义 props 不透传给底层 MdEditor', () => {
@@ -759,9 +806,11 @@ describe('MdEditor —— 工具栏目录切换按钮', () => {
     expect(toolbars[0]).toBe(TOGGLE_INDEX)
   })
 
-  it('未开启目录时，工具栏不注入切换按钮', () => {
+  it('目录切换按钮常驻工具栏：未开启目录时也注入到末位（面板默认不显示）', () => {
     const wrapper = mountEditor()
-    expect(stub(wrapper).props('toolbars')).not.toContain(TOGGLE_INDEX)
+    const toolbars = stub(wrapper).props('toolbars')
+    expect(toolbars.at(-1)).toBe(TOGGLE_INDEX)
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
   })
 
   it('用户自定义 toolbars 时，切换按钮仍按目录位置注入到首/末位', () => {
@@ -813,11 +862,24 @@ describe('MdEditor —— 工具栏目录切换按钮', () => {
     expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
   })
 
-  it('未开启目录时工具栏不渲染切换按钮 DOM', () => {
-    // 按钮 VNode 在插槽中但未被 toolbars 引用，真实编辑器不会渲染；
-    // 桩组件直接渲染插槽全部子节点，因此此处仅断言无按钮激活态（active=false 时按钮存在但无激活 class）
+  it('未开启目录时按钮存在但无激活态（面板默认隐藏）', () => {
     const wrapper = mountEditor()
+    expect(wrapper.find('.md-editor-catalog-toggle-btn').exists()).toBe(true)
     expect(wrapper.find('.md-editor-catalog-toggle-btn--active').exists()).toBe(false)
+  })
+
+  it('编辑模式默认隐藏面板，点击工具栏按钮开启/再隐藏', async () => {
+    const wrapper = mountEditor()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(wrapper.classes()).toContain('base-md-editor--with-catalog')
+    expect(wrapper.find('.md-editor-catalog-toggle-btn').classes()).toContain(
+      'md-editor-catalog-toggle-btn--active',
+    )
+    await wrapper.find('.md-editor-catalog-toggle-btn').trigger('click')
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    expect(wrapper.classes()).not.toContain('base-md-editor--with-catalog')
   })
 
   it('图标随目录位置镜像：左侧时带翻转 class，右侧时不带', async () => {
@@ -924,5 +986,73 @@ describe('MdEditor —— 全屏模式下的目录面板', () => {
     await enterFullscreen(wrapper)
     expect(stub(wrapper).element.querySelector('.base-md-catalog')).toBeNull()
     expect(stub(wrapper).element.classList.contains('md-editor--fs-catalog')).toBe(false)
+  })
+})
+
+describe('MdEditor —— toggleCatalog 实例方法', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('编辑模式默认隐藏面板，toggleCatalog() 取反显隐', async () => {
+    const wrapper = mountEditor()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    wrapper.vm.toggleCatalog()
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(wrapper.find('.md-editor-catalog-toggle-btn').classes()).toContain(
+      'md-editor-catalog-toggle-btn--active',
+    )
+    wrapper.vm.toggleCatalog()
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+  })
+
+  it('toggleCatalog(true/false) 显式设置目标状态', async () => {
+    const wrapper = mountEditor()
+    wrapper.vm.toggleCatalog(true)
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    wrapper.vm.toggleCatalog(false)
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    // 对已处于目标状态时幂等
+    wrapper.vm.toggleCatalog(false)
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+  })
+
+  it('只读模式默认隐藏面板，toggleCatalog() 切换为 sticky 布局类', async () => {
+    const wrapper = mountEditor({ readOnly: true })
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    wrapper.vm.toggleCatalog()
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    expect(wrapper.classes()).toContain('base-md-editor--readonly-catalog')
+    expect(wrapper.classes()).not.toContain('base-md-editor--with-catalog')
+    wrapper.vm.toggleCatalog()
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
+    expect(wrapper.classes()).not.toContain('base-md-editor--readonly-catalog')
+  })
+
+  it('只读模式开启面板后，MdPreview 的 onGetCatalog 驱动目录渲染', async () => {
+    const wrapper = mountEditor({ readOnly: true })
+    wrapper.vm.toggleCatalog(true)
+    await nextTick()
+    wrapper.findComponent({ name: 'MdPreviewStub' }).vm.$emit('onGetCatalog', [
+      { text: '甲', level: 1, line: 0 },
+    ])
+    await flushPromises()
+    expect(wrapper.findAll('.base-md-catalog__item')).toHaveLength(1)
+    expect(wrapper.find('.base-md-catalog__text').text()).toBe('甲')
+  })
+
+  it('catalog prop 为 true 时初始显示面板，toggleCatalog(false) 可关闭', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(true)
+    wrapper.vm.toggleCatalog(false)
+    await nextTick()
+    expect(wrapper.find('.base-md-catalog').exists()).toBe(false)
   })
 })

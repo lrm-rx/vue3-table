@@ -62,7 +62,9 @@ config({
  * 2. 可选自定义上传函数（上传到后端返回 URL）
  * 3. 中文语言、默认预览主题等开箱即用
  * 4. 集成 4 个工具栏扩展：Mark（高亮）、Emoji（表情）、PreviewThemeSwitch（预览主题切换）、Time（插入时间）
- * 5. 透传所有原生 props 与事件
+ * 5. 自定义目录面板：工具栏按钮常驻可切换显隐，支持编辑模式（编辑器左/右侧）与只读模式（sticky 吸顶），
+ *    并暴露实例方法 toggleCatalog()
+ * 6. 透传所有原生 props 与事件
  */
 
 const props = defineProps({
@@ -118,7 +120,8 @@ const props = defineProps({
     type: [String, Number],
     default: undefined,
   },
-  // 只读模式：渲染为纯预览组件（无工具栏、无边框），适用于文章发布后查看
+  // 只读模式：渲染为纯预览组件（无工具栏、无边框），适用于文章发布后查看；
+  // 同样支持目录面板（sticky 吸顶随页面滚动），显隐通过 toggleCatalog 方法切换
   readOnly: {
     type: Boolean,
     default: false,
@@ -160,7 +163,9 @@ const props = defineProps({
     default: 'seconds',
     validator: (v) => ['seconds', 'minutes'].includes(v),
   },
-  // 是否显示自定义目录面板（仅编辑模式生效，只读模式不渲染）
+  // 目录面板初始是否显示（默认不显示）。
+  // 目录切换按钮常驻工具栏，点击切换面板显隐；动态变更该 prop 会同步重置面板状态；
+  // 只读模式无工具栏，通过实例方法 toggleCatalog 切换
   catalog: {
     type: Boolean,
     default: false,
@@ -224,12 +229,11 @@ watch(
 // 最终的工具栏列表：在用户/默认 toolbars 末尾追加 [0..N-1] 引用 defToolbars 中的扩展
 // 移除默认的 "=" 分隔符，让所有按钮在同一组内流动排列，避免窄容器换行后留白
 // md-editor-v3 的 toolbars 数组用数字索引引用 defToolbars 里的自定义 VNode
-// 开启目录时注入目录切换按钮：目录在左 → 按钮最前；目录在右 → 按钮最后（视觉同侧）
+// 目录切换按钮常驻工具栏：目录在左 → 按钮最前；目录在右 → 按钮最后（视觉同侧）
 const resolvedToolbars = computed(() => {
   const base = props.toolbars || allToolbar
   const filtered = base.filter((item) => item !== '=')
   const indices = Array.from({ length: EXTENSION_COUNT }, (_, i) => i)
-  if (!props.catalog) return [...filtered, ...indices]
   return props.catalogPosition === 'left'
     ? [CATALOG_TOGGLE_INDEX, ...filtered, ...indices]
     : [...filtered, ...indices, CATALOG_TOGGLE_INDEX]
@@ -252,25 +256,30 @@ const mergedProps = computed(() => {
   return rest
 })
 
-// 是否渲染目录面板（catalog 开启 且 未被工具栏按钮隐藏；只读模式不支持目录：MdPreview 无独立滚动容器）
-const showCatalog = computed(() => props.catalog && catalogOpen.value && !props.readOnly)
+// 目录面板显隐（编辑/只读模式通用）：初始跟随 catalog prop，由工具栏按钮或 toggleCatalog 方法切换
+const showCatalog = computed(() => catalogOpen.value)
+// 编辑模式目录布局类（padding 留白 + absolute 贴边，面板与编辑器等高）
+const editCatalog = computed(() => showCatalog.value && !props.readOnly)
+// 只读模式目录布局类（flex + sticky 吸顶：MdPreview 无独立滚动容器，内容随页面滚动）
+const readonlyCatalog = computed(() => showCatalog.value && props.readOnly)
 
 // 目录面板宽度标准化：数字 → px 字符串
 const normalizedCatalogWidth = computed(() =>
   typeof props.catalogWidth === 'number' ? `${props.catalogWidth}px` : props.catalogWidth,
 )
 
-// 目录数据：由 MdEditor 的 onGetCatalog 事件维护（用户通过 attrs 传入的同名监听不受影响，二者都会触发）
+// 目录数据：由 MdEditor / MdPreview 的 onGetCatalog 事件维护（用户通过 attrs 传入的同名监听不受影响，二者都会触发）
 const catalogHeadings = ref([])
 const handleGetCatalog = (list) => {
   catalogHeadings.value = Array.isArray(list) ? list : []
 }
 
-// 开启自定义目录时，从工具栏排除内置 catalog 按钮（内置目录与本面板功能重叠，避免两个入口并存）
+// 目录切换按钮常驻工具栏，内置 catalog 按钮与本面板功能重叠，始终从工具栏排除（避免两个入口并存）
+// 用户在 toolbarsExclude 中已显式包含 catalog 时不重复追加
 const resolvedToolbarsExclude = computed(() =>
-  props.catalog && !props.toolbarsExclude.includes('catalog')
-    ? [...props.toolbarsExclude, 'catalog']
-    : props.toolbarsExclude,
+  props.toolbarsExclude.includes('catalog')
+    ? props.toolbarsExclude
+    : [...props.toolbarsExclude, 'catalog'],
 )
 
 // 过滤 base64 图片编码后的正文字数（供自定义页脚 CharCount 展示）
@@ -327,11 +336,16 @@ const handleChange = (val) => {
   emit('update:modelValue', val)
 }
 
-// 暴露底层 MdEditor 实例，便于父组件调用 insert / rerender 等方法
+// 底层组件实例：编辑模式为 MdEditor（便于父组件调用 insert / rerender 等方法），只读模式为 MdPreview
 const mdEditorRef = ref()
+const mdPreviewRef = ref()
 defineExpose({
-  /** 底层 md-editor-v3 实例 */
+  /** 底层 md-editor-v3 实例（仅编辑模式存在；只读模式宿主为 MdPreview） */
   editorRef: mdEditorRef,
+  /** 切换目录面板显隐；传布尔值直接设置目标状态，缺省则取反当前状态 */
+  toggleCatalog: (visible) => {
+    catalogOpen.value = typeof visible === 'boolean' ? visible : !catalogOpen.value
+  },
 })
 
 // ---------- 全屏模式下的目录面板 ----------
@@ -385,21 +399,35 @@ const fsEditorStyle = computed(() =>
   <div
     class="base-md-editor"
     :class="{
-      'base-md-editor--with-catalog': showCatalog,
-      'base-md-editor--catalog-left': showCatalog && catalogPosition === 'left',
+      'base-md-editor--with-catalog': editCatalog,
+      'base-md-editor--catalog-left': editCatalog && catalogPosition === 'left',
+      'base-md-editor--readonly-catalog': readonlyCatalog,
+      'base-md-editor--readonly-catalog-left': readonlyCatalog && catalogPosition === 'left',
     }"
     :style="showCatalog ? { '--catalog-width': normalizedCatalogWidth } : undefined"
   >
-    <!-- 只读模式：纯预览，无工具栏无边框（不支持目录面板） -->
-    <MdPreview
-      v-if="readOnly"
-      :model-value="modelValue"
-      :theme="theme"
-      :preview-theme="previewThemeRef"
-      :code-theme="codeTheme"
-      :language="language"
-      :sanitize="resolvedSanitize"
-    />
+    <!-- 只读模式：纯预览，无工具栏无边框；目录面板 sticky 吸顶（catalog prop / toggleCatalog 控制显隐） -->
+    <template v-if="readOnly">
+      <MdPreview
+        ref="mdPreviewRef"
+        :model-value="modelValue"
+        :theme="theme"
+        :preview-theme="previewThemeRef"
+        :code-theme="codeTheme"
+        :language="language"
+        :sanitize="resolvedSanitize"
+        @on-get-catalog="handleGetCatalog"
+      />
+      <Catalog
+        v-if="showCatalog"
+        :headings="catalogHeadings"
+        :max-depth="catalogMaxDepth"
+        :editor-ref="mdPreviewRef"
+        preview-only
+        :theme="theme"
+        :style="{ width: normalizedCatalogWidth }"
+      />
+    </template>
     <!-- 编辑模式：目录面板 + 编辑器（面板位置由 catalogPosition 决定渲染顺序） -->
     <!-- 面板用 Teleport 包裹：全屏时移入编辑器根元素内部（fixed/Fullscreen API 下兄弟节点不可见），
          非全屏时 disabled 就地渲染 -->
@@ -499,6 +527,33 @@ const fsEditorStyle = computed(() =>
     right: auto;
     left: 0;
   }
+}
+
+// 只读模式 + 目录面板：MdPreview 无独立滚动容器（内容高度即容器高度，滚动发生在页面上），
+// 不能复用编辑模式的「padding 留白 + absolute 贴边」方案 —— absolute 面板高度会随整篇文章拉伸、
+// 且随页面滚动离开视口。改用 flex 布局 + sticky 吸顶：面板占据真实列宽（gap 与编辑模式留白一致），
+// 页面滚动时面板保持可见；条目超出视口高度时由面板内部滚动。
+.base-md-editor--readonly-catalog {
+  display: flex;
+  align-items: flex-start; // 面板高度小于容器是 sticky 生效前提，禁止被拉伸到整篇文章高度
+  gap: 8px;
+
+  // MdPreview 根元素（.md-editor-previewOnly）占满剩余宽度
+  > .md-editor-previewOnly {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .base-md-catalog {
+    position: sticky;
+    top: 0;
+    max-height: 100vh; // 不超过视口高度，超出部分由面板内部滚动
+  }
+}
+
+// 只读 + 目录在左：DOM 中 MdPreview 在前，翻转主轴方向让面板贴左
+.base-md-editor--readonly-catalog-left {
+  flex-direction: row-reverse;
 }
 
 // 全屏模式（屏幕全屏/浏览器全屏）：目录面板 Teleport 进编辑器根元素内部。
