@@ -652,6 +652,7 @@ const toggleEmailRequired = () => {
       :items="items"
       :columns="columns"
       :title-colon="true"
+      :title-bold="true"
       :only-required="onlyRequired"
       :remove-hidden-values="removeHiddenValues"
       :rules="rules"

@@ -505,6 +505,53 @@ describe("FormPro 配置式表单", () => {
     expect(content.attributes("style")).toContain("font-weight: 700");
   });
 
+  it("表单级 title-bold：统一加粗全部 label", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { a: "", b: "" },
+      titleBold: true,
+      items: [
+        { prop: "a", label: "A" },
+        { prop: "b", label: "B" },
+      ],
+    });
+    await flushPromises();
+    const contents = wrapper.findAll(".form-pro__title-content");
+    expect(contents.length).toBe(2);
+    contents.forEach((c) =>
+      expect(c.attributes("style")).toContain("font-weight: 700"),
+    );
+  });
+
+  it("项级 titleBold 优先级高于表单级：false 可覆盖表单级 true，true 可覆盖表单级 false", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { a: "", b: "", c: "", d: "" },
+      titleBold: true,
+      items: [
+        { prop: "a", label: "A", titleBold: false }, // 项级覆盖 → 不加粗
+        { prop: "b", label: "B", titleBold: true }, // 项级覆盖 → 加粗
+        { prop: "c", label: "C" }, // 跟随表单级 → 加粗
+        { prop: "d", label: "D" },
+      ],
+    });
+    await flushPromises();
+    const contents = wrapper.findAll(".form-pro__title-content");
+    expect(contents.length).toBe(4);
+    expect(contents[0].attributes("style") || "").not.toContain("font-weight: 700");
+    expect(contents[1].attributes("style")).toContain("font-weight: 700");
+    expect(contents[2].attributes("style")).toContain("font-weight: 700");
+
+    // 反向：表单级 false，项级 true 仍生效
+    const wrapper2 = mountFormPro({
+      modelValue: { d: "" },
+      titleBold: false,
+      items: [{ prop: "d", label: "D", titleBold: true }],
+    });
+    await flushPromises();
+    expect(
+      wrapper2.find(".form-pro__title-content").attributes("style"),
+    ).toContain("font-weight: 700");
+  });
+
   it("标题溢出隐藏 titleOverflow：ellipsis 样式生效", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "" },
@@ -594,6 +641,73 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.find(".form-pro__group-header.is-static").exists()).toBe(true);
     // 恒展开：组内项仍渲染
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(1);
+  });
+
+  it("分组标题 titleStyle：颜色/字号等自定义样式内联生效", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "样式分组",
+          titleStyle: { color: "rgb(64, 158, 255)", fontSize: "15px" },
+        },
+        { prop: "a", label: "A" },
+      ],
+    });
+    await flushPromises();
+    const title = wrapper.find(".form-pro__group-title");
+    expect(title.exists()).toBe(true);
+    const style = title.attributes("style") || "";
+    expect(style).toContain("color: rgb(64, 158, 255)");
+    expect(style).toContain("font-size: 15px");
+  });
+
+  it("分组标题 titleBold：true → 700，false → 400，未设置 → 无内联字重（继承 CSS 600）", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        { group: true, title: "G-bold", titleBold: true },
+        { prop: "a", label: "A" },
+        { group: true, title: "G-normal", titleBold: false },
+        { prop: "b", label: "B" },
+        { group: true, title: "G-default" },
+        { prop: "c", label: "C" },
+      ],
+    });
+    await flushPromises();
+    const titles = wrapper.findAll(".form-pro__group-title");
+    expect(titles.length).toBe(3);
+    expect(titles[0].attributes("style")).toContain("font-weight: 700");
+    expect(titles[1].attributes("style")).toContain("font-weight: 400");
+    // 未设置 titleBold：无内联 font-weight（继承 CSS 默认 600）
+    expect(titles[2].attributes("style") || "").not.toContain("font-weight");
+  });
+
+  it("占位项：空对象 {} 渲染为空 el-col（无 ElFormItem），占据默认 span；{ span } 指定宽度", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      columns: 3, // 默认 span = 8
+      items: [
+        { prop: "a", label: "A" },
+        {}, // 占位：占一个默认 span(8)
+        { prop: "b", label: "B" },
+        { span: 16 }, // 占位：指定宽度 16
+        { prop: "c", label: "C" },
+      ],
+    });
+    await flushPromises();
+    // 字段项正常渲染（占位项不产生 ElFormItem）
+    const labels = wrapper
+      .findAllComponents({ name: "ElFormItem" })
+      .map((i) => i.props("label"));
+    expect(labels).toEqual(["A", "B", "C"]);
+    // el-col 共 5 个：3 字段 + 2 占位；占位 col 内部为空
+    const cols = wrapper.findAllComponents({ name: "ElCol" });
+    expect(cols.length).toBe(5);
+    expect(cols.map((c) => c.props("span"))).toEqual([8, 8, 8, 16, 8]);
+    expect(cols[1].findComponent({ name: "ElFormItem" }).exists()).toBe(false);
+    expect(cols[3].findComponent({ name: "ElFormItem" }).exists()).toBe(false);
   });
 
   it("暴露分组动态折叠方法：toggleGroup / collapseAllGroups / expandAllGroups / setGroupCollapsed", async () => {

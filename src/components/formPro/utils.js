@@ -19,6 +19,9 @@ import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqu
  *     group: true,            // 标记为分组头
  *     title: '基本信息',       // 分组标题
  *     fold: false,            // 是否默认折叠（true=收起）
+ *     titleBold: true,        // 分组标题是否加粗：true→700，false→400，未设置→默认 600
+ *     titleStyle: { color: '#409eff', fontSize: 15 },  // 分组标题自定义样式（颜色/字号等，
+ *                                                      //   与标题加粗叠加；fontWeight 优先于此处布尔推导）
  *     // —— 普通表单项 ——
  *     prop: 'username',       // 字段名（v-model 键，对应 el-form-item 的 prop）
  *     label: '用户名',         // el-form-item label
@@ -53,6 +56,10 @@ import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqu
  *   { slot: 'divider' }            // 引用外部具名插槽
  *   { render: (ctx, h) => h('div', '分隔') }  // JSX
  *   { span: 24 }  // 可带 span 控制占位宽度，默认 24（整行）
+ *
+ *   // 占位项（留白）：空对象 {} 即合法配置——无 prop/slot/render 时渲染为空 el-col，
+ *   //   占据一个默认 span（columns 推导或表单级 span），用于两个 item 之间留白；
+ *   //   { span: 8 } 可指定占位宽度。也受 visible / visibleMethod 控制（条件留白）。
  */
 
 /** 24 栅格总数 */
@@ -238,6 +245,26 @@ export const buildInitialData = (items = [], overrides = {}) => {
     base[item.prop] = deriveDefaultValue(item);
   }
   return { ...base, ...(overrides || {}) };
+};
+
+/**
+ * 解析分组标题的内联样式：
+ *   - titleStyle：自定义任意样式（颜色/字号等），原样展开；
+ *   - titleBold：true → fontWeight 700，false → 400，未设置 → 不加内联字重
+ *     （继承 CSS 默认 600）；
+ *   - titleStyle.fontWeight 显式指定时优先于 titleBold 的布尔推导。
+ * 纯函数：不修改入参，返回新样式对象。
+ *
+ * @param {Object} groupItem 分组头配置（{ title, titleBold, titleStyle, ... }）
+ * @returns {Object} 内联样式对象
+ */
+export const resolveGroupTitleStyle = (groupItem = {}) => {
+  const style = { ...(groupItem.titleStyle || {}) };
+  if (style.fontWeight == null) {
+    if (groupItem.titleBold === true) style.fontWeight = 700;
+    else if (groupItem.titleBold === false) style.fontWeight = 400;
+  }
+  return style;
 };
 
 /**

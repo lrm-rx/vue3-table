@@ -63,19 +63,30 @@ const formRef = ref();
 
 const items = ref([
   // —— 分组 1：触发源（输入 / 选择 / 切换）——
-  { group: true, title: "① 触发源：输入 / 选择 / 切换 → 请求接口" },
+  // 分组标题支持 titleBold（加粗）与 titleStyle（颜色/字号等自定义样式）
+  {
+    group: true,
+    title: "① 触发源：输入 / 选择 / 切换 → 请求接口",
+    titleBold: true,
+    titleStyle: { color: "#409eff", fontSize: 15 },
+  },
   {
     prop: "keyword",
     label: "服务关键词",
+    titleBold: true, // label 加粗
     tip: "输入即触发接口（400ms 防抖合并），实时刷新下方「候选服务」选项",
     itemRender: {
       name: "ElInput",
       props: { placeholder: "输入关键字过滤服务，如 pay", clearable: true },
     },
   },
+  // —— 占位项：空对象 {} 渲染为空 el-col，占据一个默认 span（columns=3 → 8），
+  //    在两个 item 之间留白；{ span: 16 } 可指定占位宽度 ——
+  {},
   {
     prop: "resourceGroup",
     label: "资源组",
+    titleBold: true, // label 加粗
     tip: "选择后调用接口（300~1500ms 随机耗时）；快速连续切换可观察防竞态：过期结果会被丢弃",
     itemRender: {
       name: "ElSelect",
@@ -95,7 +106,12 @@ const items = ref([
   },
 
   // —— 分组 2：联动目标（optionsSource 声明式异步选项）——
-  { group: true, title: "② 联动目标：optionsSource 声明式异步选项" },
+  {
+    group: true,
+    title: "② 联动目标：optionsSource 声明式异步选项",
+    titleBold: true,
+    titleStyle: { color: "#67c23a", fontSize: 15 },
+  },
   {
     prop: "service",
     label: "候选服务",
@@ -142,7 +158,12 @@ const items = ref([
   },
 
   // —— 分组 3：空值联动禁用 / 只读 ——
-  { group: true, title: "③ 空值联动：依赖项为空时禁用 / 只读" },
+  {
+    group: true,
+    title: "③ 空值联动：依赖项为空时禁用 / 只读",
+    titleBold: false, // 不加粗（默认 600，false → 400）
+    titleStyle: { color: "#e6a23c", fontSize: 13 },
+  },
   {
     prop: "contact",
     label: "联系人",

@@ -46,6 +46,7 @@ const items = ref([
 | `gutter` | Number/Array | `0` | el-row 间距 |
 | `onlyRequired` | Boolean | `false` | 仅显示必填项 |
 | `titleColon` | Boolean | `false` | 标题是否带冒号（`item.titleColon` 可覆盖） |
+| `titleBold` | Boolean | `false` | label 是否统一加粗（`item.titleBold` 可覆盖，项级优先级更高） |
 | `groupCollapsible` | Boolean | `true` | 分组默认是否可折叠（`group.collapsible` 可覆盖） |
 | `removeHiddenValues` | Boolean | `false` | 移除因 `visible`/`visibleMethod` 隐藏的字段值（见 §6） |
 | `autoFillDefaults` | Boolean | `true` | 按 items 自动补全缺失字段的默认值（见 §5） |
@@ -78,9 +79,13 @@ const items = ref([
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
 | `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示 |
 
-**分组头**：`{ group: true, title, fold, collapsible, allToggle, render, slot }`。
+**分组头**：`{ group: true, title, fold, collapsible, allToggle, render, slot, titleBold, titleStyle }`。
+- `titleBold`：标题是否加粗（`true` → 700，`false` → 400，未设置 → 默认 600）；
+- `titleStyle`：标题自定义内联样式（颜色/字号等，如 `{ color: '#409eff', fontSize: 15 }`），与 `titleBold` 叠加，`fontWeight` 显式指定时优先于 `titleBold`。
 
 **插入项**：无 `prop`，用 `slot` 或 `render` 在表单项之间插入任意内容（`span: 24` 占整行）。
+
+**占位项（留白）**：空对象 `{}` 即合法配置——无 `prop`/`slot`/`render` 时渲染为空 `el-col`，占据一个默认 span（`columns` 推导或表单级 `span`），用于两个 item 之间留白；`{ span: 8 }` 可指定占位宽度，也受 `visible` / `visibleMethod` 控制（条件留白）。
 
 **折叠触发节点**：`{ collapseNode: true, span }` 控制 `folding` 项的展开/收起。
 

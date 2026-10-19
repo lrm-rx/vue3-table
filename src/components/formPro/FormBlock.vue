@@ -11,6 +11,7 @@ import {
   resolveVisibleEntries,
   resolveFieldOptions,
   resolveDynamicControlState,
+  resolveGroupTitleStyle,
 } from "./utils.js";
 import UploadPro from "./UploadPro.vue";
 
@@ -40,6 +41,8 @@ const props = defineProps({
   allCollapsed: { type: Boolean, default: false },
   // 表单级：标题是否带冒号（item.titleColon 可单独覆盖）
   titleColon: { type: Boolean, default: false },
+  // 表单级：label 是否统一加粗（item.titleBold 可单独覆盖，项级优先级更高）
+  titleBold: { type: Boolean, default: false },
   // 由父级传入的「字段 prop → 当前校验错误信息」映射，用于驱动 item.tip 填写提示的显隐
   fieldErrors: { type: Object, default: () => ({}) },
   // 由父级传入的「字段 prop → el-form-item 实例」映射，渲染时回填，供父级暴露
@@ -162,7 +165,8 @@ const renderTitleIcon = (icon) => {
 
 const buildLabel = (item) => {
   const colon = item.titleColon != null ? item.titleColon : props.titleColon;
-  const bold = !!item.titleBold;
+  // label 加粗：项级 titleBold 显式设置时优先（true/false 均生效），否则跟随表单级 titleBold
+  const bold = item.titleBold != null ? !!item.titleBold : props.titleBold;
   const ellipsis =
     item.titleOverflow === "ellipsis" || item.titleOverflow === true;
   const prefixNode = withTip(
@@ -364,7 +368,10 @@ const render = () => {
               {props.collapsed ? <ArrowRight /> : <ArrowDown />}
             </ElIcon>
           ) : null}
-          <span class="form-pro__group-title">{group.title}</span>
+          {/* 分组标题：titleStyle 自定义颜色/字号等；titleBold 控制加粗（true→700 / false→400 / 默认继承 600） */}
+          <span class="form-pro__group-title" style={resolveGroupTitleStyle(group)}>
+            {group.title}
+          </span>
           {slots[`group-${group.title}`]
             ? slots[`group-${group.title}`]({ group, collapsed: props.collapsed })
             : null}

@@ -16,6 +16,7 @@ import {
   deriveDefaultValue,
   buildInitialData,
   resolveFieldOptions,
+  resolveGroupTitleStyle,
   addItems,
   removeItems,
   updateItems,
@@ -34,6 +35,50 @@ describe("formPro utils", () => {
       expect(isInsertItem(f)).toBe(false);
       expect(isInsertItem(ins)).toBe(true);
       expect(isFieldItem(ins)).toBe(false);
+    });
+  });
+
+  describe("resolveGroupTitleStyle（分组标题样式）", () => {
+    it("空配置返回空样式对象（不加内联字重，继承 CSS 默认 600）", () => {
+      expect(resolveGroupTitleStyle({})).toEqual({});
+      expect(resolveGroupTitleStyle({ title: "G" })).toEqual({});
+      expect(resolveGroupTitleStyle()).toEqual({});
+    });
+
+    it("titleBold: true → fontWeight 700；false → 400", () => {
+      expect(resolveGroupTitleStyle({ titleBold: true })).toEqual({ fontWeight: 700 });
+      expect(resolveGroupTitleStyle({ titleBold: false })).toEqual({ fontWeight: 400 });
+    });
+
+    it("titleStyle 原样展开（颜色/字号等自定义样式）", () => {
+      expect(
+        resolveGroupTitleStyle({ titleStyle: { color: "#409eff", fontSize: 15 } }),
+      ).toEqual({ color: "#409eff", fontSize: 15 });
+    });
+
+    it("titleBold 与 titleStyle 叠加", () => {
+      expect(
+        resolveGroupTitleStyle({
+          titleBold: true,
+          titleStyle: { color: "red" },
+        }),
+      ).toEqual({ color: "red", fontWeight: 700 });
+    });
+
+    it("titleStyle.fontWeight 显式指定时优先于 titleBold 推导", () => {
+      expect(
+        resolveGroupTitleStyle({ titleBold: true, titleStyle: { fontWeight: 500 } }),
+      ).toEqual({ fontWeight: 500 });
+      expect(
+        resolveGroupTitleStyle({ titleBold: false, titleStyle: { fontWeight: 900 } }),
+      ).toEqual({ fontWeight: 900 });
+    });
+
+    it("不修改入参（纯函数）", () => {
+      const src = { titleBold: true, titleStyle: { color: "red" } };
+      resolveGroupTitleStyle(src);
+      expect(src.titleStyle).toEqual({ color: "red" });
+      expect("fontWeight" in src.titleStyle).toBe(false);
     });
   });
 

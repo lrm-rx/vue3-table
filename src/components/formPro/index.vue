@@ -63,6 +63,8 @@ const props = defineProps({
   onlyRequired: { type: Boolean, default: false },
   // 表单级：标题是否带冒号（item.titleColon 可单独覆盖）
   titleColon: { type: Boolean, default: false },
+  // 表单级：label 是否统一加粗（item.titleBold 可单独覆盖，项级优先级更高）
+  titleBold: { type: Boolean, default: false },
   // 表单级：分组是否显示折叠/展开按钮（group.collapsible 可单独覆盖）；默认 true
   groupCollapsible: { type: Boolean, default: true },
   // 提交时是否移除「因 visible / visibleMethod 隐藏」的字段值（默认 false 不移除）。
@@ -336,7 +338,7 @@ watch(
 const getSubmitData = () => buildSubmitData(formData);
 
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
-const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border"];
+const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border"];
 const attrs = useAttrs();
 const slots = useSlots();
 const formPropsComputed = computed(() => {
@@ -529,6 +531,7 @@ defineExpose(ownExposed);
       :form-span="formSpanComputed"
       :gutter="gutter"
       :title-colon="titleColon"
+      :title-bold="titleBold"
       :field-errors="fieldErrors"
       :border="border"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
