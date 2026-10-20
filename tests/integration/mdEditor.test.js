@@ -560,27 +560,32 @@ describe('MdEditor —— 自定义目录面板', () => {
     expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
   })
 
-  // 点击锁定：点击目录项后抑制 scroll-spy，直到滚动到达目标或用户手动滚动。
-  // 修复文档末尾标题滚不到判定线时，高亮被 spy 抢回（点一次不亮、点两次才亮）的问题。
+  // 点击锁定：点击目录项后抑制 scroll-spy，直到「滚动到达目标位置且滚动事件静止」
+  // 或用户手动滚动。锁定释放基于静止检测（每 120ms 轮询，要求静止 ≥150ms），
+  // 防止平滑滚动收尾抖动、编辑器同步滚动回弹期间 spy 按途中位置判定造成旧高亮闪烁。
   // jsdom 中标题 offsetTop 均为 0 → 点击锁定目标 top=0；
   // 手动把预览容器 scrollTop 拨到 500 模拟「未到达目标」。
   // 注意：组件在 document 上捕获监听 wheel/scroll，分离 DOM 树中元素事件不经过 document，
   // 因此这些用例挂载到 document.body（事件在预览元素上真实派发），结束后卸载避免跨用例监听干扰。
   const flushScrollSpy = () => new Promise((r) => setTimeout(r, 50))
+  // 等待越过锁定静止释放窗口（120ms 轮询 + 150ms 静止要求，留出裕量）
+  const flushSettle = () => new Promise((r) => setTimeout(r, 400))
   const mountAttachedEditor = (props = {}) =>
     mount(MdEditor, { props: { modelValue: '', ...props }, attachTo: document.body })
 
   it('点击后未滚动到目标位置时，scroll-spy 不抢回点击高亮', async () => {
     const wrapper = mountAttachedEditor({ catalog: true })
     await emitCatalog(wrapper)
+    // 锁定以「点击时的距离」为基准，因此先把起始位置拨到 500（距目标 500），
+    // 之后再维持该位置（距离未由近转远），模拟「自动滚动尚未到达目标」
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    previewEl.scrollTop = 500
     await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
     expect(wrapper.findAll('.base-md-catalog__item')[0].classes()).toContain(
       'base-md-catalog__item--active',
     )
 
-    // 未到达目标（scrollTop=500 ≠ 锁定目标 0）时触发滚动事件
-    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
-    previewEl.scrollTop = 500
+    // 未到达目标（scrollTop=500 ≠ 锁定目标 0）且距离未拉大时触发滚动事件
     previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
     await flushScrollSpy()
 
@@ -591,13 +596,36 @@ describe('MdEditor —— 自定义目录面板', () => {
     wrapper.unmount()
   })
 
+  // 回归：拖拽滚动条不会触发 wheel/touchmove/mousedown/keydown 中的编辑器区域内事件，
+  // 旧实现会一直锁定到兜底超时，期间高亮不跟随；新实现按「距目标由近转远」判定为用户滚离。
+  it('位置远离滚动目标（如拖拽滚动条）时，解除锁定恢复 scroll-spy', async () => {
+    const wrapper = mountAttachedEditor({ catalog: true })
+    await emitCatalog(wrapper)
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    // 点击前位置 200 → 锁定基准距离 200
+    previewEl.scrollTop = 200
+    await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
+
+    // 位置被移到 500（距目标由 200 变为 500，超过容差 40）→ 判定用户主动滚离
+    previewEl.scrollTop = 500
+    previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
+    await flushScrollSpy()
+
+    // spy 接管：jsdom 中所有标题 top=0 → 激活最后一项
+    const items = wrapper.findAll('.base-md-catalog__item')
+    expect(items[3].classes()).toContain('base-md-catalog__item--active')
+    expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
+    wrapper.unmount()
+  })
+
   it('用户在编辑器区域手动滚动（wheel）后，解除锁定恢复 scroll-spy', async () => {
     const wrapper = mountAttachedEditor({ catalog: true })
     await emitCatalog(wrapper)
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    // 点击前位置与之后保持一致（距离未由近转远），确保解除锁定只可能来自 wheel 信号
+    previewEl.scrollTop = 500
     await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
 
-    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
-    previewEl.scrollTop = 500
     // 用户在预览区滚轮滚动 → 解除锁定
     previewEl.dispatchEvent(new Event('wheel', { bubbles: true }))
     previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
@@ -613,10 +641,11 @@ describe('MdEditor —— 自定义目录面板', () => {
   it('目录面板自身的滚轮事件不解除点击锁定', async () => {
     const wrapper = mountAttachedEditor({ catalog: true })
     await emitCatalog(wrapper)
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    // 点击前位置与之后保持一致（距离未由近转远），确保锁定保持只可能因为面板滚轮被忽略
+    previewEl.scrollTop = 500
     await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
 
-    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
-    previewEl.scrollTop = 500
     // 滚轮发生在目录面板（编辑器区域外）→ 锁定保持
     wrapper.find('.base-md-catalog').element.dispatchEvent(new Event('wheel', { bubbles: true }))
     previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
@@ -628,15 +657,16 @@ describe('MdEditor —— 自定义目录面板', () => {
     wrapper.unmount()
   })
 
-  it('点击后滚动到达目标位置，解除锁定恢复 scroll-spy', async () => {
+  it('点击后滚动到达目标位置，待滚动静止后解除锁定恢复 scroll-spy', async () => {
     const wrapper = mountAttachedEditor({ catalog: true })
     await emitCatalog(wrapper)
     await wrapper.findAll('.base-md-catalog__item')[0].trigger('click')
 
-    // scrollTop 保持 0 = 锁定目标 → 触发滚动事件即解除锁定并 spy
+    // scrollTop 保持 0 = 锁定目标 → 触发滚动事件即视为到达，
+    // 但需等滚动事件静止（静止释放窗口）后才解除锁定并 spy
     const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
     previewEl.dispatchEvent(new Event('scroll', { bubbles: true }))
-    await flushScrollSpy()
+    await flushSettle()
 
     // spy 接管（jsdom 中所有标题 top=0 → 激活最后一项），证明锁定已解除
     const items = wrapper.findAll('.base-md-catalog__item')
@@ -723,6 +753,117 @@ describe('MdEditor —— 自定义目录面板', () => {
     const items = wrapper.findAll('.base-md-catalog__item')
     expect(items[1].classes()).toContain('base-md-catalog__item--active')
     expect(items[0].classes()).not.toContain('base-md-catalog__item--active')
+  })
+
+  // 回归：100vh 布局（BasicLayout 中 el-main overflow:auto）下页面滚动发生在内部容器，
+  // 旧实现假设滚动在 window（scrollingElement.scrollTop 恒为 0），导致只读模式点击目录无法定位。
+  it('只读模式点击目录项滚动实际滚动容器（内部 overflow 容器而非 window）', async () => {
+    // 模拟 100vh 布局：滚动发生在内部 overflow:auto 容器上，window 不滚动
+    const host = document.createElement('div')
+    host.style.overflowY = 'auto'
+    document.body.appendChild(host)
+    // jsdom 无布局，手动注入可滚动几何信息供 resolveScrollContainer 识别
+    Object.defineProperty(host, 'scrollHeight', { value: 3000, configurable: true })
+    Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true })
+    host.scrollTop = 400
+    const hostScrollTo = vi.fn()
+    host.scrollTo = hostScrollTo
+
+    const wrapper = mount(MdEditor, {
+      props: { modelValue: '', readOnly: true, catalog: true },
+      attachTo: host,
+    })
+    await emitPreviewCatalog(wrapper)
+    await wrapper.findAll('.base-md-catalog__item')[1].trigger('click')
+
+    // 目标 top = rect差(0) + 容器 scrollTop(400) - offsetTop(8) = 392，且滚动的是 host 而非 window
+    expect(hostScrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 392 }))
+    expect(wrapper.findAll('.base-md-catalog__item')[1].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    wrapper.unmount()
+    host.remove()
+  })
+
+  // 性能回归：滚动容器逐级探测需要 getComputedStyle（会触发样式/布局计算），
+  // 滚动跟随每帧执行不可接受；缓存后仅在内容变化 / 视口尺寸变化时重新探测。
+  it('只读模式滚动容器探测结果被缓存，滚动帧不重复探测', async () => {
+    const gcsSpy = vi.spyOn(window, 'getComputedStyle')
+    const wrapper = mountEditor({ readOnly: true, catalog: true })
+    await emitPreviewCatalog(wrapper)
+    await flushScrollSpy() // 首次 updateActive 已完成探测并写入缓存
+    gcsSpy.mockClear()
+
+    // 连续滚动帧复用缓存 → 不再调用 getComputedStyle
+    for (let i = 0; i < 3; i += 1) {
+      document.dispatchEvent(new Event('scroll'))
+      await flushScrollSpy()
+    }
+    expect(gcsSpy).not.toHaveBeenCalled()
+
+    // 标题变化（内容重新编译，溢出状态可能改变）→ 缓存失效 → 下次跟随重新探测
+    await emitPreviewCatalog(wrapper, [
+      { text: '一', level: 1, line: 0 },
+      { text: '二', level: 2, line: 2 },
+      { text: '二一', level: 3, line: 2 },
+    ])
+    await flushScrollSpy()
+    expect(gcsSpy).toHaveBeenCalled()
+
+    gcsSpy.mockRestore()
+  })
+
+  // 回归：无 overflow 祖先时回退到文档级滚动容器（window / scrollingElement）。
+  // 真实浏览器中根元素 rect 随滚动位移（rect.top ≈ -scrollTop），若仍用「rect 差 + scrollTop」
+  // 会重复计入一次 scrollTop（目标被放大为 rect.top + 2 * scrollTop），滚动定位到错误位置。
+  it('只读模式回退文档级滚动容器时，目标位置不重复计入 scrollTop', async () => {
+    const docEl = document.scrollingElement || document.documentElement
+    const originalRect = docEl.getBoundingClientRect
+    const originalScrollTo = docEl.scrollTo
+    const originalScrollTop = docEl.scrollTop
+    // jsdom 无布局，getBoundingClientRect 恒为 0；手工模拟真实浏览器「根元素 rect 随滚动上移」的语义
+    docEl.scrollTop = 300
+    docEl.getBoundingClientRect = () => ({ top: -300 })
+    const docScrollTo = vi.fn()
+    docEl.scrollTo = docScrollTo
+
+    try {
+      const wrapper = mountEditor({ readOnly: true, catalog: true })
+      await emitPreviewCatalog(wrapper)
+      await wrapper.findAll('.base-md-catalog__item')[1].trigger('click')
+
+      // 目标 top = 标题 rect.top(0) + 文档 scrollTop(300) - offsetTop(8) = 292
+      // （错误实现会得到 rect.top - (-300) + 300 = 600 → 592）
+      expect(docScrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 292 }))
+      wrapper.unmount()
+    } finally {
+      docEl.getBoundingClientRect = originalRect
+      docEl.scrollTo = originalScrollTo
+      docEl.scrollTop = originalScrollTop
+    }
+  })
+
+  // 回归：列表/引用内的嵌套标题没有 data-line 锚点（markdown-it 仅标注顶层块级 token），
+  // 旧实现命中「无元素、无 CM view」路径：不滚动、不上锁、只改高亮，
+  // 下一次滚动事件立刻把高亮抢回旧位置，表现为切换前的目录项闪一下。
+  it('嵌套标题（无 data-line）点击时回退到前置锚点滚动并上锁', async () => {
+    const wrapper = mountEditor({ catalog: true })
+    // 预览容器只有 data-line 0/2/3/5，line=4 的标题无精确锚点
+    await emitCatalog(wrapper, [
+      { text: '一', level: 1, line: 0 },
+      { text: '嵌套', level: 2, line: 4 },
+    ])
+    const previewEl = stub(wrapper).element.querySelector('.md-editor-preview-wrapper')
+    const previewScrollTo = vi.fn()
+    previewEl.scrollTo = previewScrollTo
+    await wrapper.findAll('.base-md-catalog__item')[1].trigger('click')
+
+    // 回退锚点：data-line ≤ 4 的最后一个 → data-line="3"（jsdom offsetTop=0 → top = max(0, 0-8) = 0）
+    expect(previewScrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }))
+    expect(wrapper.findAll('.base-md-catalog__item')[1].classes()).toContain(
+      'base-md-catalog__item--active',
+    )
+    wrapper.unmount()
   })
 
   it('开启目录时工具栏自动排除内置 catalog 按钮', () => {

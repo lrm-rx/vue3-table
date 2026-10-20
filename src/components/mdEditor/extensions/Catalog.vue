@@ -10,7 +10,8 @@
  *    （不依赖标题 id，规避重复标题文本导致的 id 冲突）
  *
  * 数据来源：父组件通过 MdEditor / MdPreview（只读）的 onGetCatalog 事件拿到扁平标题列表后传入。
- * 只读模式（previewOnly）宿主为 MdPreview：无独立滚动容器，滚动跟随与点击定位基于页面滚动。
+ * 只读模式（previewOnly）宿主为 MdPreview：自身无滚动容器，滚动跟随与点击定位
+ * 自动解析实际滚动容器（window 或布局层级的内部 overflow 容器）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { buildCatalogTree, pickActiveHeadingIndex } from '../utils'
@@ -36,7 +37,7 @@ const props = defineProps({
     type: String,
     default: 'light',
   },
-  /** 只读模式（宿主为 MdPreview）：无独立滚动容器，滚动跟随与点击定位基于页面滚动（window） */
+  /** 只读模式（宿主为 MdPreview）：无独立滚动容器，滚动跟随与点击定位基于实际滚动容器（window 或内部容器） */
   previewOnly: {
     type: Boolean,
     default: false,
@@ -117,6 +118,62 @@ const offsetTopWithin = (el, container) => {
   return top
 }
 
+/** 滚动容器缓存：避免每个滚动帧逐级 getComputedStyle 探测（会强制样式 / 布局计算） */
+let scrollContainerCache = null
+
+/** 清空滚动容器缓存：内容增删、视口尺寸变化等可能改变「哪个祖先才是滚动容器」时调用 */
+const invalidateScrollContainer = () => {
+  scrollContainerCache = null
+}
+
+/**
+ * 只读模式：解析预览内容实际所在的滚动容器。
+ * MdPreview 自身无滚动（overflow: visible），滚动发生在祖先上 —— 可能是 window
+ * （scrollingElement），也可能是布局层级的内部容器（如 100vh 布局中 overflow:auto
+ * 的 <el-main>）。假设「页面滚在 window 上」会导致点击定位与 spy 全部失效
+ * （scrollingElement.scrollTop 恒为 0）。
+ * 从预览根向上找第一个 overflow-y 为 auto/scroll 且内容溢出的祖先，找不到回退 scrollingElement。
+ * 结果按实例缓存（滚动帧只读缓存），force=true 时强制重新探测（点击定位需绝对准确）。
+ */
+const resolveScrollContainer = (force = false) => {
+  // 缓存命中：元素仍在文档中即复用（预览容器随 preview 开关 / 主题切换重建，脱离文档则失效）
+  if (!force && scrollContainerCache?.isConnected) return scrollContainerCache
+  const docEl = document.scrollingElement || document.documentElement
+  const previewEl = resolvePreviewEl()
+  // 预览尚未就绪：此时探测只会得到兜底结果，不写缓存，避免把兜底结果固化到后续滚动帧
+  if (!previewEl) return docEl
+  let el = previewEl
+  let found = docEl
+  while (el && el !== docEl && el !== document.body) {
+    const overflowY = getComputedStyle(el).overflowY
+    if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+      found = el
+      break
+    }
+    el = el.parentElement
+  }
+  scrollContainerCache = found
+  return found
+}
+
+/** 是否为文档级滚动容器（window / scrollingElement） */
+const isDocumentScroller = (el) => {
+  const docEl = document.scrollingElement || document.documentElement
+  return el === docEl || el === document.documentElement || el === document.body
+}
+
+/**
+ * 元素相对滚动容器内容顶部的距离。
+ * - 内部 overflow 容器：容器自身 rect 相对视口固定，用「rect 差 + scrollTop」；
+ * - window / document（scrollingElement）：根元素 rect 随滚动位移（rect.top ≈ -scrollTop），
+ *   再取 rect 差会重复计入一次 scrollTop（目标位置被放大为 rect.top + 2 * scrollTop），
+ *   必须改用「rect.top + scrollTop」。
+ */
+const offsetTopWithinContainer = (el, container) =>
+  isDocumentScroller(container)
+    ? el.getBoundingClientRect().top + (container.scrollTop || 0)
+    : el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+
 /** 平滑滚动（jsdom 等环境无 scrollTo 实现时退化为直接赋值 scrollTop） */
 const smoothScrollTo = (el, top) => {
   if (typeof el.scrollTo === 'function') {
@@ -147,17 +204,17 @@ const collectHeadingTops = () => {
 
   const previewEl = resolvePreviewEl()
   if (previewEl) {
-    // 只读模式：无独立滚动容器，滚动发生在页面（window）上，
-    // 用 getBoundingClientRect + scrollY 计算标题的文档绝对位置
+    // 只读模式：无独立滚动容器，滚动发生在实际滚动容器（window 或内部容器）上，
+    // 用 rect 差 + 容器 scrollTop 计算标题在容器内容中的绝对位置
     if (props.previewOnly) {
-      const scrollTop = window.scrollY || document.documentElement?.scrollTop || 0
+      const container = resolveScrollContainer()
       const pairs = []
       list.forEach((h, i) => {
         if (!passDepth(h)) return
         const el = previewEl.querySelector(`[data-line="${h.line}"]`)
-        if (el) pairs.push({ index: i, top: el.getBoundingClientRect().top + scrollTop })
+        if (el) pairs.push({ index: i, top: offsetTopWithinContainer(el, container) })
       })
-      return { pairs, scrollTop }
+      return { pairs, scrollTop: container.scrollTop }
     }
 
     const pairs = []
@@ -217,19 +274,24 @@ const onScrollCapture = (e) => {
   // 否则 updateActive 末尾的 ensureActiveVisible 会把目录滚动拉回激活项，
   // 导致目录滚不到底部、末尾标题显示不全
   if (e?.target?.closest?.('.base-md-catalog')) return
+  if (clickLock) {
+    const dist = Math.abs(clickLock.container.scrollTop - clickLock.top)
+    // 距目标「由近转远」超过容差 → 只可能是用户主动滚离（自动滚动只会单调接近目标，
+    // 且不产生过冲）。覆盖拖拽滚动条、鼠标中键、滚动条点击等未触发上述事件的交互。
+    if (dist > clickLock.minDistance + LOCK_AWAY_TOLERANCE) {
+      clickLock = null
+      clearTimeout(settleTimer)
+    } else {
+      // 滚动未静止：记录最近距离并刷新 lastEvent，锁定延续（含自动滚动收尾抖动、
+      // 编辑器同步滚动的延迟回弹），由 checkSettle 在静止后决定是否交还 spy
+      clickLock.minDistance = Math.min(clickLock.minDistance, dist)
+      clickLock.lastEvent = performance.now()
+      return
+    }
+  }
   if (rafId) return
   rafId = raf(() => {
     rafId = 0
-    // 点击锁定期间：
-    // - 滚动到达目标位置 → 解除锁定并正常 spy（此时 spy 结果与点击项一致，无跳变）
-    // - 未到达（自动滚动进行中，或文档末尾标题滚不到判定线）→ 跳过本次 spy，保住点击高亮
-    if (clickLock) {
-      if (Math.abs(clickLock.container.scrollTop - clickLock.top) <= 2) {
-        clickLock = null
-      } else {
-        return
-      }
-    }
     updateActive()
   })
 }
@@ -237,14 +299,55 @@ const onScrollCapture = (e) => {
 // ---------- 点击定位 ----------
 
 /**
- * 点击锁定：{ container, top } | null。
- * 点击目录项后抑制 scroll-spy，直到：
- * 1) 滚动到达目标位置（恢复自动跟随）
- * 2) 用户手动操作编辑器区域滚动（wheel/touchmove/mousedown/keydown，点击高亮让位）
- * 修复文档末尾标题无法滚到判定线时，高亮被 spy 抢回的问题
- * （表现为点一次高亮闪一下被还原、点两次才稳定高亮，全屏高视口下更明显）
+ * 点击锁定：{ container, top, minDistance, lastEvent, startedAt } | null。
+ * 点击目录项后抑制 scroll-spy，直到满足以下任一条件：
+ * 1. 滚动到达目标位置且滚动事件已静止（LOCK_QUIET_MS）——平滑滚动收尾抖动、
+ *    编辑器同步滚动的延迟回弹期间位置仍在变化，此时按「未到达目标时的旧位置」
+ *    判定会让切换前的旧高亮闪现，必须等真正静止后再交还 spy（正常路径）；
+ * 2. 用户手动操作编辑器区域滚动（wheel/touchmove/mousedown/keydown，点击高亮让位）；
+ * 3. 距目标「由近转远」超过 LOCK_AWAY_TOLERANCE——覆盖拖拽滚动条等未触及以上事件的
+ *    手动滚动（自动滚动只会单调接近目标，不会产生过冲）；
+ * 4. LOCK_TIMEOUT_MS 兜底超时，避免异常情况下锁定悬挂。
+ * 文档末尾标题滚不到判定线（不满足「到达」）时保持锁定，点击高亮不被抢回。
  */
 let clickLock = null
+const LOCK_QUIET_MS = 150
+const LOCK_CHECK_INTERVAL = 120
+const LOCK_TIMEOUT_MS = 4000
+/** 锁定期间距目标由近转远的判定容差（px）：仅自动滚动的收尾抖动远小于该值 */
+const LOCK_AWAY_TOLERANCE = 40
+let settleTimer = 0
+
+const armSettleCheck = () => {
+  clearTimeout(settleTimer)
+  settleTimer = setTimeout(checkSettle, LOCK_CHECK_INTERVAL)
+}
+
+const checkSettle = () => {
+  if (!clickLock) return
+  const now = performance.now()
+  if (now - clickLock.startedAt > LOCK_TIMEOUT_MS) {
+    // 兜底超时：仅解锁，不在滚动中途运行 spy（避免按途中位置判定造成闪烁）
+    clickLock = null
+    return
+  }
+  const arrived = Math.abs(clickLock.container.scrollTop - clickLock.top) <= 2
+  if (arrived && now - clickLock.lastEvent >= LOCK_QUIET_MS) {
+    // 已到达目标且滚动静止：解锁并按最终位置刷新高亮
+    clickLock = null
+    updateActive()
+    return
+  }
+  armSettleCheck()
+}
+
+/** 创建点击锁定并启动静止检测 */
+const createClickLock = (container, top) => {
+  const now = performance.now()
+  const minDistance = Math.abs(container.scrollTop - top)
+  clickLock = { container, top, minDistance, lastEvent: now, startedAt: now }
+  armSettleCheck()
+}
 
 /** 用户手动滚动信号：解除点击锁定（仅当事件发生在编辑器区域内） */
 const releaseClickLock = (e) => {
@@ -252,25 +355,40 @@ const releaseClickLock = (e) => {
   const root = getEditorEl()
   if (root && e.target && root.contains(e.target)) {
     clickLock = null
+    clearTimeout(settleTimer)
   }
 }
 
 const USER_SCROLL_EVENTS = ['wheel', 'touchmove', 'mousedown', 'keydown']
 
-/** 点击目录项：滚动到对应标题（预览优先，编辑区兜底），并立即置为激活 */
-const scrollToHeading = (item) => {
-  activeIndex.value = item.index
+/**
+ * 解析标题滚动锚点：优先精确匹配 data-line；
+ * 列表/引用内的嵌套标题没有 data-line 属性（markdown-it 仅给顶层块级 token 标注），
+ * 回退到行号不大于目标行的最近锚点。找不到锚点返回 null（此时不滚动也不改高亮，
+ * 否则只改高亮不滚动，下一次滚动事件会立刻把高亮抢回旧位置造成闪烁）。
+ */
+const resolveAnchorEl = (previewEl, line) => {
+  const exact = previewEl.querySelector(`[data-line="${line}"]`)
+  if (exact) return exact
+  let anchor = null
+  previewEl.querySelectorAll('[data-line]').forEach((el) => {
+    if (Number(el.getAttribute('data-line')) <= line) anchor = el
+  })
+  return anchor
+}
 
-  // 只读模式：滚动页面（scrollingElement）到标题的文档绝对位置
+/** 点击目录项：滚动到对应标题（预览优先，编辑区兜底），确认能定位后才置为激活 */
+const scrollToHeading = (item) => {
+  // 只读模式：滚动实际滚动容器（window 或内部 overflow 容器）到标题位置
   if (props.previewOnly) {
-    const el = resolvePreviewEl()?.querySelector(`[data-line="${item.line}"]`)
+    const previewEl = resolvePreviewEl()
+    const el = previewEl && resolveAnchorEl(previewEl, item.line)
     if (el) {
-      const top = Math.max(
-        0,
-        el.getBoundingClientRect().top + (window.scrollY || 0) - props.offsetTop,
-      )
-      const container = document.scrollingElement || document.documentElement
-      clickLock = { container, top }
+      // 点击定位必须绝对准确：强制重新探测容器，顺带刷新后续滚动帧的缓存
+      const container = resolveScrollContainer(true)
+      const top = Math.max(0, offsetTopWithinContainer(el, container) - props.offsetTop)
+      activeIndex.value = item.index
+      createClickLock(container, top)
       smoothScrollTo(container, top)
     }
     return
@@ -278,10 +396,11 @@ const scrollToHeading = (item) => {
 
   const previewEl = resolvePreviewEl()
   if (previewEl) {
-    const el = previewEl.querySelector(`[data-line="${item.line}"]`)
+    const el = resolveAnchorEl(previewEl, item.line)
     if (el) {
       const top = Math.max(0, offsetTopWithin(el, previewEl) - props.offsetTop)
-      clickLock = { container: previewEl, top }
+      activeIndex.value = item.index
+      createClickLock(previewEl, top)
       smoothScrollTo(previewEl, top)
       return
     }
@@ -293,7 +412,8 @@ const scrollToHeading = (item) => {
       0,
       view.lineBlockAt(view.state.doc.line(item.line + 1).from).top - props.offsetTop,
     )
-    clickLock = { container: view.scrollDOM, top }
+    activeIndex.value = item.index
+    createClickLock(view.scrollDOM, top)
     smoothScrollTo(view.scrollDOM, top)
   }
 }
@@ -306,22 +426,32 @@ onMounted(() => {
   document.addEventListener('scroll', onScrollCapture, true)
   // 用户手动滚动信号（同为捕获监听，覆盖容器重建场景）
   USER_SCROLL_EVENTS.forEach((t) => document.addEventListener(t, releaseClickLock, true))
+  // 视口尺寸变化可能改变「哪个祖先才是滚动容器」（如内容由溢出变为不溢出），缓存失效
+  window.addEventListener('resize', invalidateScrollContainer)
   nextTick(updateActive)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('scroll', onScrollCapture, true)
   USER_SCROLL_EVENTS.forEach((t) => document.removeEventListener(t, releaseClickLock, true))
+  window.removeEventListener('resize', invalidateScrollContainer)
   if (rafId) {
     caf(rafId)
     rafId = 0
   }
+  clearTimeout(settleTimer)
+  clickLock = null
+  scrollContainerCache = null
 })
 
 // 标题列表变化（编辑触发重新编译）后，等预览 DOM 更新再重算高亮
 watch(
   () => props.headings,
-  () => nextTick(updateActive),
+  () => {
+    // 内容变化可能改变滚动容器的溢出状态（内容变长/变短），缓存失效后重新探测
+    invalidateScrollContainer()
+    nextTick(updateActive)
+  },
 )
 </script>
 
