@@ -1005,6 +1005,30 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
   });
 });
 
+describe("TablePro 文本换行切换", () => {
+  it("默认省略模式：showOverflow=tooltip，根节点无 is--wrap-text", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+    });
+    expect(gridAttrs(wrapper).showOverflow).toBe("tooltip");
+    expect(wrapper.classes()).not.toContain("is--wrap-text");
+  });
+
+  it("toggleWrapText 后：showOverflow=false 且根节点添加 is--wrap-text（覆盖插槽/JSX 内容）", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      toolbarConfig: { wrapToggle: true },
+    });
+    wrapper.vm.toggleWrapText();
+    await flushPromises();
+    expect(wrapper.vm.wrapText).toBe(true);
+    expect(gridAttrs(wrapper).showOverflow).toBe(false);
+    expect(wrapper.classes()).toContain("is--wrap-text");
+  });
+});
+
 function propsNotMutated(cols) {
   return cols.every((c) => {
     if (c.slots !== undefined) return false;

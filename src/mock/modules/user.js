@@ -9,7 +9,11 @@ const generateUserList = (count = 20) => {
     list.push({
       id: i + 1,
       username: Random.cname(),
-      account: Random.word(5, 10),
+      // 长短混合：长账号用于验证账号列（el-button 插槽渲染）超出列宽时的省略号效果
+      account:
+        i % 3 === 0
+          ? `${Random.word(8, 12)}_${Random.word(6, 10)}_dev_${Random.integer(2020, 2025)}`
+          : Random.word(5, 10),
       email: Random.email(),
       phone: /^1[3-9]\d{9}$/,
       avatar: Random.image('100x100', Random.color(), '#FFF', Random.word(1, 2)),

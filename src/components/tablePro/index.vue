@@ -1773,7 +1773,7 @@ defineExpose({
 <template>
   <div
     class="table-pro"
-    :class="attrs.class"
+    :class="[attrs.class, { 'is--wrap-text': wrapText }]"
     :style="attrs.style"
   >
     <div class="table-pro__body">
@@ -1969,6 +1969,58 @@ $table-toolbar-gap: 12px;
         .vxe-sort--desc-btn.is--active {
           color: var(--el-color-primary, #409eff) !important;
         }
+      }
+    }
+  }
+
+  // ========== 省略模式：插槽 / JSX 内容超出时显示省略号 ==========
+  // vxe 的 text-overflow: ellipsis 只对 wrapper 内纯文本生效；
+  // 插槽 / JSX 渲染的根元素是原子内联盒（el-button、el-tag、inline-flex 容器等），
+  // 会整体溢出被直接裁剪而不出现省略号，需让根元素自身约束宽度并裁剪省略。
+  // 换行模式下排除（列级 showOverflow 可能残留 col--ellipsis，避免误裁剪多行内容）；
+  // vxe 列宽测量期（data-calc-col）排除，避免 max-width:100% 干扰 width:"auto" 列的测量。
+  &:not(.is--wrap-text) {
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active) > .vxe-cell > .vxe-cell--wrapper) {
+      & > * {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        // 内层具名元素（el-tag__content、JSX 内层 span 等）同样需要裁剪省略；
+        // 组件内部的内联盒子（如 el-button 内的 span）必须块级化，overflow/text-overflow 才生效
+        & > * {
+          display: inline-block;
+          min-width: 0;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        // 图标防压缩：内容被截断时 svg 图标保持原尺寸
+        & > svg {
+          flex-shrink: 0;
+        }
+      }
+    }
+  }
+
+  // ========== 文本换行模式 ==========
+  // vxe 在 table 级 showOverflow=false 时只会移除 col--ellipsis；
+  // 插槽 / JSX 渲染的内容常自带 white-space:nowrap（如 el-tag、el-button），
+  // 或列级 showOverflow 仍保留 col--ellipsis，导致换行不生效。
+  // 这里在换行模式下对单元格内容统一强制换行，确保自定义渲染同样生效。
+  &.is--wrap-text {
+    :deep(.vxe-body--column > .vxe-cell > .vxe-cell--wrapper) {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+
+      // 插槽 / JSX 渲染的根元素（el-tag、el-button、自定义容器等）
+      & > * {
+        white-space: normal !important;
       }
     }
   }

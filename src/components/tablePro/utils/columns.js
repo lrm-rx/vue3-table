@@ -22,7 +22,7 @@
  *     }),
  *   );
  */
-import { h, markRaw, cloneVNode } from "vue";
+import { h, markRaw, cloneVNode, isVNode, Fragment } from "vue";
 // Element Plus 编辑组件（列编辑 slots.edit 使用）
 import {
   ElInput,
@@ -128,6 +128,35 @@ export const forEachLeafColumn = (cols, fn) => {
 // slots 渲染错误兜底：捕获用户 render/headerRender/editRender 内部异常，避免整表崩塌
 const renderSlotError = (e) =>
   h('span', { style: 'color:#f56c6c' }, String(e && e.message ? e.message : e))
+
+// 省略号前置处理：将函数式 render 返回 vnode 树中「数组子级里的裸文本」包一层
+// .table-pro__cell-text。原因：flex 容器内的裸文本是匿名 flex 项，
+// CSS text-overflow 无法对其生效；包一层具名元素后由组件省略样式统一裁剪省略。
+// 注意：只处理 vnode（不触碰真实 DOM），避免与 Vue 的 patch 机制冲突。
+export const wrapBareTextVNodes = (node) => {
+  if (Array.isArray(node)) return node.map(wrapBareTextVNodes)
+  if (typeof node === 'number') {
+    return h('span', { class: 'table-pro__cell-text' }, String(node))
+  }
+  if (typeof node === 'string') {
+    // 保留纯空白（JSX 格式化产生的缩进/换行）
+    if (!node.trim()) return node
+    return h('span', { class: 'table-pro__cell-text' }, node)
+  }
+  if (
+    isVNode(node) &&
+    Array.isArray(node.children) &&
+    (typeof node.type === 'string' || node.type === Fragment)
+  ) {
+    // 不用 cloneVNode：Vue 3.5 的 cloneVNode 第三参 children 不生效，用 h 重建
+    return h(
+      node.type,
+      { ...node.props, key: node.key, ref: node.ref },
+      wrapBareTextVNodes(node.children),
+    )
+  }
+  return node
+}
 
 // 读取列自定义参数 key：取 col.params.defParamKey，兜底 field
 export const resolveParamKey = (col, fallbackField) => {
@@ -419,7 +448,7 @@ export const buildColumns = (config) => {
             columnIndex: scope.$columnIndex,
             $table: scope.$table,
           }
-          return userRender(params, h)
+          return wrapBareTextVNodes(userRender(params, h))
         } catch (e) {
           return renderSlotError(e)
         }

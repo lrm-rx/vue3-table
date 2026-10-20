@@ -5,6 +5,7 @@ import {
   findColumnByField,
   forEachLeafColumn,
   resolveParamKey,
+  wrapBareTextVNodes,
 } from "../../src/components/tablePro/utils/columns.js";
 
 // 与 index.vue 中 mergedColumns computed 传参一致
@@ -177,6 +178,50 @@ describe("render / headerRender → slots", () => {
     const vnode = result[0].slots.default({ row: {}, cellValue: 1 });
     expect(vnode.type).toBe("span");
     expect(vnode.children).toBe("boom");
+  });
+
+  it("函数式 render 返回的数组子级裸文本会被包一层 .table-pro__cell-text", () => {
+    const { result } = run([
+      {
+        field: "email",
+        render: (params, hh) =>
+          hh("span", { style: "display:inline-flex" }, [
+            hh("svg"),
+            `${params.cellValue}`,
+          ]),
+      },
+    ]);
+    const vnode = result[0].slots.default({
+      row: { email: "a@b.com" },
+      cellValue: "a@b.com",
+    });
+    expect(vnode.type).toBe("span");
+    // 裸文本被包为具名元素，svg 保持原样
+    expect(vnode.children[0].type).toBe("svg");
+    expect(vnode.children[1].type).toBe("span");
+    expect(vnode.children[1].props.class).toBe("table-pro__cell-text");
+    expect(vnode.children[1].children).toBe("a@b.com");
+  });
+
+  it("元素唯一文本子级（非数组）不额外包裹", () => {
+    const { result } = run([
+      { field: "a", render: (p, hh) => hh("span", null, String(p.cellValue)) },
+    ]);
+    const vnode = result[0].slots.default({
+      row: { a: "x" },
+      cellValue: "x",
+    });
+    expect(vnode.type).toBe("span");
+    expect(vnode.children).toBe("x");
+  });
+
+  it("wrapBareTextVNodes：顶层裸文本/数字包裹，纯空白保留", () => {
+    const nodes = wrapBareTextVNodes(["abc", "  ", 12]);
+    expect(nodes[0].props.class).toBe("table-pro__cell-text");
+    expect(nodes[0].children).toBe("abc");
+    expect(nodes[1]).toBe("  ");
+    expect(nodes[2].props.class).toBe("table-pro__cell-text");
+    expect(nodes[2].children).toBe("12");
   });
 
   it("字符串 render 命中外部具名插槽 → slots.default 引用插槽名", () => {
