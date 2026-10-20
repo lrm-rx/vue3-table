@@ -17,6 +17,8 @@ import {
   buildInitialData,
   resolveFieldOptions,
   resolveGroupTitleStyle,
+  resolveVisualRowIndexes,
+  collectTipRows,
   addItems,
   removeItems,
   updateItems,
@@ -566,6 +568,86 @@ describe("formPro utils", () => {
       expect(updateItems(items, "a", null)).toEqual([]);
       expect(updateItems(items, null, { x: 1 })).toEqual([]);
       expect(items[1].label).toBe("a");
+    });
+  });
+
+  // ===================== 紧凑模式（compact）：可视行划分 =====================
+  describe("resolveVisualRowIndexes（可视行划分）", () => {
+    it("按累计 span ≤ 24 划分行：累计满行后另起新行", () => {
+      const entries = [{ span: 8 }, { span: 8 }, { span: 8 }, { span: 8 }];
+      expect(resolveVisualRowIndexes(entries)).toEqual([0, 0, 0, 1]);
+    });
+    it("行尾恰好占满 24：下一项换新行（与 el-row 换行规则一致）", () => {
+      const entries = [{ span: 12 }, { span: 12 }, { span: 12 }];
+      expect(resolveVisualRowIndexes(entries)).toEqual([0, 0, 1]);
+    });
+    it("span=24 的整行项独占一行", () => {
+      const entries = [{ span: 24 }, { span: 24 }];
+      expect(resolveVisualRowIndexes(entries)).toEqual([0, 1]);
+    });
+    it("跨多行连续划分（行号单调递增）", () => {
+      const entries = [
+        { span: 8 },
+        { span: 8 },
+        { span: 8 },
+        { span: 8 },
+        { span: 8 },
+        { span: 8 },
+        { span: 8 },
+      ];
+      expect(resolveVisualRowIndexes(entries)).toEqual([0, 0, 0, 1, 1, 1, 2]);
+    });
+    it("span 非法（0 / undefined）：按整行 24 兜底", () => {
+      expect(resolveVisualRowIndexes([{ span: 0 }, { span: 12 }])).toEqual([0, 1]);
+      expect(resolveVisualRowIndexes([{}, {}])).toEqual([0, 1]);
+    });
+    it("空条目：返回空数组；自定义栅格数生效", () => {
+      expect(resolveVisualRowIndexes([])).toEqual([]);
+      expect(
+        resolveVisualRowIndexes([{ span: 3 }, { span: 3 }, { span: 3 }, { span: 3 }], 9),
+      ).toEqual([0, 0, 0, 1]);
+    });
+  });
+
+  describe("collectTipRows（含 tip 可视行集合）", () => {
+    const rows = (entries) => resolveVisualRowIndexes(entries);
+    it("收集配置了非空 tip 的字段项所在行", () => {
+      const entries = [
+        { kind: "field", item: { tip: "提示" }, span: 8 },
+        { kind: "field", item: {}, span: 8 },
+        { kind: "field", item: { tip: "" }, span: 8 },
+      ];
+      expect(collectTipRows(entries, rows(entries))).toEqual(new Set([0]));
+    });
+    it("空串 / null / undefined tip 等同未配置", () => {
+      const entries = [
+        { kind: "field", item: { tip: "" }, span: 12 },
+        { kind: "field", item: { tip: null }, span: 12 },
+        { kind: "field", item: {}, span: 12 },
+      ];
+      expect(collectTipRows(entries, rows(entries)).size).toBe(0);
+    });
+    it("插入项 / 折叠节点等非 field 条目不计入", () => {
+      const entries = [
+        { kind: "insert", item: { tip: "非字段项" }, span: 24 },
+        { kind: "field", item: { tip: "提示" }, span: 12 },
+        { kind: "field", item: {}, span: 12 },
+      ];
+      expect(collectTipRows(entries, rows(entries))).toEqual(new Set([1]));
+    });
+    it("不同行的 tip 分别收集；同行多项 tip 去重", () => {
+      const entries = [
+        { kind: "field", item: { tip: "A" }, span: 8 },
+        { kind: "field", item: { tip: "B" }, span: 8 },
+        { kind: "field", item: {}, span: 8 },
+        { kind: "field", item: { tip: "C" }, span: 24 },
+      ];
+      expect(collectTipRows(entries, rows(entries))).toEqual(new Set([0, 1]));
+    });
+    it("entries 与 rowIndexes 等长对齐（含空数组安全）", () => {
+      expect(collectTipRows([], [])).toEqual(new Set());
+      const entries = [{ kind: "field", item: { tip: "x" }, span: 24 }];
+      expect(collectTipRows(entries, [0])).toEqual(new Set([0]));
     });
   });
 });

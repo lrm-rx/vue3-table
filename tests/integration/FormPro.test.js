@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { ref, reactive, h } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import ElementPlus from "element-plus";
@@ -1573,6 +1573,357 @@ describe("FormPro 配置式表单", () => {
       await flushPromises();
       expect(fetch).toHaveBeenCalledTimes(2); // 合并为一次
       expect(fetch.mock.calls[1][0].deps).toEqual(["abc"]);
+    });
+  });
+
+  // ===================== 紧凑模式 compact =====================
+  describe("紧凑模式 compact", () => {
+    // jsdom 环境说明：Element Plus 的真实校验链路在本环境无法完成（validateState 卡在
+    // validating、不渲染 .el-form-item__error，裸 ElForm 亦如此，与 FormPro 无关）。
+    // 因此错误态统一从 @validate 事件 seam 驱动（$emit 到 ElForm）——这正是 FormPro
+    // 消费校验结果的唯一入口；el-form-item 的 is-error 状态通过 getFormItem 暴露的
+    // validateState / validateMessage 直接构造，与 EP onValidationFailed 的真实时序一致
+    // （先置 error 态、再 emit validate(prop, false, message)）。
+    const compactItems = () => [
+      { prop: "name", label: "姓名", span: 8, itemRender: { name: "ElInput" } },
+      { prop: "age", label: "年龄", span: 8, itemRender: { name: "ElInput" } },
+      { prop: "city", label: "城市", span: 8, itemRender: { name: "ElInput" }, tip: "请选择常住城市" },
+      { prop: "phone", label: "电话", span: 8, itemRender: { name: "ElInput" } },
+    ];
+
+    const fail = (wrapper, prop, msg) =>
+      wrapper
+        .findComponent({ name: "ElForm" })
+        .vm.$emit("validate", prop, false, msg || `${prop} 必填`);
+    const pass = (wrapper, prop) =>
+      wrapper.findComponent({ name: "ElForm" }).vm.$emit("validate", prop, true, "");
+    const popper = () => document.body.querySelector(".form-pro__error-popper");
+    const popperVisible = () => {
+      const el = popper();
+      return !!el && el.style.display !== "none";
+    };
+
+    afterEach(() => {
+      // 清理 teleport 到 body 的 popper 残留，避免跨用例串扰
+      document.querySelectorAll(".form-pro__error-popper").forEach((el) => el.remove());
+    });
+
+    it("默认关闭：无 form-pro--compact 根类、无间隔收紧类、校验失败不渲染错误 tooltip", async () => {
+      const wrapper = mountFormPro({ modelValue: {}, items: compactItems() });
+      await flushPromises();
+      expect(wrapper.find(".form-pro--compact").exists()).toBe(false);
+      expect(wrapper.findAll(".form-pro__col--tight").length).toBe(0);
+      fail(wrapper, "name");
+      await flushPromises();
+      expect(popper()).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("compact：无 tip 行的项带 form-pro__col--tight；含 tip 行整行不加（含非 tip 邻项）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        compact: true,
+        items: compactItems(),
+      });
+      await flushPromises();
+      expect(wrapper.find(".form-pro--compact").exists()).toBe(true);
+      // 可视行划分：[姓名, 年龄, 城市](8+8+8=24) 为第 0 行（城市配 tip → 整行保持默认间隔），
+      // [电话](8) 为第 1 行（无 tip → 收紧）
+      const colOf = (label) =>
+        wrapper
+          .findAllComponents({ name: "ElCol" })
+          .find((c) => c.text().includes(label));
+      expect(colOf("姓名").classes()).not.toContain("form-pro__col--tight");
+      expect(colOf("年龄").classes()).not.toContain("form-pro__col--tight");
+      expect(colOf("城市").classes()).not.toContain("form-pro__col--tight");
+      expect(colOf("电话").classes()).toContain("form-pro__col--tight");
+      wrapper.unmount();
+    });
+
+    it("compact：条件显隐回流后行划分自动重算（tip 项隐藏 → 同行其余项转为收紧）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        compact: true,
+        items: [
+          { prop: "a", label: "A", span: 12, itemRender: { name: "ElInput" } },
+          { prop: "b", label: "B", span: 12, itemRender: { name: "ElInput" }, tip: "提示B" },
+        ],
+      });
+      await flushPromises();
+      const colA = () =>
+        wrapper
+          .findAllComponents({ name: "ElCol" })
+          .find((c) => c.text().includes("A"));
+      expect(colA().classes()).not.toContain("form-pro__col--tight"); // 同行 B 有 tip → 整行宽松
+      wrapper.vm.updateItems("b", { visible: false });
+      await flushPromises();
+      expect(colA().classes()).toContain("form-pro__col--tight"); // B 隐藏 → A 独行无 tip → 收紧
+      wrapper.unmount();
+    });
+
+    it("compact：校验失败 → el-tooltip 渲染于 item 右上角（top-end / 受控显隐 / 非 dialog 场景 zIndex 取 32 位最大值）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        items: [{ prop: "name", label: "姓名", itemRender: { name: "ElInput" } }],
+      });
+      await flushPromises();
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      const tooltip = wrapper.findComponent({ name: "ElTooltip" });
+      expect(tooltip.exists()).toBe(true);
+      expect(tooltip.props("visible")).toBe(true); // 受控显隐（无 onUpdate 监听 → trigger 交互失效）
+      expect(tooltip.props("virtualTriggering")).toBe(true);
+      // 虚拟锚点即该字段的 el-form-item 实例 → 气泡定位在其右上角
+      expect(tooltip.props("virtualRef")).toBe(wrapper.vm.getFormItem("name"));
+      expect(tooltip.props("placement")).toBe("top-end");
+      // teleport 至 body 层的 popper 实体
+      const el = popper();
+      expect(el).toBeTruthy();
+      expect(el.textContent).toContain("姓名必填");
+      // 不在 dialog 内：zIndex 退化为 32 位整型最大值
+      expect(el.style.zIndex).toBe("2147483647");
+      wrapper.unmount();
+    });
+
+    it("compact：位于 el-dialog 内时 tooltip zIndex = 该 dialog 遮罩层 z-index + 1（浮于本层、允许被嵌套层遮挡）", async () => {
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({
+            visible: ref(true),
+            formData: ref({ name: "" }),
+            items: [
+              { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+            ],
+          }),
+          template: `
+            <el-dialog v-model="visible" title="宿主弹窗">
+              <FormPro ref="fp" v-model="formData" :items="items" compact :error-tip-duration="0" />
+            </el-dialog>`,
+        },
+        { global: globalConfig, attachTo: document.body },
+      );
+      await flushPromises();
+      // dialog 遮罩层 z-index（EP z-index 管理器分配的内联值）
+      const overlay = document.body.querySelector(".el-overlay");
+      expect(overlay).toBeTruthy();
+      const overlayZ = parseInt(overlay.style.zIndex, 10);
+      expect(Number.isFinite(overlayZ)).toBe(true);
+
+      const fp = wrapper.findComponent({ name: "FormPro" });
+      fail(fp, "name", "姓名必填");
+      await flushPromises();
+      const el = popper();
+      expect(el).toBeTruthy();
+      // 关键契约：tooltip 只浮在「表单所在 dialog 层」之上 → overlayZ + 1；
+      // 后续嵌套 dialog 会分到更高 z-index，tooltip 允许被其遮挡（不再取整型最大值）
+      expect(parseInt(el.style.zIndex, 10)).toBe(overlayZ + 1);
+      wrapper.unmount();
+    });
+
+    it("compact：tooltip 自动隐藏后 is-error 校验状态保留（红色边框不变）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0.05, // 50ms，缩短真实定时等待
+        items: [{ prop: "name", label: "姓名", itemRender: { name: "ElInput" } }],
+      });
+      await flushPromises();
+      const fi = wrapper.vm.getFormItem("name");
+      // 模拟 EP onValidationFailed 真实时序：先置 error 态（is-error 类即时生效），再 emit validate
+      fi.validateState = "error";
+      fi.validateMessage = "姓名必填";
+      await flushPromises();
+      expect(wrapper.find(".el-form-item").classes()).toContain("is-error");
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(popperVisible()).toBe(true);
+      // 50ms 后自动隐藏
+      await new Promise((r) => setTimeout(r, 160));
+      await flushPromises();
+      expect(popperVisible()).toBe(false);
+      // 关键契约：隐藏仅收起气泡，校验状态不被清除 → 控件错误样式（红色边框）保持
+      expect(wrapper.find(".el-form-item").classes()).toContain("is-error");
+      expect(fi.validateState).toBe("error");
+      expect(fi.validateMessage).toBe("姓名必填");
+      wrapper.unmount();
+    });
+
+    it("compact：errorTipDuration 默认 3 秒；重新触发校验失败会重置计时", async () => {
+      // 默认值契约（不真等 3s）
+      const defaultWrapper = mountFormPro({
+        modelValue: {},
+        compact: true,
+        items: compactItems(),
+      });
+      expect(defaultWrapper.props("errorTipDuration")).toBe(3);
+      defaultWrapper.unmount();
+
+      // 计时重置：首次失败后 40ms（<100ms）再次触发失败 → 计时重置
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0.1, // 100ms
+        items: [{ prop: "name", label: "姓名", itemRender: { name: "ElInput" } }],
+      });
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      await new Promise((r) => setTimeout(r, 40));
+      fail(wrapper, "name", "姓名必填"); // 40ms < 100ms 重新触发 → 计时重置
+      await new Promise((r) => setTimeout(r, 40));
+      await flushPromises();
+      expect(popperVisible()).toBe(true); // 距首次失败 80ms，未到重置后的 100ms → 仍在展示
+      await new Promise((r) => setTimeout(r, 120));
+      await flushPromises();
+      expect(popperVisible()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("compact：字段恢复通过 → tooltip 立即隐藏；clearValidate 亦收敛", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0, // <=0：不自动隐藏，显隐完全由校验状态驱动
+        items: [{ prop: "name", label: "姓名", itemRender: { name: "ElInput" } }],
+      });
+      await flushPromises();
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(popperVisible()).toBe(true);
+      pass(wrapper, "name");
+      await flushPromises();
+      expect(popperVisible()).toBe(false); // 恢复通过立即隐藏
+      // 再次失败后 clearValidate 全清
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(popperVisible()).toBe(true);
+      wrapper.vm.clearValidate();
+      await flushPromises();
+      expect(popperVisible()).toBe(false);
+      wrapper.unmount();
+    });
+
+    it("compact：resetFields 收敛 tooltip 且 tip 填写提示恢复显示（回归守护）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0,
+        items: [
+          {
+            prop: "name",
+            label: "姓名",
+            tip: "请输入真实姓名",
+            itemRender: { name: "ElInput" },
+          },
+        ],
+      });
+      await flushPromises();
+      expect(wrapper.find(".form-pro__field-tip").exists()).toBe(true); // 无错误时 tip 显示
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(wrapper.find(".form-pro__field-tip").exists()).toBe(false); // 错误时 tip 让位
+      expect(popperVisible()).toBe(true);
+      wrapper.vm.resetFields();
+      await flushPromises();
+      expect(popperVisible()).toBe(false); // tooltip 收敛
+      expect(wrapper.find(".form-pro__field-tip").exists()).toBe(true); // tip 恢复（fieldErrors 同步清理）
+      wrapper.unmount();
+    });
+
+    it("compact：tooltip 受控显隐——对触发元素的 hover/移出不改变气泡状态", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0,
+        items: [{ prop: "name", label: "姓名", itemRender: { name: "ElInput" } }],
+      });
+      await flushPromises();
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(popperVisible()).toBe(true);
+      await wrapper.find(".el-form-item").trigger("mouseleave");
+      await flushPromises();
+      expect(popperVisible()).toBe(true); // 受控模式：trigger 交互被忽略，不提前隐藏
+      await wrapper.find(".el-form-item").trigger("mouseenter");
+      await flushPromises();
+      expect(popperVisible()).toBe(true);
+      wrapper.unmount();
+    });
+
+    it("compact：多字段同时校验失败 → 各 item 独立展示错误 tooltip", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "", phone: "" },
+        compact: true,
+        errorTipDuration: 0,
+        items: [
+          { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+          { prop: "phone", label: "电话", itemRender: { name: "ElInput" } },
+        ],
+      });
+      await flushPromises();
+      fail(wrapper, "name", "姓名必填");
+      fail(wrapper, "phone", "电话必填");
+      await flushPromises();
+      expect(document.body.querySelectorAll(".form-pro__error-popper").length).toBe(2);
+      wrapper.unmount();
+    });
+
+    it("compact 动态关闭：错误 tooltip 随之移除、收紧类全部摘除，恢复常规渲染", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "" },
+        compact: true,
+        errorTipDuration: 0,
+        items: compactItems(),
+      });
+      await flushPromises();
+      fail(wrapper, "name", "姓名必填");
+      await flushPromises();
+      expect(wrapper.findAll(".form-pro__col--tight").length).toBeGreaterThan(0);
+      expect(popperVisible()).toBe(true);
+      await wrapper.setProps({ compact: false });
+      await flushPromises();
+      expect(wrapper.find(".form-pro--compact").exists()).toBe(false);
+      expect(wrapper.findAll(".form-pro__col--tight").length).toBe(0);
+      expect(popper()).toBeNull();
+      wrapper.unmount();
+    });
+
+    it("compact 与 border 组合：间隔收紧规则被 :not(.form-pro--border) 排除（源码契约，jsdom 无法计算样式）", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {},
+        compact: true,
+        border: true,
+        items: compactItems(),
+      });
+      await flushPromises();
+      // 两根类共存（border 优先级更高的间隔规则由下方源码契约守护）
+      expect(wrapper.find(".form-pro--border.form-pro--compact").exists()).toBe(true);
+      expect(wrapper.findAll(".form-pro__col--tight").length).toBeGreaterThan(0);
+      wrapper.unmount();
+
+      const { readFileSync } = await import("node:fs");
+      const { resolve } = await import("node:path");
+      const src = readFileSync(
+        resolve(process.cwd(), "src/components/formPro/index.vue"),
+        "utf-8",
+      );
+      // 间隔收紧必须限定在 :not(.form-pro--border) 内 → border 表格自身 margin-bottom: 0 不受影响
+      expect(src).toMatch(
+        /\.form-pro--compact:not\(\.form-pro--border\)[\s\S]*?\.form-pro__col--tight \.el-form-item[\s\S]*?margin-bottom:\s*6px/,
+      );
+      // label 距离减半（left/right：右内边距 12px→6px；top：下外边距 8px→4px）
+      expect(src).toMatch(/\.form-pro--compact[\s\S]*?\.el-form-item__label[\s\S]*?padding-right:\s*6px/);
+      expect(src).toMatch(
+        /\.form-pro--compact[\s\S]*?\.el-form-item--label-top \.el-form-item__label[\s\S]*?margin-bottom:\s*4px/,
+      );
+      // 原生错误文案隐藏（is-error 状态不受影响 → 红色边框保持）
+      expect(src).toMatch(/\.form-pro--compact[\s\S]*?\.el-form-item__error[\s\S]*?display:\s*none/);
+      // 错误 tooltip 全局样式：error 主色调背景 / 白色文字 / 2px 内边距
+      const gs = src.slice(src.indexOf(".el-popper.is-dark.form-pro__error-popper"));
+      expect(gs).toMatch(/background:\s*var\(--el-color-error\)/);
+      expect(gs).toMatch(/color:\s*#fff/);
+      expect(gs).toMatch(/padding:\s*2px/);
     });
   });
 });

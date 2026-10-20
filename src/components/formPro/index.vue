@@ -15,6 +15,9 @@
  *  6. 表单项间插入组件/元素：无 field 的项即为插入项，用 slot 或 render 渲染
  *  7. 条件显隐自动回流：隐藏项不渲染，el-col 流式布局后续项自动前移
  *  8. 运行时动态配置：实例方法 addItems / removeItems / updateItems 增删改 items（联动禁用/显隐、异步 options）
+ *  9. 紧凑模式（compact）：item 垂直间隔收紧（无 tip 行 18px→6px，含 tip 行保持默认）、
+ *     label 与控件距离减半、校验错误改用 el-tooltip 在 item 右上角展示（error 主色调背景、
+ *     白色文字、2px 内边距、任意 el-dialog 之上），errorTipDuration 秒后自动隐藏
  */
 import {
   ref,
@@ -58,7 +61,7 @@ const props = defineProps({
   // 默认每项栅格占位（24 栅格）；columns 未设置时生效，item.span 优先级更高
   span: { type: Number, default: 24 },
   // el-row 间距
-  gutter: { type: [Number, Array], default: 0 },
+  gutter: { type: [Number, Array], default: 12 },
   // 仅显示必填项
   onlyRequired: { type: Boolean, default: false },
   // 表单级：标题是否带冒号（item.titleColon 可单独覆盖）
@@ -76,6 +79,15 @@ const props = defineProps({
   // 边框表格样式：开启后表单渲染为带边框的表格外观（外框 + 单元格网格线 + label 表头底色），
   // 适用于信息录入/详情描述类表单。默认 false，保持原外观（向后兼容）。推荐配合 gutter=0 使用。
   border: { type: Boolean, default: false },
+  // 紧凑型表单：item 垂直间隔收紧（无 tip 行 18px→6px；行内任一项配置 tip 则整行保持默认，
+  // 保证同行水平对齐）；label 与输入类组件的距离减半；校验错误提示不再显示在控件下方，
+  // 改用 el-tooltip 在 item 右上角展示（placement="top-end"、error 主色调背景、白色文字、
+  // 2px 内边距、任意 el-dialog 之上），errorTipDuration 秒后自动隐藏——隐藏仅收起提示气泡，
+  // 控件的校验错误样式（如红色边框）保持不变。默认 false。
+  compact: { type: Boolean, default: false },
+  // 紧凑模式：校验错误 tooltip 展示时长（秒），超时后自动隐藏；默认 3；
+  // 传 <=0 表示不自动隐藏（由下一次校验 / clearValidate / resetFields 收敛）。
+  errorTipDuration: { type: Number, default: 3 },
 });
 
 const emit = defineEmits(["update:modelValue"]);
@@ -102,8 +114,49 @@ const getFormItem = (prop) => formItemRefs[prop];
 const fieldErrors = reactive({});
 // el-form 校验事件：(prop, isValid, message) —— 字段校验状态变化时触发
 const onFormValidate = (prop, isValid, message) => {
-  if (isValid) delete fieldErrors[prop];
-  else fieldErrors[prop] = message || "";
+  if (isValid) {
+    delete fieldErrors[prop];
+    hideErrorTip(prop);
+  } else {
+    fieldErrors[prop] = message || "";
+    if (props.compact) showErrorTip(prop);
+  }
+};
+
+// —— 紧凑模式（compact）：校验错误 tooltip 显隐 ——
+// errorTipVisible: prop → tooltip 是否可见。由 el-form 的 validate 事件驱动：
+// 校验不通过时显示，errorTipDuration 秒后自动隐藏；字段恢复通过或 clearValidate /
+// resetFields 时立即隐藏。
+// 注意：只控制 tooltip 气泡显隐，从不清除 el-form-item 的校验状态（is-error）——
+// tooltip 隐藏后控件的错误样式（如红色边框）保持不变。
+const errorTipVisible = reactive({});
+const errorTipTimers = {};
+
+const clearErrorTipTimer = (prop) => {
+  if (errorTipTimers[prop] != null) {
+    clearTimeout(errorTipTimers[prop]);
+    delete errorTipTimers[prop];
+  }
+};
+
+const showErrorTip = (prop) => {
+  errorTipVisible[prop] = true;
+  clearErrorTipTimer(prop);
+  const duration = Number(props.errorTipDuration);
+  if (!(duration > 0)) return; // <=0 / 非法值：不自动隐藏
+  errorTipTimers[prop] = setTimeout(() => {
+    clearErrorTipTimer(prop);
+    delete errorTipVisible[prop];
+  }, duration * 1000);
+};
+
+const hideErrorTip = (prop) => {
+  clearErrorTipTimer(prop);
+  delete errorTipVisible[prop];
+};
+
+const hideAllErrorTips = () => {
+  for (const prop of Object.keys(errorTipVisible)) hideErrorTip(prop);
 };
 
 // 给 el-form 原生错误提示（.el-form-item__error）自动补全 title：空间不足被省略为 … 时，
@@ -128,6 +181,10 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => errorTitleObserver?.disconnect());
+// 卸载时清理紧凑模式的错误提示定时器
+onBeforeUnmount(() => {
+  for (const prop of Object.keys(errorTipTimers)) clearErrorTipTimer(prop);
+});
 
 // —— 声明式异步选项 optionsSource ——
 // item.optionsSource = {
@@ -338,7 +395,7 @@ watch(
 const getSubmitData = () => buildSubmitData(formData);
 
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
-const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border"];
+const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border", "compact", "errorTipDuration"];
 const attrs = useAttrs();
 const slots = useSlots();
 const formPropsComputed = computed(() => {
@@ -480,17 +537,21 @@ const ownExposed = {
   toggleAllGroups,
   // 包装 el-form 的 resetFields / clearValidate：这两个方法清除校验状态时「不触发」validate 事件，
   // 需同步清除内部 fieldErrors，否则 item.tip 填写提示会因残留错误状态而无法恢复显示。
+  // 同步收敛紧凑模式的错误 tooltip（含未触发的自动隐藏定时器）。
   resetFields() {
     for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+    hideAllErrorTips();
     return formRef.value?.resetFields?.();
   },
   clearValidate(props) {
     if (props == null) {
       for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+      hideAllErrorTips();
     } else {
-      (Array.isArray(props) ? props : [props]).forEach((p) =>
-        delete fieldErrors[p],
-      );
+      (Array.isArray(props) ? props : [props]).forEach((p) => {
+        delete fieldErrors[p];
+        hideErrorTip(p);
+      });
     }
     return formRef.value?.clearValidate?.(props);
   },
@@ -518,7 +579,7 @@ defineExpose(ownExposed);
   <el-form
     ref="formRef"
     v-bind="formPropsComputed"
-    :class="{ 'form-pro--border': border }"
+    :class="{ 'form-pro--border': border, 'form-pro--compact': compact }"
     @validate="onFormValidate"
   >
     <FormBlock
@@ -534,6 +595,8 @@ defineExpose(ownExposed);
       :title-bold="titleBold"
       :field-errors="fieldErrors"
       :border="border"
+      :compact="compact"
+      :error-tip-visible="errorTipVisible"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :all-collapsed="allGroupsCollapsed"
@@ -551,6 +614,37 @@ defineExpose(ownExposed);
 </template>
 
 <style lang="scss" scoped>
+// —— 紧凑型表单（compact 模式）——
+// 1. 垂直间隔收紧：无 tip 可视行的 el-form-item 间隔 18px → 6px。
+//    行内任一项配置了 tip 的行整体不加收紧类（FormBlock 侧按可视行判定）——tip 文案
+//    悬浮于控件下方（绝对定位），需要原生间隔容纳，且保证同行各项水平对齐。
+//    以 :not(.form-pro--border) 排除边框表格模式：border 自身将间隔归零（见下方样式），
+//    不受紧凑模式影响。
+.form-pro--compact:not(.form-pro--border) {
+  :deep(.form-pro__col--tight .el-form-item) {
+    margin-bottom: 6px;
+  }
+}
+
+// 2. label 与输入类组件的距离减半：
+//    left/right（水平排列）：label 右内边距 12px → 6px；
+//    top（上下排列）：label 下外边距 8px → 4px（右内边距维持 EP 默认 0）。
+.form-pro--compact {
+  :deep(.el-form-item__label) {
+    padding-right: 6px;
+  }
+  :deep(.el-form-item--label-top .el-form-item__label) {
+    margin-bottom: 4px;
+    padding-right: 0;
+  }
+
+  // 3. 原生校验错误文案隐藏：错误提示改由 el-tooltip 在 item 右上角展示（见 FormBlock）。
+  //    仅隐藏文案元素，el-form-item 的 is-error 校验状态不受影响（控件红色边框保持）。
+  :deep(.el-form-item__error) {
+    display: none;
+  }
+}
+
 // —— 边框表格样式（border 模式）——
 // .form-pro--border 挂在 <el-form> 根节点（本组件模板内，携带 scoped 属性）；
 // 内部 el-row / el-col / el-form-item 由 FormBlock 的 render 函数动态生成，
@@ -628,6 +722,37 @@ defineExpose(ownExposed);
   }
   :deep(.form-pro__group-body) {
     padding-top: 0;
+  }
+}
+</style>
+
+<style lang="scss">
+// —— 紧凑模式：校验错误 tooltip（teleport 至 body 层，需全局作用域样式）——
+// 背景 = error 主色调、白色文字、内边距收紧为 2px（EP 默认 5px 11px）；
+// 选择器带 .el-popper.is-dark 前缀以覆盖 EP 同名规则。箭头同色。
+// z-index 不在此处理：由 FormBlock 侧按「所在层」动态计算——位于 el-dialog 内时取该
+// dialog 遮罩层 z-index + 1（浮于本层内容之上、允许被后续嵌套 dialog 遮挡）；
+// 不在 dialog 内时为 32 位整型最大值（见 FormBlock.vue resolveErrorTipZIndex）。
+.el-popper.is-dark.form-pro__error-popper {
+  background: var(--el-color-error);
+  border-color: var(--el-color-error);
+  color: #fff;
+  padding: 2px 6px;
+  // EP 默认 line-height: 20px 相对 12px 字号偏大，气泡显得偏高、文字视觉重心偏上；
+  // 收紧行高使上下间隙观感一致、整体更紧凑
+  line-height: 16px;
+
+  .el-popper__arrow::before {
+    background: var(--el-color-error);
+    border-color: var(--el-color-error);
+  }
+
+  // 三角箭头固定到气泡右侧：默认 popper 以整个 el-form-item 为锚点，箭头会向
+  // 锚点中心对齐而偏在气泡左侧；气泡锚定在 item 右上角，箭头置于右侧更贴合指向。
+  // popper 计算的内联 left 用 !important 覆盖为 right 定位
+  .el-popper__arrow {
+    left: auto !important;
+    right: 12px;
   }
 }
 </style>

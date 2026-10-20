@@ -51,6 +51,8 @@ const items = ref([
 | `removeHiddenValues` | Boolean | `false` | 移除因 `visible`/`visibleMethod` 隐藏的字段值（见 §6） |
 | `autoFillDefaults` | Boolean | `true` | 按 items 自动补全缺失字段的默认值（见 §5） |
 | `border` | Boolean | `false` | 边框表格样式：外框 + 单元格网格线 + label 表头底色（见 §11） |
+| `compact` | Boolean | `false` | 紧凑型表单：间隔收紧、label 距离减半、校验错误 tooltip 化（见 §16） |
+| `errorTipDuration` | Number | `3` | 紧凑模式：校验错误 tooltip 自动隐藏秒数；`<=0` 表示不自动隐藏（见 §16） |
 
 > 其余属性（`labelWidth`/`labelPosition`/`rules`/`inline`/`disabled` 等）一律透传给内部 `<el-form>`。
 
@@ -747,4 +749,31 @@ FormPro 内部维护一份 `formData`（为补全默认值、隐藏值保留等�
 - `removeItems` 删除的字段键不会被在途快照「复活」。
 
 对父级完全透明——既有代码行为不变，只是不再需要 `nextTick` 兜底。
+
+---
+
+## 16. 紧凑型表单（compact）
+
+开启 `compact` 后表单以更紧凑的密度渲染，适用于弹窗内、高密度录入等场景；默认 `false`，完全向后兼容，仅显式开启时生效（与 `border` 组合时边框表格样式优先，不受间隔收紧影响）。
+
+```html
+<FormPro v-model="formData" :items="items" compact :error-tip-duration="3" />
+```
+
+与常规表单的差异：
+
+| 维度 | 常规 | 紧凑（compact） |
+|---|---|---|
+| item 垂直间隔 | 18px | **6px**；若所在可视行内**任一项配置了 `tip`**，则整行保持默认间隔——tip 文案悬浮于控件下方（绝对定位），需要原生间隔容纳，且保证同行各项水平对齐 |
+| label 与控件距离 | label 右内边距 12px / label-top 下外边距 8px | **减半**：`labelPosition` 为 `left`/`right` 时右内边距 6px；`top` 时下外边距 4px |
+| 校验错误提示 | 控件下方 `.el-form-item__error` 文案 | **el-tooltip** 锚定在 item 右上角（`placement="top-end"`）：error 主色调背景、白色文字、内边距 2px；z-index 按「所在层」动态计算——位于 el-dialog 内时取**该 dialog 遮罩层 z-index + 1**（无论其 z-index 多大都浮在本层内容之上，但允许被后续打开的嵌套 dialog 遮挡，不越层）；不在 dialog 内时为 32 位整型最大值 |
+| 错误提示时长 | 持续显示 | 展示 `errorTipDuration` 秒（默认 **3**）后自动隐藏；`<=0` 表示不自动隐藏 |
+
+行为细节：
+
+- 错误 tooltip 由 `validate` 事件驱动：校验不通过即显示并重新计时；字段恢复通过、`clearValidate` / `resetFields` 时立即隐藏。tooltip 为受控模式，hover / 点击等交互不会改变其显隐。
+- 自动隐藏**只收起气泡，从不清除校验状态**——`el-form-item` 的 `is-error` 类保留，控件的错误样式（如输入框红色边框）在 tooltip 隐藏后不变，直到重新校验通过。
+- 紧凑模式下原生错误文案由样式隐藏，原有「错误文案 title 悬浮补全」等能力随之不参与渲染，其余能力（tip 填写提示、分组、动态显隐等）不受影响。
+
+---
 

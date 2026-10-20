@@ -12,6 +12,8 @@ import {
   resolveFieldOptions,
   resolveDynamicControlState,
   resolveGroupTitleStyle,
+  resolveVisualRowIndexes,
+  collectTipRows,
 } from "./utils.js";
 import UploadPro from "./UploadPro.vue";
 
@@ -49,6 +51,11 @@ const props = defineProps({
   formItemRefs: { type: Object, default: () => ({}) },
   // 边框表格样式开关：开启后在行/列单元格上追加修饰类，由 index.vue 的样式绘制边框
   border: { type: Boolean, default: false },
+  // 紧凑型表单开关：控制「间隔收紧列」的修饰类，并在校验失败时以 el-tooltip 展示错误提示
+  // （tooltip 样式与自动隐藏由 index.vue 承担：样式类 form-pro__error-popper、errorTipVisible 显隐驱动）
+  compact: { type: Boolean, default: false },
+  // 紧凑模式：字段 prop → 校验错误 tooltip 是否可见（由 index.vue 的 validate 事件 + 定时器驱动）
+  errorTipVisible: { type: Object, default: () => ({}) },
 });
 
 const emit = defineEmits(["toggle-group", "toggle-all"]);
@@ -72,6 +79,16 @@ const entries = computed(() =>
 const setField = (field, v) => {
   props.formData[field] = v;
 };
+
+// —— 紧凑模式（compact）：可视行划分 ——
+// el-row 内所有 el-col 流式换行，DOM 上没有「行」结构；按累计 span ≤ 24 还原可视行，
+// 用于「行内任一项配置了 tip → 整行保持默认间隔」的判定（见 index.vue 样式注释）。
+const entryRowIndexes = computed(() =>
+  resolveVisualRowIndexes(entries.value, GRID_COLS),
+);
+const tipRows = computed(() =>
+  collectTipRows(entries.value, entryRowIndexes.value),
+);
 
 const renderFieldControl = (item) => {
   const ctx = {
@@ -241,7 +258,54 @@ const renderFieldContent = (item) => {
   return h("div", { class: "form-pro__field-control-wrap" }, children);
 };
 
-const renderFieldEntry = (entry) => {
+// —— 紧凑模式：校验错误 tooltip ——
+// compact 下原生 .el-form-item__error 由样式隐藏（见 index.vue），错误信息改用 el-tooltip
+// 锚定在 el-form-item 根元素右上角（placement="top-end"）展示：
+//   - 受控模式：只传 visible 布尔值、不传 onUpdate:visible → trigger 交互（hover/click/
+//     点击外部）全部失效，显隐完全由父级 errorTipVisible 驱动（validate 事件触发，
+//     errorTipDuration 秒后自动隐藏）；
+//   - zIndex 按「所在层」动态计算：表单位于 el-dialog 内时取该 dialog 遮罩层
+//     （.el-overlay）的 z-index + 1 —— 无论该 dialog 的 z-index 多大 tooltip 都浮在其
+//     内容之上；而后续打开的嵌套 dialog 会由 EP 分配更高的 z-index，tooltip 允许被其
+//     遮挡（只需覆盖所在层，不越层）。不在 dialog 内时退化为 32 位整型最大值；
+//   - 仅控制 tooltip 显隐，el-form-item 的 is-error 校验状态不受影响——tooltip 隐藏后
+//     控件的错误样式（如红色边框）保持不变。
+const MAX_Z_INDEX = 2147483647;
+
+const resolveErrorTipZIndex = (prop) => {
+  const inst = props.formItemRefs?.[prop];
+  // formItemRefs 存的是 el-form-item 组件实例，$el 为其根元素
+  const el = inst?.$el ?? inst;
+  // 沿 DOM 向上找所在 el-dialog 的遮罩层（tooltip teleport 到 body，与其平级比较 z-index）
+  const overlay = el?.closest?.(".el-overlay");
+  if (overlay) {
+    const z = parseInt(overlay.style?.zIndex, 10);
+    if (Number.isFinite(z)) return z + 1;
+  }
+  return MAX_Z_INDEX;
+};
+
+const renderErrorTip = (item) => {
+  if (!props.compact) return null;
+  const message = props.fieldErrors?.[item.prop];
+  if (!message) return null;
+  return h(ElTooltip, {
+    visible: !!(props.errorTipVisible && props.errorTipVisible[item.prop]),
+    virtualTriggering: true,
+    // el-form-item 组件实例即可：ElPopperTrigger 内部经 unrefElement 解包出根元素，
+    // 以其右上角（top-end）为锚点定位
+    virtualRef: props.formItemRefs?.[item.prop],
+    placement: "top-end",
+    effect: "dark",
+    content: message,
+    popperClass: "form-pro__error-popper",
+    zIndex: resolveErrorTipZIndex(item.prop),
+    showAfter: 0,
+    hideAfter: 0,
+  });
+};
+
+const renderFieldEntry = (entry, idx) => {
   const { item, span, required } = entry;
   // 填写/选择提示 tip：位于校验错误提示同一位置（控件下方），颜色为 success 主色调。
   // 显示时机：只要当前字段未触发校验不通过（fieldErrors 中无该 prop）就一直显示；
@@ -275,7 +339,18 @@ const renderFieldEntry = (entry) => {
       },
     },
   );
-  return h(ElCol, { span }, () => formItem);
+  // 紧凑模式：所在可视行不含 tip 项 → 间隔收紧（6px，样式见 index.vue）；
+  // 行内任一项配置了 tip → 整行保持默认间隔（含 tip 行的 col 不加修饰类）
+  const rowIdx = entryRowIndexes.value[idx] ?? 0;
+  const colClass = {
+    "form-pro__col--tight": props.compact && !tipRows.value.has(rowIdx),
+  };
+  const errorTipNode = renderErrorTip(item);
+  return h(
+    ElCol,
+    { span, class: colClass },
+    () => (errorTipNode ? [formItem, errorTipNode] : formItem),
+  );
 };
 
 const renderCollapseNode = (entry) => {
@@ -330,8 +405,8 @@ const renderInsertEntry = (entry) => {
 
 const render = () => {
   const { group } = props.block;
-  const colNodes = entries.value.map((e) => {
-    if (e.kind === "field") return renderFieldEntry(e);
+  const colNodes = entries.value.map((e, idx) => {
+    if (e.kind === "field") return renderFieldEntry(e, idx);
     if (e.kind === "collapseNode") return renderCollapseNode(e);
     return renderInsertEntry(e);
   });
@@ -534,9 +609,17 @@ defineExpose({ entries });
 :deep(.form-pro__group-header.is-static .form-pro__group-header-main) {
   cursor: default;
 }
+// 分组标题前的折叠/展开图标：primary 主色调并视觉加粗。
+// Element 箭头图标为填充型 SVG（无描边），通过叠加同色细描边实现加粗观感
 :deep(.form-pro__group-arrow) {
   transition: transform 0.2s;
   font-size: 14px;
+  color: var(--el-color-primary);
+
+  svg {
+    stroke: currentColor;
+    stroke-width: 64;
+  }
 }
 :deep(.form-pro__group-title) {
   font-size: 14px;

@@ -344,6 +344,57 @@ export const resolveVisibleEntries = (
   return out;
 };
 
+// ===================== 紧凑型表单（compact）可视行划分 =====================
+
+/**
+ * 将有序条目按「累计栅格 ≤ gridCols」划分为可视行（与 el-row 的 flex-wrap 换行规则一致）：
+ * 逐项累加 span，一旦累加超过栅格总数即另起新行。
+ * 入参 entries 应为 resolveVisibleEntries 的输出（隐藏项已被过滤、span 已解析钳制），
+ * 因此条件显隐回流 / columns 调整后行划分自动重算。
+ *
+ * @param {Array}  entries  有序条目数组（每项带解析后的 span）
+ * @param {Number} gridCols 栅格总数（默认 24）
+ * @returns {Number[]} 与 entries 等长的行号数组（0 起）
+ */
+export const resolveVisualRowIndexes = (entries = [], gridCols = GRID_COLS) => {
+  const rows = [];
+  let sum = 0;
+  let row = 0;
+  for (const entry of entries) {
+    const span = Number(entry?.span) || gridCols;
+    if (sum > 0 && sum + span > gridCols) {
+      row += 1;
+      sum = 0;
+    }
+    rows.push(row);
+    sum += span;
+  }
+  return rows;
+};
+
+/**
+ * 收集「含 tip 字段项」的可视行集合。
+ * compact 模式下：任一项配置了 tip（非空），其所在整行的各项都保持组件默认间隔——
+ * tip 文案悬浮于控件下方（绝对定位），需要原生间隔容纳，且保证同行各项水平对齐。
+ *
+ * @param {Array}    entries    resolveVisibleEntries 输出的有序条目
+ * @param {Number[]} rowIndexes resolveVisualRowIndexes 输出的行号数组（与 entries 对齐）
+ * @returns {Set<Number>} 含 tip 的行号集合
+ */
+export const collectTipRows = (entries = [], rowIndexes = []) => {
+  const set = new Set();
+  entries.forEach((entry, i) => {
+    if (
+      entry?.kind === "field" &&
+      entry.item?.tip != null &&
+      entry.item.tip !== ""
+    ) {
+      set.add(rowIndexes[i]);
+    }
+  });
+  return set;
+};
+
 // ===================== 声明式联动（optionsSource / disabledWhen / readonlyWhen） =====================
 // 以下为联动机制的纯决策函数，与组件状态（loading、防抖计时器、防竞态 token）解耦，便于单测；
 // index.vue / FormBlock.vue 负责执行决策结果。

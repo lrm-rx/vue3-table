@@ -62,6 +62,12 @@ const routes = [
         meta: { title: "FormPro 边框表格样式", icon: "Document" },
       },
       {
+        path: "form-compact",
+        name: "FormProCompact",
+        component: () => import("@/views/FormProCompactDemo.vue"),
+        meta: { title: "FormPro 紧凑型表单", icon: "Document" },
+      },
+      {
         path: "form-upload",
         name: "FormProUpload",
         component: () => import("@/views/FormProUploadDemo.vue"),
