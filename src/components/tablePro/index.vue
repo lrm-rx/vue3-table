@@ -2000,6 +2000,16 @@ $table-toolbar-gap: 12px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+
+          // 第三层：el-button 等组件内部可能还有一层文本容器（如 button > span 里的
+          // <b>/<strong>），同样需要约束才能触发 text-overflow；svg 内部为矢量图形，排除。
+          &:not(svg) > * {
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
         }
 
         // 图标防压缩：内容被截断时 svg 图标保持原尺寸
