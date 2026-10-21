@@ -223,6 +223,8 @@ const columns = ref([
     title: "操作",
     width: "auto",
     fixed: "right",
+    // 操作列标记：排除插槽/JSX 内容超宽省略，按钮完整显示
+    params: { isAction: true },
     render: (params, h) => {
       const row = params.row;
       return (

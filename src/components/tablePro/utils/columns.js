@@ -158,6 +158,10 @@ export const wrapBareTextVNodes = (node) => {
   return node
 }
 
+// 操作列标记类：params.isAction === true 的列注入该类，
+// 组件样式据此把该列排除在「插槽/JSX 内容超宽省略」之外（按钮等操作内容应完整显示）
+export const NO_ELLIPSIS_CLASS = "table-pro__col--no-ellipsis";
+
 // 读取列自定义参数 key：取 col.params.defParamKey，兜底 field
 export const resolveParamKey = (col, fallbackField) => {
   if (!col) return fallbackField
@@ -682,6 +686,22 @@ export const buildColumns = (config) => {
     )
   }
 
+  // 6) 操作列标记：params.isAction === true 的列注入 NO_ELLIPSIS_CLASS，
+  // 组件样式据此把该列排除在省略号裁剪之外（按钮等操作内容应完整显示）；
+  // 用户已配置 className 时追加（函数式 className 包一层）
+  const applyNoEllipsisClass = (col) => {
+    if (!(col.params && col.params.isAction === true)) return
+    if (typeof col.className === 'function') {
+      const userClassName = col.className
+      col.className = (params) => {
+        const cls = userClassName(params)
+        return cls ? `${cls} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
+      }
+      return
+    }
+    col.className = col.className ? `${col.className} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
+  }
+
   // 叶子列处理总入口：按步骤调用各辅助函数
   const transformLeafColumn = (rawCol) => {
     if (!rawCol || typeof rawCol !== 'object') return rawCol
@@ -707,6 +727,8 @@ export const buildColumns = (config) => {
     applyEditRenderSlot(col, field)
     // 5) 默认过滤值注入
     applyDefaultFilterValue(col, field)
+    // 6) 操作列：params.isAction === true 注入排除省略标记类
+    applyNoEllipsisClass(col)
 
     return col
   }

@@ -138,6 +138,7 @@ const onRequestError = (err) => console.error(err);
 | **`render`** | `(params, h) => VNode` \| `string` | **TablePro 扩展**：只读单元格 JSX 渲染，或字符串引用外部具名插槽 |
 | **`headerRender`** | `(params, h) => VNode` \| `string` | **TablePro 扩展**：表头 JSX 渲染，或字符串引用外部具名插槽 |
 | **`editRender`** | `object` \| `function` \| `string` | **TablePro 扩展**：可编辑单元格配置（详见下文） |
+| **`params.isAction`** | `true` | **TablePro 扩展**：标记为操作列，该列排除「插槽/JSX 内容超宽省略」裁剪，按钮等操作内容完整显示 |
 | `filterRender` | object | vxe 原生过滤渲染器配置（一般由 `filterType` 自动注入，需自定义时手写） |
 | `filters` | array | vxe 原生过滤配置（一般由 `filterType` 自动注入） |
 | `slots` | object | vxe 原生列 slots（`default` / `header` / `edit`） |

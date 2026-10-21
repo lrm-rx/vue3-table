@@ -191,6 +191,8 @@ const rightFixedActionColumn = {
   title: "操作",
   width: 200,
   fixed: "right",
+  // 操作列标记：排除插槽/JSX 内容超宽省略，按钮完整显示
+  params: { isAction: true },
   // 关键：给固定列也配过滤，测试过滤图标 + 激活角标在 fixed:right 列上是否完整显示
   filterType: "FilterCheckbox",
   filterRender: {

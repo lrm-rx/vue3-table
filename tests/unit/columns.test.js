@@ -4,6 +4,7 @@ import {
   buildColumns,
   findColumnByField,
   forEachLeafColumn,
+  NO_ELLIPSIS_CLASS,
   resolveParamKey,
   wrapBareTextVNodes,
 } from "../../src/components/tablePro/utils/columns.js";
@@ -530,6 +531,53 @@ describe("hideColumn / 分组列", () => {
     const raw = { field: "a", params: { hideColumn: true } };
     run([raw]);
     expect(raw.params.hideColumn).toBe(true);
+  });
+});
+
+describe("操作列标记（params.isAction）", () => {
+  it("params.isAction === true 的列注入 NO_ELLIPSIS_CLASS", () => {
+    const { result } = run([
+      { field: "action", title: "操作", params: { isAction: true } },
+      { field: "name", title: "姓名" },
+    ]);
+    expect(result[0].className).toBe(NO_ELLIPSIS_CLASS);
+    expect(result[1].className).toBeUndefined();
+  });
+
+  it("已有字符串 className 时追加而非覆盖", () => {
+    const { result } = run([
+      {
+        field: "action",
+        className: "my-col",
+        params: { isAction: true },
+      },
+    ]);
+    expect(result[0].className).toBe(`my-col ${NO_ELLIPSIS_CLASS}`);
+  });
+
+  it("已有函数式 className 时包一层，返回结果追加标记类", () => {
+    const userFn = () => "fn-col";
+    const { result } = run([
+      { field: "action", className: userFn, params: { isAction: true } },
+    ]);
+    expect(typeof result[0].className).toBe("function");
+    expect(result[0].className({})).toBe(`fn-col ${NO_ELLIPSIS_CLASS}`);
+  });
+
+  it("函数式 className 返回空时仅保留标记类", () => {
+    const { result } = run([
+      { field: "action", className: () => "", params: { isAction: true } },
+    ]);
+    expect(result[0].className({})).toBe(NO_ELLIPSIS_CLASS);
+  });
+
+  it("isAction 非 true 时不注入", () => {
+    const { result } = run([
+      { field: "action", params: { isAction: false } },
+      { field: "op", params: {} },
+    ]);
+    expect(result[0].className).toBeUndefined();
+    expect(result[1].className).toBeUndefined();
   });
 });
 

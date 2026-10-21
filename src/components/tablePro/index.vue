@@ -1978,9 +1978,10 @@ $table-toolbar-gap: 12px;
   // 插槽 / JSX 渲染的根元素是原子内联盒（el-button、el-tag、inline-flex 容器等），
   // 会整体溢出被直接裁剪而不出现省略号，需让根元素自身约束宽度并裁剪省略。
   // 换行模式下排除（列级 showOverflow 可能残留 col--ellipsis，避免误裁剪多行内容）；
-  // vxe 列宽测量期（data-calc-col）排除，避免 max-width:100% 干扰 width:"auto" 列的测量。
+  // vxe 列宽测量期（data-calc-col）排除，避免 max-width:100% 干扰 width:"auto" 列的测量；
+  // 操作列（params.isAction → .table-pro__col--no-ellipsis）排除，按钮等操作内容不省略。
   &:not(.is--wrap-text) {
-    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active) > .vxe-cell > .vxe-cell--wrapper) {
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active):not(.table-pro__col--no-ellipsis) > .vxe-cell > .vxe-cell--wrapper) {
       & > * {
         min-width: 0;
         max-width: 100%;
@@ -1988,10 +1989,12 @@ $table-toolbar-gap: 12px;
         text-overflow: ellipsis;
         white-space: nowrap;
 
-        // 内层具名元素（el-tag__content、JSX 内层 span 等）同样需要裁剪省略；
-        // 组件内部的内联盒子（如 el-button 内的 span）必须块级化，overflow/text-overflow 才生效
+        // 内层具名元素（el-tag__content、JSX 内层 span 等）同样需要裁剪省略。
+        // 注意：不能设 display:inline-block —— overflow:hidden 的 inline-block 基线会变为
+        // 盒底缘（CSS 规范），把行盒从 line-height 撑高并下移文字（如 vxe-cell--label 内层 span
+        // 22px→28.8px），切换换行模式时出现上下跳动；el-tag/el-button 等内部 span 是 flex 项，
+        // 会被弹性布局自动块级化，overflow/text-overflow 本就生效，无需显式块级化。
         & > * {
-          display: inline-block;
           min-width: 0;
           max-width: 100%;
           overflow: hidden;
@@ -2003,6 +2006,17 @@ $table-toolbar-gap: 12px;
         & > svg {
           flex-shrink: 0;
         }
+      }
+    }
+
+    // 操作列（params.isAction）：覆盖 vxe 自带 col--ellipsis 的裁剪，按钮等内容完整显示
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.table-pro__col--no-ellipsis:not(.col--active) > .vxe-cell) {
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
       }
     }
   }
