@@ -12,7 +12,7 @@ import { ElMessage } from "element-plus";
 import FormPro from "@/components/formPro/index.vue";
 
 const compact = ref(true);
-const labelPosition = ref("left");
+const labelPosition = ref("right");
 const errorTipDuration = ref(3);
 
 const formData = ref({

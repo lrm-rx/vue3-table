@@ -509,8 +509,8 @@ defineExpose({ entries });
   font-weight: normal;
 }
 // 控件前后缀容器：prefix + 控件 + suffix 横向排列、垂直居中。
-// 控件按自身宽度渲染（不撑满），前后缀紧贴控件，多余空白留在后缀之后。
-// 仅在配置了 prefix / suffix 时渲染；无前后缀时 DOM 与原结构一致（零侵入）。
+// 控件槽位拉满前后缀之间的剩余空间，使「有/无前后缀」的 item 右边缘对齐（上下整齐）；
+// suffix 随之位于内容区右端。仅在配置了 prefix / suffix 时渲染；无前后缀时 DOM 与原结构一致（零侵入）。
 // （DOM 由 render 函数生成，需 :deep 命中）
 :deep(.form-pro__field-control-wrap) {
   display: flex;
@@ -528,13 +528,19 @@ defineExpose({ entries });
   line-height: 1;
   white-space: nowrap;
 }
-// 控件容器：不撑满（flex:0 1 auto），按控件自身宽度收缩。
-// 这样前后缀紧贴控件渲染（如 el-input-number 默认 150px，「元」紧跟其后），
-// 多余空白留在后缀之后，而非把后缀推到容器最右端。
+// 控件槽位：拉满剩余空间（flex:1 1 auto），与无前后缀 item 的控件右边缘对齐。
 // min-width:0 允许内部控件在空间不足时正确收缩。
 :deep(.form-pro__field-control) {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
+}
+// el-input-number 默认固定 150px（EP 样式），与 el-input / el-select / el-date-editor 等
+// 拉满内容区的控件混排时右边缘不对齐（上下 item 参差不齐）；此处统一拉满。
+// 仅作用于 FormPro 直接渲染的控件根（内容区直接子级 / 前后缀槽位直接子级），
+// 不影响用户自定义 render/slot 内部的嵌套控件。
+:deep(.el-form-item__content > .el-input-number),
+:deep(.form-pro__field-control > .el-input-number) {
+  width: 100%;
 }
 // 前后缀纯文本节点（字符串形态）的样式占位
 :deep(.form-pro__field-affix-text) {
