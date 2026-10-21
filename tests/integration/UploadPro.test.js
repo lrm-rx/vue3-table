@@ -67,7 +67,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     expect(wrapper.find(".upload-pro__card-paste").exists()).toBe(false);
   });
 
-  it("text 列表模式不显示粘贴入口（仅照片墙支持）", () => {
+  it("text 列表模式不显示卡片粘贴入口（卡片入口仅照片墙渲染）", () => {
     const wrapper = mountUpload({
       modelValue: [],
       listType: "text",
@@ -123,6 +123,27 @@ describe("UploadPro 照片墙（picture-card）", () => {
     const ev = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(ev, "clipboardData", {
       value: { items: [{ kind: "string", type: "text/plain" }], files: [] },
+    });
+    wrapper.find(".upload-pro__card-paste").element.dispatchEvent(ev);
+    await flushPromises();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+  });
+
+  it("照片墙粘贴非图片文件（如 pdf）被忽略，不触发上传", async () => {
+    const wrapper = mountUpload({ modelValue: [], autoUpload: false });
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: {
+        items: [
+          {
+            kind: "file",
+            type: "application/pdf",
+            getAsFile: () => new File(["x"], "a.pdf", { type: "application/pdf" }),
+          },
+        ],
+        files: [],
+      },
     });
     wrapper.find(".upload-pro__card-paste").element.dispatchEvent(ev);
     await flushPromises();
@@ -319,6 +340,123 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     ).toEqual(["https://example.com/a.png"]);
     wrapper.unmount();
   });
+
+  it("text 模式按钮行：按钮在前、粘贴入口在其右侧，默认文案「点击此处粘贴文件」", async () => {
+    const wrapper = mountUpload({ modelValue: [], listType: "text" });
+    await flushPromises();
+    const row = wrapper.find(".upload-pro__trigger-row");
+    expect(row.exists()).toBe(true);
+    const btn = wrapper.findComponent({ name: "ElButton" });
+    const paste = wrapper.find(".upload-pro__btn-paste");
+    expect(paste.exists()).toBe(true);
+    expect(paste.text()).toBe("点击此处粘贴文件");
+    // 顺序：按钮在前，粘贴入口在后（右侧）
+    expect(
+      btn.element.compareDocumentPosition(paste.element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("buttonSize 透传 el-button size；pasteText 自定义覆盖默认文案", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      buttonSize: "small",
+      pasteText: "粘贴到此处",
+    });
+    await flushPromises();
+    expect(wrapper.findComponent({ name: "ElButton" }).props("size")).toBe(
+      "small",
+    );
+    expect(wrapper.find(".upload-pro__btn-paste").text()).toBe("粘贴到此处");
+  });
+
+  it("pasteable=false / disabled 时按钮旁粘贴入口隐藏", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      pasteable: false,
+    });
+    expect(wrapper.find(".upload-pro__btn-paste").exists()).toBe(false);
+    await wrapper.setProps({ pasteable: true, disabled: true });
+    expect(wrapper.find(".upload-pro__btn-paste").exists()).toBe(false);
+  });
+
+  it("点击按钮旁粘贴入口：阻止冒泡不弹文件选择窗，并显式聚焦", async () => {
+    const wrapper = mountUpload({ modelValue: [], listType: "text" });
+    const fileInput = wrapper.find('input.el-upload__input').element;
+    const clickSpy = vi.spyOn(fileInput, "click");
+    const paste = wrapper.find(".upload-pro__btn-paste");
+    const focusSpy = vi.spyOn(paste.element, "focus");
+    await paste.trigger("click");
+    expect(clickSpy).not.toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    clickSpy.mockRestore();
+    focusSpy.mockRestore();
+  });
+
+  it("text 模式粘贴任意文件（含非图片）：复用 el-upload 链路入队", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      autoUpload: false,
+    });
+    const pdf = new File(["%PDF"], "说明书.pdf", { type: "application/pdf" });
+    const ev = dispatchImagePaste(
+      wrapper.find(".upload-pro__btn-paste").element,
+      [pdf],
+    );
+    expect(ev.defaultPrevented).toBe(true);
+    await flushPromises();
+    const items = wrapper.findAll(".el-upload-list__item");
+    expect(items.length).toBe(1);
+    expect(items[0].text()).toContain("说明书.pdf");
+  });
+
+  it("text 模式 multiple=false 时粘贴多个文件仅入队第一个", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      multiple: false,
+      autoUpload: false,
+    });
+    const f1 = new File(["1"], "a.pdf", { type: "application/pdf" });
+    const f2 = new File(["2"], "b.doc", { type: "application/msword" });
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [f1, f2]);
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+  });
+
+  it("text 模式 limit 裁剪：超出部分被忽略", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      multiple: true,
+      limit: 1,
+      autoUpload: false,
+    });
+    const f1 = new File(["1"], "a.pdf", { type: "application/pdf" });
+    const f2 = new File(["2"], "b.doc", { type: "application/msword" });
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [f1, f2]);
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+  });
+
+  it("text 模式粘贴非文件内容不拦截（保持原生粘贴行为）", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      autoUpload: false,
+    });
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: { items: [{ kind: "string", type: "text/plain" }], files: [] },
+    });
+    wrapper.find(".upload-pro__btn-paste").element.dispatchEvent(ev);
+    await flushPromises();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+  });
 });
 
 // 回归：原先在同一 ElUpload 上写了两个同名 #file 插槽（v-if=isCard / v-if=!isCard），
@@ -477,6 +615,29 @@ describe("UploadPro 拖拽上传宽高", () => {
     });
     expect(wrapper.find(".el-upload-dragger").exists()).toBe(true);
     expect(wrapper.find(".el-upload__text").html()).toContain("<em>选择</em>");
+  });
+
+  it("drag 模式粘贴文件（无按钮旁入口，走根节点 @paste）入队成功", async () => {
+    const wrapper = mountUpload({
+      modelValue: [],
+      drag: true,
+      listType: "text",
+      autoUpload: false,
+    });
+    // drag 模式不渲染按钮旁粘贴入口
+    expect(wrapper.find(".upload-pro__btn-paste").exists()).toBe(false);
+    // 直接在根节点派发 paste（模拟拖拽区获得焦点后 Ctrl+V）
+    const file = new File(["x"], "drag-paste.pdf", { type: "application/pdf" });
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: {
+        items: [{ kind: "file", type: "application/pdf", getAsFile: () => file }],
+        files: [],
+      },
+    });
+    wrapper.find(".upload-pro").element.dispatchEvent(ev);
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
 });
 

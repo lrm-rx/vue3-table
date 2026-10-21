@@ -104,6 +104,33 @@ export const extractClipboardImages = (event) => {
 };
 
 /**
+ * 从粘贴事件中提取全部文件 File 列表（不限类型）。
+ * 承载形态与 extractClipboardImages 相同（items 优先，files 兜底），
+ * 用于 text / picture / drag 等文件上传场景（如粘贴资源管理器复制的附件）。
+ * @param {ClipboardEvent} event
+ * @returns {File[]}
+ */
+export const extractClipboardFiles = (event) => {
+  const cd =
+    event?.clipboardData || event?.originalEvent?.clipboardData || null;
+  if (!cd) return [];
+  const files = [];
+  if (cd.items && typeof cd.items.length === "number") {
+    for (const item of cd.items) {
+      if (!item || item.kind !== "file") continue;
+      if (typeof item.getAsFile === "function") {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+  }
+  if (files.length === 0 && cd.files && typeof cd.files.length === "number") {
+    for (const f of cd.files) if (f) files.push(f);
+  }
+  return files;
+};
+
+/**
  * 从上传成功响应中解析文件描述符 { name, url }。
  * 优先级：resolveResponse(response, file) 函数 > responseKey 路径
  *         > response.url > response 本身为字符串。

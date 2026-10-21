@@ -411,7 +411,7 @@ watch(formData, () => {
 
 表单内置上传控件 `UploadPro`（文件：`UploadPro.vue` + `uploadUtils.js`），对 Element Plus `el-upload` 二次封装，**完整保留 el-upload 的属性 / 事件 / 实例方法**，并补齐四个开箱能力：
 
-1. **照片墙粘贴上传**：`list-type="picture-card"` 时触发卡片内 `+` 号下方渲染「点击此处粘贴图片」入口，点击该入口（已拦截冒泡，**不会弹出文件选择窗**）聚焦后 `Ctrl+V` 即可粘贴截图 / 复制的图片；点击卡片其他区域（`+` 号 / 空白处）仍正常打开文件选择。粘贴文件走 el-upload 原生链路（`handleStart` 入队 → `beforeUpload` 校验 → 进度 → 成功回填），不另造上传请求。
+1. **粘贴上传**：`list-type="picture-card"` 时触发卡片内 `+` 号下方渲染「点击此处粘贴图片」入口；`text` / `picture` 模式在触发按钮**右侧**渲染「点击此处粘贴文件」入口（可粘贴任意文件，如资源管理器复制的附件）。点击入口（已拦截冒泡，**不会弹出文件选择窗**）聚焦后 `Ctrl+V` 即可粘贴；点击触发区其他位置仍正常打开文件选择。粘贴文件走 el-upload 原生链路（`handleStart` 入队 → `beforeUpload` 校验 → 进度 → 成功回填），不另造上传请求。
 2. **内置图片预览**：点击墙内图片直接唤起 `el-image` 内置全屏查看器（`preview-src-list` / `initial-index`），支持左右切换、缩放、旋转，无需 `el-dialog` 外壳。
 3. **非图片文件预览预留**：`text` / `picture` 列表中，每个文件在「打勾 / 打叉」状态图标**之前**显示眼睛图标，点击（或点击文件名）触发 `preview` 事件，作为后续文件预览组件的挂载点（本组件不实现非图片预览）。
 4. **拖拽区宽高自定义**：`drag` 模式下通过 `dragWidth` / `dragHeight` 设置区域宽高（数字按 px，字符串如 `'100%'`、`'480px'` 原样生效）。
@@ -455,11 +455,11 @@ watch(formData, () => {
 | `showFileList` | Boolean | `true` | 同 el-upload |
 | `drag` | Boolean | `false` | 同 el-upload，拖拽上传 |
 | `multiple` / `accept` / `limit` / `disabled` / `autoUpload` | - | el-upload 默认 | 常用 el-upload 属性显式透出 |
-| `pasteable` | Boolean | `true` | 照片墙是否显示粘贴入口（`+` 号下方文字，仅 picture-card 生效） |
-| `pasteText` | String | `点击此处粘贴图片` | 粘贴入口文案 |
+| `pasteable` | Boolean | `true` | 是否显示粘贴入口（picture-card → `+` 号下方；text / picture → 按钮右侧） |
+| `pasteText` | String | 按模式回退 | 粘贴入口文案；未设置时照片墙为「点击此处粘贴图片」，text / picture 为「点击此处粘贴文件」 |
 | `dragWidth` / `dragHeight` | Number/String | `""` | 拖拽区宽高；数字 → px，字符串原样；不传用 el-upload 默认 |
 | `dragText` | String | `将文件拖到此处，或点击上传` | 拖拽区文案（支持简单 HTML） |
-| `buttonText` / `buttonType` | String | `点击上传` / `primary` | text / picture 模式触发按钮 |
+| `buttonText` / `buttonType` / `buttonSize` | String | `点击上传` / `primary` / `""` | text / picture 模式触发按钮文案 / 类型 / 尺寸（`buttonSize` 对应 el-button 的 `size`：large / default / small） |
 | `tip` | String | `""` | el-upload 下方提示（也可用 `#tip` 插槽） |
 | `maxSizeMb` | Number | `0` | 单文件大小上限（MB），内置 beforeUpload 拦截；0 不限制 |
 | `responseKey` | String | `data.url` | 成功响应中 URL 的 lodash-get 路径；取不到回退 `response.url` / 字符串响应 |

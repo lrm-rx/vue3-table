@@ -5,20 +5,26 @@
  * 设计目标：
  *  1. 完整保留 el-upload 的属性 / 事件 / 实例方法（未声明属性经 $attrs 透传，
  *     如 action / headers / data / name / httpRequest / beforeUpload …）；
- *  2. 照片墙（list-type=picture-card）：
- *     - 支持「复制粘贴」添加图片：组件内单一 paste 入口（焦点/事件目标在哪个
- *       UploadPro 实例内就上传到哪一个，多个上传项互不干扰），粘贴文件通过
- *       el-upload 暴露的 handleStart 入队、submit 触发，完整复用 beforeUpload
- *       校验、进度、成功回填链路，不另造一套上传请求；
- *     - 内置图片预览：组件内隐藏一个 el-image 作宿主，点击图片调用其
- *       showPreview() 唤起内置全屏查看器（preview-src-list / initial-index，
- *       teleport 到 body），支持左右切换、缩放、旋转，无需 el-dialog 外壳；
- *  3. 非图片文件（text / picture 列表 + show-file-list）：自定义 #file 渲染，
+ *  2. 粘贴上传：
+ *     - 照片墙（list-type=picture-card）：触发卡片内 + 号下方渲染粘贴入口，
+ *       仅提取剪贴板中的图片；
+ *     - text / picture 模式：触发按钮右侧渲染粘贴入口，可粘贴任意文件
+ *       （如资源管理器复制的附件）；
+ *     - 组件内单一 paste 入口（焦点/事件目标在哪个 UploadPro 实例内就上传到
+ *       哪一个，多个上传项互不干扰），粘贴文件通过 el-upload 暴露的
+ *       handleStart 入队、submit 触发，完整复用 beforeUpload 校验、进度、
+ *       成功回填链路，不另造一套上传请求；
+ *  3. 内置图片预览：组件内隐藏一个 el-image 作宿主，点击图片调用其
+ *     showPreview() 唤起内置全屏查看器（preview-src-list / initial-index，
+ *     teleport 到 body），支持左右切换、缩放、旋转，无需 el-dialog 外壳；
+ *  4. 非图片文件（text / picture 列表 + show-file-list）：自定义 #file 渲染，
  *     在打勾 / 打叉状态图标「之前」放置眼睛图标，点击触发 preview 事件，
  *     作为后续接入文件预览组件的预留触发机制（本组件不实现非图片预览）；
- *  4. 支持多个上传项：每个 FormPro 字段对应独立实例，fileList / 预览弹窗 /
+ *  5. 支持多个上传项：每个 FormPro 字段对应独立实例，fileList / 预览弹窗 /
  *     粘贴入口互不影响；
- *  5. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）。
+ *  6. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）；
+ *  7. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
+ *     buttonSize（对应 el-button 的 size）。
  *
  * v-model 值：成功文件数组，元素支持两种形态
  *   - 字符串 URL：'https://x.com/a.png'
@@ -51,6 +57,7 @@ import {
   isImageFile,
   normalizeIncoming,
   extractClipboardImages,
+  extractClipboardFiles,
   resolveFileDescriptor,
   serializeValue,
   valueSignature,
@@ -74,13 +81,17 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   autoUpload: { type: Boolean, default: true },
   // —— UploadPro 扩展配置 ——
-  // 照片墙是否显示「粘贴上传」入口（仅 picture-card 生效），默认 true
+  // 是否显示「粘贴上传」入口（默认 true）：
+  //   picture-card → + 号下方；text / picture → 按钮右侧
   pasteable: { type: Boolean, default: true },
-  // 粘贴入口提示文案（位于照片墙 + 号下方）
+  // 粘贴入口提示文案；未设置时按模式回退（照片墙「点击此处粘贴图片」，
+  // text / picture「点击此处粘贴文件」）
   pasteText: {
     type: String,
-    default: "点击此处粘贴图片",
+    default: "",
   },
+  // text / picture 模式触发按钮尺寸（对应 el-button size：large / default / small）
+  buttonSize: { type: String, default: "" },
   // 拖拽区域宽高：数字 → px；字符串原样（如 '100%'、'480px'）；不传用 el-upload 默认
   dragWidth: { type: [Number, String], default: "" },
   dragHeight: { type: [Number, String], default: "" },
@@ -129,6 +140,11 @@ const slots = useSlots();
 const uploadRef = ref(null);
 
 const isCard = computed(() => props.listType === "picture-card");
+
+// 粘贴入口文案：用户未配置时按模式回退（照片墙贴图片，其余模式贴任意文件）
+const pasteLabel = computed(
+  () => props.pasteText || (isCard.value ? "点击此处粘贴图片" : "点击此处粘贴文件"),
+);
 
 // 透传给 el-upload 的 attrs：剔除已由本组件显式接管的键
 const uploadAttrs = computed(() => {
@@ -207,12 +223,18 @@ const onExceed = (files, oldFiles) => {
 };
 
 // —— 粘贴上传：单入口（根容器 @paste），按焦点所在实例投递，多实例互不干扰 ——
+// 照片墙仅提取图片；text / picture / drag 等文件场景提取剪贴板全部文件
 const onPaste = (e) => {
   if (props.disabled) return;
-  const images = extractClipboardImages(e);
-  if (!images.length) return; // 非图片粘贴：不拦截，保持浏览器原生行为
+  const files = isCard.value
+    ? extractClipboardImages(e)
+    : extractClipboardFiles(e);
+  if (!files.length) return; // 无文件粘贴：不拦截，保持浏览器原生行为
   e.preventDefault();
-  let queue = images;
+  let queue = files;
+  // 单文件模式（multiple=false）：粘贴多个时仅取第一个，与 el-upload 文件选择器
+  // 单次单选语义一致（el-upload 的 multiple 仅约束选择器，handleStart 本身不过滤）
+  if (!props.multiple && queue.length > 1) queue = queue.slice(0, 1);
   // limit 校验（与 el-upload 选文件时的 fileList.length 口径一致）
   if (props.limit) {
     const remain = Math.max(0, props.limit - fileList.value.length);
@@ -222,7 +244,9 @@ const onPaste = (e) => {
     }
     if (queue.length > remain) {
       ElMessage.warning(
-        `最多上传 ${props.limit} 个，已自动忽略超出的 ${queue.length - remain} 张图片`,
+        `最多上传 ${props.limit} 个，已自动忽略超出的 ${queue.length - remain} ${
+          isCard.value ? "张图片" : "个文件"
+        }`,
       );
       queue = queue.slice(0, remain);
     }
@@ -233,9 +257,10 @@ const onPaste = (e) => {
 };
 
 /**
- * 粘贴入口点击：入口位于 el-upload 触发卡片内部，而卡片自身的 click 会打开
- * 文件选择窗（handleClick → input.click()），故必须 stopPropagation 截断冒泡；
- * 点击后显式聚焦，随后 Ctrl+V 的 paste 事件冒泡到根节点统一走 onPaste。
+ * 粘贴入口点击：入口位于 el-upload 触发区内部（照片墙卡片 / 按钮行），而触发区
+ * 自身的 click 会打开文件选择窗（handleClick → input.click()），故必须
+ * stopPropagation 截断冒泡；点击后显式聚焦，随后 Ctrl+V 的 paste 事件冒泡到
+ * 根节点统一走 onPaste。
  */
 const onPasteEntryClick = (e) => {
   e.stopPropagation();
@@ -409,19 +434,35 @@ defineExpose({
               class="upload-pro__card-paste"
               tabindex="0"
               role="button"
-              :aria-label="pasteText"
-              :title="pasteText"
+              :aria-label="pasteLabel"
+              :title="pasteLabel"
               @click.stop="onPasteEntryClick"
             >
-              {{ pasteText }}
+              {{ pasteLabel }}
             </span>
           </div>
         </template>
         <template v-else>
-          <ElButton :type="buttonType" :disabled="disabled">
-            <ElIcon style="margin-right: 4px"><UploadIcon /></ElIcon>
-            {{ buttonText }}
-          </ElButton>
+          <!-- 按钮行：上传按钮 + 右侧粘贴入口（粘贴任意文件） -->
+          <div class="upload-pro__trigger-row">
+            <ElButton :type="buttonType" :size="buttonSize" :disabled="disabled">
+              <ElIcon style="margin-right: 4px"><UploadIcon /></ElIcon>
+              {{ buttonText }}
+            </ElButton>
+            <!-- 粘贴入口位于 el-upload 触发区内部，点击必须 stopPropagation
+                 截断冒泡（否则弹出系统选文件窗），仅聚焦等待 Ctrl+V -->
+            <span
+              v-if="pasteable && !disabled"
+              class="upload-pro__btn-paste"
+              tabindex="0"
+              role="button"
+              :aria-label="pasteLabel"
+              :title="pasteLabel"
+              @click.stop="onPasteEntryClick"
+            >
+              {{ pasteLabel }}
+            </span>
+          </div>
         </template>
       </slot>
 
@@ -727,6 +768,41 @@ defineExpose({
 }
 :deep(.upload-pro__fail-label .el-icon) {
   color: var(--el-color-danger);
+}
+
+// —— 按钮行：按钮 + 右侧粘贴入口水平排列，与按钮等高对齐 ——
+.upload-pro__trigger-row {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.upload-pro__btn-paste {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  // 显式行高：el-form-item__content 的 line-height:32px 会被继承，
+  // 导致入口自然高度（约 37.6px）超过按钮（24/32px）并把按钮行撑高
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+  border: 1px dashed var(--el-border-color);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+
+  &:hover {
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary-light-5);
+  }
+  &:focus {
+    outline: none;
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+  }
 }
 
 // —— 预览宿主：el-image 本体不展示，仅消费其 teleport 到 body 的全屏查看器 ——

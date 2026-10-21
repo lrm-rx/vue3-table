@@ -4,6 +4,7 @@ import {
   nameFromUrl,
   normalizeIncoming,
   extractClipboardImages,
+  extractClipboardFiles,
   resolveFileDescriptor,
   serializeValue,
   valueSignature,
@@ -108,6 +109,48 @@ describe("uploadUtils.extractClipboardImages", () => {
     expect(
       extractClipboardImages({
         originalEvent: { clipboardData: { items: [], files: [] } },
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("uploadUtils.extractClipboardFiles", () => {
+  const fakeItem = (type, file) => ({
+    kind: "file",
+    type,
+    getAsFile: () => file,
+  });
+
+  it("从 clipboardData.items 提取全部文件（不限类型），忽略文本项", () => {
+    const img = { type: "image/png" };
+    const pdf = { type: "application/pdf" };
+    const event = {
+      clipboardData: {
+        items: [
+          { kind: "string", type: "text/plain", getAsFile: () => null },
+          fakeItem("image/png", img),
+          fakeItem("application/pdf", pdf),
+        ],
+      },
+    };
+    expect(extractClipboardFiles(event)).toEqual([img, pdf]);
+  });
+
+  it("items 无文件时回退 clipboardData.files（资源管理器复制文件）", () => {
+    const zip = { type: "application/zip" };
+    const event = { clipboardData: { items: [], files: [zip] } };
+    expect(extractClipboardFiles(event)).toEqual([zip]);
+  });
+
+  it("无剪贴板数据 / getAsFile 返回空 / 空列表均返回空", () => {
+    expect(extractClipboardFiles({})).toEqual([]);
+    expect(extractClipboardFiles(null)).toEqual([]);
+    expect(
+      extractClipboardFiles({
+        clipboardData: {
+          items: [{ kind: "file", type: "image/png", getAsFile: () => null }],
+          files: [],
+        },
       }),
     ).toEqual([]);
   });

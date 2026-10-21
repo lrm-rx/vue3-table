@@ -2,7 +2,8 @@
 /**
  * FormPro + UploadPro 上传能力演示：
  *  1. 照片墙：复制粘贴上传 + 内置 el-image 全屏大图预览（无 el-dialog）
- *  2. 非图片文件：文件列表眼睛图标 → preview 事件（文件预览组件预留触发点）
+ *  2. 非图片文件：文件列表眼睛图标 → preview 事件（文件预览组件预留触发点）；
+ *     按钮尺寸 buttonSize 按 el-button size 设置；按钮右侧粘贴入口可粘贴任意文件
  *  3. 同一表单配置多个上传项（照片墙 / 单图 / 附件 / 缩略图 / 拖拽）
  *  4. 拖拽上传区域自定义宽高（dragWidth / dragHeight）
  *
@@ -136,7 +137,7 @@ const items = ref([
     label: "附件材料",
     span: 24,
     required: true,
-    tip: "非图片文件列表：打勾图标前的眼睛图标 / 文件名点击均会触发 preview 事件",
+    tip: "buttonSize=small 控制按钮尺寸；按钮右侧粘贴入口点击聚焦后 Ctrl+V 可粘贴任意文件；眼睛图标 / 文件名点击触发 preview 事件",
     itemRender: {
       name: "UploadPro",
       props: {
@@ -145,6 +146,7 @@ const items = ref([
         limit: 10,
         accept: ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt",
         maxSizeMb: 20,
+        buttonSize: "small",
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview },
@@ -240,7 +242,7 @@ const onReset = () => {
       <el-button type="primary" @click="onSubmit">提交校验</el-button>
       <el-button @click="onReset">重置</el-button>
       <el-tag type="info" effect="plain">
-        粘贴：点照片墙 + 号下方「点击此处粘贴图片」聚焦 → Ctrl+V；多个上传项各自独立
+        粘贴：点照片墙「点击此处粘贴图片」或附件按钮右侧「点击此处粘贴文件」聚焦 → Ctrl+V；多个上传项各自独立
       </el-tag>
     </div>
 
