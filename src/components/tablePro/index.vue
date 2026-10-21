@@ -143,6 +143,14 @@ const props = defineProps({
   customConfig: { type: Object, default: () => ({}) },
   // 额外传入的 columnDragConfig（与内部默认合并；默认 isPeerDrag 支持面板内同级拖拽排序，含分组子列）
   columnDragConfig: { type: Object, default: () => ({}) },
+  // ========== 列个性化配置落库（防抖）==========
+  // 列设置变更（拖拽排序 / 显隐 / 固定 / 列宽等）的保存方法，参数与 vxe customConfig.updateStore 一致：
+  //   { $table, id, type, storeData }
+  // 传入后组件内部合并连续变更（见 customSaveDebounce），并在面板关闭、组件卸载时立即 flush。
+  // 也可继续通过 customConfig.updateStore 传入；两者同时存在时优先 customSaveMethod。
+  customSaveMethod: { type: Function, default: null },
+  // 列设置保存防抖毫秒（默认 500；0 表示不防抖，每次变更立即调用）
+  customSaveDebounce: { type: Number, default: 500 },
   // 是否需要分页组件（默认 true ）
   pagination: { type: Boolean, default: true },
   pagerConfig: {
@@ -1505,15 +1513,59 @@ const toolbarConfig = computed(() => {
 // ========== 列个性化配置 ==========
 // immediate: 拖拽排序实时生效（免点「确定」）；
 // 配合 gridProps 的 columnDragConfig.isPeerDrag，分组列（level>=2）子列也能在面板内同级拖拽排序
-const customConfig = computed(() => ({
-  mode: "popover", // 'modal' | 'drawer' | 'popover'
-  allowVisible: true,
-  immediate: true,
-  allowSort: true,
-  showSortDragButton: true,
-  storage: props.customStorage, // 记忆到 localStorage
-  ...props.customConfig,
-}));
+//
+// 落库：vxe 在列配置变更后会回调 customConfig.updateStore（仅 storage 为真时触发），
+// 这里把回调统一接管为防抖调用，避免连续拖拽 / 勾选产生多次接口请求。
+const customSaveHandler = computed(
+  () => props.customSaveMethod || props.customConfig?.updateStore || null,
+);
+
+let customSaveTimer = null;
+let pendingCustomSaveParams = null;
+
+// 立即执行防抖窗口内尚未提交的保存（面板关闭 / 组件卸载时调用，避免最后一次变更丢失）
+const flushCustomSave = () => {
+  if (customSaveTimer) {
+    clearTimeout(customSaveTimer);
+    customSaveTimer = null;
+  }
+  if (!pendingCustomSaveParams) return;
+  const params = pendingCustomSaveParams;
+  pendingCustomSaveParams = null;
+  customSaveHandler.value?.(params);
+};
+
+const handleCustomSave = (params) => {
+  const handler = customSaveHandler.value;
+  if (!handler) return;
+  const delay = Number(props.customSaveDebounce) || 0;
+  if (delay <= 0) {
+    handler(params);
+    return;
+  }
+  // 只保留最后一次变更（storeData 为全量快照，无需逐次累积）
+  pendingCustomSaveParams = params;
+  if (customSaveTimer) clearTimeout(customSaveTimer);
+  customSaveTimer = setTimeout(flushCustomSave, delay);
+};
+
+onBeforeUnmount(flushCustomSave);
+
+const customConfig = computed(() => {
+  const { updateStore: userUpdateStore, ...userConfig } = props.customConfig || {};
+  const saveHandler = props.customSaveMethod || userUpdateStore;
+  return {
+    mode: "popover", // 'modal' | 'drawer' | 'popover'
+    allowVisible: true,
+    immediate: true,
+    allowSort: true,
+    showSortDragButton: true,
+    storage: props.customStorage, // 记忆到 localStorage
+    ...userConfig,
+    // vxe 仅在 storage 为真时才回调 updateStore；有保存方法时强制开启（updateStore 优先，不会写 localStorage）
+    ...(saveHandler ? { storage: true, updateStore: handleCustomSave } : {}),
+  };
+});
 
 // ========== 外部插槽透传 ==========
 // 取并集：(1) 列配置 render/headerRender 字符串引用的插槽；(2) 外部 cell_/edit_/header_ 前缀插槽（详细见 README）
@@ -1564,7 +1616,11 @@ const passthroughSlotNames = computed(() => {
 const gridListeners = computed(() => {
   const obj = {};
   FORWARD_GRID_EVENTS.forEach((name) => {
-    obj[toHandlerKey(camelize(name))] = (e) => emit(name, e);
+    obj[toHandlerKey(camelize(name))] = (e) => {
+      // 面板关闭时立即落库防抖窗口内尚未提交的列配置
+      if (name === "custom-close") flushCustomSave();
+      emit(name, e);
+    };
   });
   return obj;
 });

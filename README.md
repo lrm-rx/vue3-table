@@ -506,8 +506,55 @@ tableProRef.value.selectedId;         // 选中 id
 | `toolbarConfig` | `{}` | 额外 vxe toolbar 配置（与默认合并） |
 | `customConfig` | `{}` | 额外 vxe custom 配置 |
 | `columnDragConfig` | `{}` | 额外 vxe columnDragConfig（默认已开 `isPeerDrag`，配合内置 `customConfig.immediate` 支持面板内同级拖拽排序，含分组子列） |
+| `customSaveMethod` | `null` | 列设置保存方法（防抖落库），参数 `{ $table, id, type, storeData }` |
+| `customSaveDebounce` | `500` | 保存防抖毫秒；`0` 表示每次变更立即保存 |
 
 事件：`@refresh`、`@export`、`@search`、`@density-change`、`@toolbar-button-click`。
+
+### 列设置落库（防抖保存）
+
+列设置面板默认 `immediate: true`，拖拽排序 / 显隐 / 固定等改动会实时预览。若需要把列配置保存到数据库，通过 `customSaveMethod` 传入保存方法，组件内部会自动合并连续变更（默认 500ms），避免每次拖拽都发一次请求：
+
+```vue
+<TablePro
+  :columns="columns"
+  table-id="userTable"
+  :custom-save-method="saveColumnConfig"
+  :custom-save-debounce="500"
+/>
+```
+
+```js
+const saveColumnConfig = async ({ id, type, storeData }) => {
+  // storeData 与 vxe getCustomStoreData() 一致：
+  // { sortData, visibleData, fixedData, resizableData, ... }
+  await api.saveColumnConfig({ tableId: id, type, storeData });
+};
+```
+
+- 防抖窗口内只保留最后一次变更（`storeData` 是全量快照）。
+- 列设置面板关闭（`custom-close`）和组件卸载时会立即 flush，避免最后一次改动丢失。
+- 若已通过 `customConfig.updateStore` 传入保存方法，同样会被防抖包装；与 `customSaveMethod` 同时存在时优先 `customSaveMethod`。
+- `customSaveDebounce=0` 可关闭防抖，恢复每次变更立即调用。
+- 使用 `customSaveMethod` 时必须传 `tableId`（vxe `updateStore` 参数的 `id` 来源）。
+- 开启 `customStorage` 或 `customSaveMethod` 时，分组列（含 `children`）也必须设置唯一 `field`，vxe 以其作为列状态键，否则会告警并可能导致状态错乱。
+- 从接口恢复时使用 vxe-grid 原生的 `setCustomStoreData`，且必须在表格 `ready` 之后调用：
+
+```js
+const tableProRef = ref();
+
+const restoreColumnConfig = async () => {
+  const { storeData } = await api.getColumnConfig({ tableId: "userTable" });
+  // 恢复列顺序 / 显隐 / 固定 / 列宽（含分组子列顺序）
+  await tableProRef.value?.gridRef?.setCustomStoreData(storeData);
+};
+```
+
+```vue
+<TablePro ref="tableProRef" table-id="userTable" @ready="restoreColumnConfig" />
+```
+
+完整示例见 [src/views/TableCustomPersistDemo.vue](src/views/TableCustomPersistDemo.vue)。
 
 ---
 
@@ -612,6 +659,8 @@ tableProRef.value.selectedId;         // 选中 id
 | `initParam` | Object | `{}` | 默认参数（pageNum / pageSize / sortField / sortOrder / filters） |
 | `showToolbar` / `showRefresh` / `showColumnSetting` / `showExport` / `showSearch` / `showDensity` / `showResetFilter` | Boolean | `true` | 工具栏开关 |
 | `customStorage` | Boolean | `false` | 列状态记忆 |
+| `customSaveMethod` | Function | `null` | 列设置落库方法，参数 `{ $table, id, type, storeData }`；内置防抖与关闭 / 卸载 flush |
+| `customSaveDebounce` | Number | `500` | 列设置保存防抖毫秒，`0` 表示不防抖 |
 | `toolbarConfig` / `customConfig` | Object | `{}` | 额外 vxe 配置 |
 | `virtualXConfig` / `virtualYConfig` | Object | `null` | 横向 / 纵向虚拟滚动配置。未传时按阈值自动启用：数据列 > 26 启用横向、行数 > 200 启用纵向（数据列不计复选/单选/序号/展开/操作列）；传入则覆盖默认，如 `{ enabled: false }` 强制关闭 |
 

@@ -54,6 +54,8 @@ const buildColumns = () => [
   { field: "name", title: "姓名", width: 120, sortable: true },
   {
     // 分组列：面板内可整体拖动，子列跟随；子列可在组内同级拖动
+    // 开启 storage 时需设置唯一 field，vxe 以其作为列状态键
+    field: "basicInfo",
     title: "基本信息",
     children: [
       { field: "age", title: "年龄", width: 100, sortable: true },
@@ -72,6 +74,7 @@ const buildColumns = () => [
   },
   { field: "department", title: "部门", width: 120, sortable: true },
   {
+    field: "contactInfo",
     title: "联系方式",
     children: [
       { field: "phone", title: "手机号", width: 140 },

@@ -1029,6 +1029,106 @@ describe("TablePro 文本换行切换", () => {
   });
 });
 
+describe("TablePro 列设置防抖落库", () => {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("customSaveMethod：连续变更合并为一次，保留最后一次 storeData", async () => {
+    const save = vi.fn();
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      customSaveMethod: save,
+      customSaveDebounce: 20,
+    });
+    const attrs = gridAttrs(wrapper);
+    expect(typeof attrs.customConfig.updateStore).toBe("function");
+    // 有保存方法时必须开启 storage，否则 vxe 不会回调 updateStore
+    expect(attrs.customConfig.storage).toBe(true);
+
+    attrs.customConfig.updateStore({
+      type: "update:sort",
+      storeData: { sortData: ["name"] },
+    });
+    attrs.customConfig.updateStore({
+      type: "update:visible",
+      storeData: { visibleData: { age: false } },
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    await wait(50);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].type).toBe("update:visible");
+    expect(save.mock.calls[0][0].storeData).toEqual({
+      visibleData: { age: false },
+    });
+  });
+
+  it("面板关闭与组件卸载时立即 flush 未提交的变更", async () => {
+    const save = vi.fn();
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      customSaveMethod: save,
+      customSaveDebounce: 10000,
+    });
+    const attrs = gridAttrs(wrapper);
+
+    attrs.customConfig.updateStore({ type: "update:sort", storeData: {} });
+    expect(save).not.toHaveBeenCalled();
+    attrs.onCustomClose();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save.mock.calls[0][0].type).toBe("update:sort");
+
+    attrs.customConfig.updateStore({ type: "update:fixed", storeData: {} });
+    wrapper.unmount();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1][0].type).toBe("update:fixed");
+  });
+
+  it("customSaveDebounce=0 立即保存；未传保存方法时不注入 updateStore", async () => {
+    const save = vi.fn();
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      customSaveMethod: save,
+      customSaveDebounce: 0,
+    });
+    gridAttrs(wrapper).customConfig.updateStore({
+      type: "update:visible",
+      storeData: {},
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    const { wrapper: plain } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+    });
+    const plainAttrs = gridAttrs(plain);
+    expect(plainAttrs.customConfig.updateStore).toBeUndefined();
+    expect(plainAttrs.customConfig.storage).toBe(false);
+  });
+
+  it("customConfig.updateStore 也会被防抖包装，且 customSaveMethod 优先", async () => {
+    const configSave = vi.fn();
+    const methodSave = vi.fn();
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      customConfig: { updateStore: configSave },
+      customSaveMethod: methodSave,
+      customSaveDebounce: 20,
+    });
+    const updateStore = gridAttrs(wrapper).customConfig.updateStore;
+    expect(updateStore).not.toBe(configSave);
+    expect(updateStore).not.toBe(methodSave);
+
+    updateStore({ type: "update:sort", storeData: {} });
+    await wait(50);
+    expect(methodSave).toHaveBeenCalledTimes(1);
+    expect(configSave).not.toHaveBeenCalled();
+  });
+});
+
 function propsNotMutated(cols) {
   return cols.every((c) => {
     if (c.slots !== undefined) return false;

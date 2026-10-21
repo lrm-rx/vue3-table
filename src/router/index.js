@@ -44,6 +44,12 @@ const routes = [
         meta: { title: "列个性化拖拽排序", icon: "Sort" },
       },
       {
+        path: "table-custom-persist",
+        name: "TableCustomPersist",
+        component: () => import("@/views/TableCustomPersistDemo.vue"),
+        meta: { title: "列个性化接口落库", icon: "Grid" },
+      },
+      {
         path: "md",
         name: "MdEditor",
         component: () => import("@/views/MdEditorDemo.vue"),
