@@ -74,58 +74,48 @@ export const normalizeIncoming = (value) =>
     .filter(Boolean);
 
 /**
- * 从粘贴事件中提取图片 File 列表。
- * 同时覆盖 clipboardData.items（网页复制图片常见）与 clipboardData.files
- * （部分场景以文件形式出现）；只提取 image/*，非图片内容不拦截。
- * @param {ClipboardEvent} event
- * @returns {File[]}
+ * 文件名不安全字符：URL 结构符（# ? % & + =）+ 文件系统保留字符 + 控制字符。
+ * 服务端若以原文件名拼接访问 URL 且不做编码，这些字符会导致资源无法加载
+ * （如 a#b.png 的 `#` 之后被浏览器当作 fragment 截断）。
  */
-export const extractClipboardImages = (event) => {
-  const cd =
-    event?.clipboardData || event?.originalEvent?.clipboardData || null;
-  if (!cd) return [];
-  const files = [];
-  const pushIfImage = (f) => {
-    if (f && f.type && f.type.startsWith("image/")) files.push(f);
-  };
-  // ① DataTransferItemList（网页中「复制图片」最常见的承载形式）
-  if (cd.items && typeof cd.items.length === "number") {
-    for (const item of cd.items) {
-      if (!item || item.kind !== "file") continue;
-      if (item.type && !item.type.startsWith("image/")) continue;
-      if (typeof item.getAsFile === "function") pushIfImage(item.getAsFile());
-    }
-  }
-  // ② DataTransfer.files（截图工具 / 资源管理器粘贴文件）
-  if (files.length === 0 && cd.files && typeof cd.files.length === "number") {
-    for (const f of cd.files) pushIfImage(f);
-  }
-  return files;
+const UNSAFE_FILENAME_RE = /[#?%&+=/\\:*"<>|\x00-\x1f]/g;
+
+/**
+ * 提取文件名中的不安全字符（按出现顺序去重）。
+ * @param {string} name
+ * @returns {string[]} 空数组表示文件名安全
+ */
+export const findUnsafeFileNameChars = (name) => {
+  if (typeof name !== "string" || !name) return [];
+  return [...new Set(name.match(UNSAFE_FILENAME_RE) || [])];
 };
 
 /**
- * 从粘贴事件中提取全部文件 File 列表（不限类型）。
- * 承载形态与 extractClipboardImages 相同（items 优先，files 兜底），
- * 用于 text / picture / drag 等文件上传场景（如粘贴资源管理器复制的附件）。
+ * 从粘贴事件中提取 File 列表。
+ * 同时覆盖 clipboardData.items（网页复制图片/文件常见承载形式）与
+ * clipboardData.files（截图工具 / 资源管理器粘贴文件，items 无文件时兜底）。
  * @param {ClipboardEvent} event
+ * @param {boolean} [onlyImages=false] 为 true 时只提取 image/*（照片墙场景）
  * @returns {File[]}
  */
-export const extractClipboardFiles = (event) => {
+export const extractClipboardFiles = (event, onlyImages = false) => {
   const cd =
     event?.clipboardData || event?.originalEvent?.clipboardData || null;
   if (!cd) return [];
+  const accept = (f) =>
+    f && (!onlyImages || (f.type && f.type.startsWith("image/")));
   const files = [];
   if (cd.items && typeof cd.items.length === "number") {
     for (const item of cd.items) {
       if (!item || item.kind !== "file") continue;
       if (typeof item.getAsFile === "function") {
         const f = item.getAsFile();
-        if (f) files.push(f);
+        if (accept(f)) files.push(f);
       }
     }
   }
   if (files.length === 0 && cd.files && typeof cd.files.length === "number") {
-    for (const f of cd.files) if (f) files.push(f);
+    for (const f of cd.files) if (accept(f)) files.push(f);
   }
   return files;
 };

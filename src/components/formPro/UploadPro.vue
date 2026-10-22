@@ -56,7 +56,7 @@ import {
 import {
   isImageFile,
   normalizeIncoming,
-  extractClipboardImages,
+  findUnsafeFileNameChars,
   extractClipboardFiles,
   resolveFileDescriptor,
   serializeValue,
@@ -189,6 +189,16 @@ watch(
 
 // —— 上传前 / 删除前钩子：内置校验 + 串联用户透传钩子 ——
 const handleBeforeUpload = async (rawFile) => {
+  // 文件名含 URL/文件系统不安全字符（# ? % 等）：拦截并提示。
+  // 服务端若按原名拼接访问 URL 且不做编码，这些字符会导致资源无法加载；
+  // beforeUpload 返回 false 时 el-upload 会自动将该文件移出列表
+  const unsafeChars = findUnsafeFileNameChars(rawFile.name);
+  if (unsafeChars.length) {
+    ElMessage.error(
+      `文件「${rawFile.name}」名称包含不允许的特殊字符（${unsafeChars.join(" ")}），请修改文件名后重新上传`,
+    );
+    return false;
+  }
   if (props.maxSizeMb && rawFile.size > props.maxSizeMb * 1024 * 1024) {
     ElMessage.error(
       `文件「${rawFile.name}」大小为 ${formatSize(rawFile.size)}，超出 ${props.maxSizeMb}MB 限制`,
@@ -226,9 +236,7 @@ const onExceed = (files, oldFiles) => {
 // 照片墙仅提取图片；text / picture / drag 等文件场景提取剪贴板全部文件
 const onPaste = (e) => {
   if (props.disabled) return;
-  const files = isCard.value
-    ? extractClipboardImages(e)
-    : extractClipboardFiles(e);
+  const files = extractClipboardFiles(e, isCard.value);
   if (!files.length) return; // 无文件粘贴：不拦截，保持浏览器原生行为
   e.preventDefault();
   let queue = files;

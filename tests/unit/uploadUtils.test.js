@@ -3,7 +3,7 @@ import {
   isImageFile,
   nameFromUrl,
   normalizeIncoming,
-  extractClipboardImages,
+  findUnsafeFileNameChars,
   extractClipboardFiles,
   resolveFileDescriptor,
   serializeValue,
@@ -76,41 +76,41 @@ describe("uploadUtils.normalizeIncoming", () => {
   });
 });
 
-describe("uploadUtils.extractClipboardImages", () => {
-  const fakeItem = (type, file) => ({
-    kind: "file",
-    type,
-    getAsFile: () => file,
+describe("uploadUtils.findUnsafeFileNameChars", () => {
+  it("安全文件名返回空数组（中文 / 空格 / 点 / 中划线 / 下划线）", () => {
+    expect(findUnsafeFileNameChars("正常 文件-名_1.2.png")).toEqual([]);
+    expect(findUnsafeFileNameChars("report.final.v2.pdf")).toEqual([]);
   });
 
-  it("从 clipboardData.items 提取 image/* 文件，忽略文本与非图片", () => {
-    const img = { type: "image/png" };
-    const event = {
-      clipboardData: {
-        items: [
-          { kind: "string", type: "text/plain", getAsFile: () => null },
-          fakeItem("image/png", img),
-          fakeItem("application/pdf", { type: "application/pdf" }),
-        ],
-      },
-    };
-    expect(extractClipboardImages(event)).toEqual([img]);
+  it("检出 URL 结构符并按出现顺序去重", () => {
+    expect(findUnsafeFileNameChars("a#b?.png")).toEqual(["#", "?"]);
+    expect(findUnsafeFileNameChars("a##b#c.png")).toEqual(["#"]);
+    expect(findUnsafeFileNameChars("100%&a+b=c.zip")).toEqual([
+      "%",
+      "&",
+      "+",
+      "=",
+    ]);
   });
 
-  it("items 为空时回退 clipboardData.files", () => {
-    const img = { type: "image/jpeg" };
-    const event = { clipboardData: { items: [], files: [img] } };
-    expect(extractClipboardImages(event)).toEqual([img]);
+  it("检出文件系统保留字符", () => {
+    expect(findUnsafeFileNameChars('a/b\\c:d*e?f"g<h>i|j.txt')).toEqual([
+      "/",
+      "\\",
+      ":",
+      "*",
+      "?",
+      '"',
+      "<",
+      ">",
+      "|",
+    ]);
   });
 
-  it("无剪贴板数据 / originalEvent 回退 / 非图片均返回空", () => {
-    expect(extractClipboardImages({})).toEqual([]);
-    expect(extractClipboardImages(null)).toEqual([]);
-    expect(
-      extractClipboardImages({
-        originalEvent: { clipboardData: { items: [], files: [] } },
-      }),
-    ).toEqual([]);
+  it("非字符串 / 空串返回空数组", () => {
+    expect(findUnsafeFileNameChars("")).toEqual([]);
+    expect(findUnsafeFileNameChars(null)).toEqual([]);
+    expect(findUnsafeFileNameChars(undefined)).toEqual([]);
   });
 });
 
@@ -121,7 +121,7 @@ describe("uploadUtils.extractClipboardFiles", () => {
     getAsFile: () => file,
   });
 
-  it("从 clipboardData.items 提取全部文件（不限类型），忽略文本项", () => {
+  it("默认从 clipboardData.items 提取全部文件（不限类型），忽略文本项", () => {
     const img = { type: "image/png" };
     const pdf = { type: "application/pdf" };
     const event = {
@@ -136,15 +136,36 @@ describe("uploadUtils.extractClipboardFiles", () => {
     expect(extractClipboardFiles(event)).toEqual([img, pdf]);
   });
 
-  it("items 无文件时回退 clipboardData.files（资源管理器复制文件）", () => {
-    const zip = { type: "application/zip" };
-    const event = { clipboardData: { items: [], files: [zip] } };
-    expect(extractClipboardFiles(event)).toEqual([zip]);
+  it("onlyImages=true 时只提取 image/*，忽略文本与非图片", () => {
+    const img = { type: "image/png" };
+    const event = {
+      clipboardData: {
+        items: [
+          { kind: "string", type: "text/plain", getAsFile: () => null },
+          fakeItem("image/png", img),
+          fakeItem("application/pdf", { type: "application/pdf" }),
+        ],
+      },
+    };
+    expect(extractClipboardFiles(event, true)).toEqual([img]);
   });
 
-  it("无剪贴板数据 / getAsFile 返回空 / 空列表均返回空", () => {
+  it("items 无文件时回退 clipboardData.files，onlyImages 同样生效", () => {
+    const img = { type: "image/jpeg" };
+    const zip = { type: "application/zip" };
+    const event = { clipboardData: { items: [], files: [img, zip] } };
+    expect(extractClipboardFiles(event)).toEqual([img, zip]);
+    expect(extractClipboardFiles(event, true)).toEqual([img]);
+  });
+
+  it("无剪贴板数据 / originalEvent 回退 / getAsFile 返回空 / 空列表均返回空", () => {
     expect(extractClipboardFiles({})).toEqual([]);
     expect(extractClipboardFiles(null)).toEqual([]);
+    expect(
+      extractClipboardFiles({
+        originalEvent: { clipboardData: { items: [], files: [] } },
+      }),
+    ).toEqual([]);
     expect(
       extractClipboardFiles({
         clipboardData: {

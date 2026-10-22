@@ -5,16 +5,38 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "@vue/compiler-sfc";
-import ElementPlus from "element-plus";
+import ElementPlus, { ElMessage } from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn";
 import UploadPro from "../../src/components/formPro/UploadPro.vue";
 import FormPro from "../../src/components/formPro/index.vue";
 
+// ============ mock element-plus：仅替换 ElMessage 方法，其余保留真实实现 ============
+const { ElMessageFns } = vi.hoisted(() => ({
+  ElMessageFns: {
+    warning: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+
+vi.mock("element-plus", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    ElMessage: {
+      ...actual.ElMessage,
+      ...ElMessageFns,
+    },
+  };
+});
+
 // jsdom 未实现 createObjectURL；el-upload 照片墙入队时会调用
 beforeEach(() => {
   URL.createObjectURL = vi.fn(() => "blob:mock-url");
   URL.revokeObjectURL = vi.fn();
+  Object.values(ElMessageFns).forEach((fn) => fn.mockClear());
 });
 
 const globalConfig = {
@@ -266,6 +288,61 @@ describe("UploadPro 照片墙（picture-card）", () => {
     await flushPromises();
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted[emitted.length - 1][0]).toEqual([]);
+  });
+});
+
+describe("UploadPro 文件名特殊字符拦截", () => {
+  it("照片墙粘贴含 # 文件名的图片：拦截上传、提示、不入列", async () => {
+    const httpRequest = vi.fn();
+    const wrapper = mountUpload({ modelValue: [], httpRequest });
+    const file = new File(["abc"], "a#b.png", { type: "image/png" });
+    const ev = dispatchImagePaste(
+      wrapper.find(".upload-pro__card-paste").element,
+      [file],
+    );
+    expect(ev.defaultPrevented).toBe(true);
+    await flushPromises();
+    expect(httpRequest).not.toHaveBeenCalled();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+    expect(ElMessage.error).toHaveBeenCalledTimes(1);
+    const msg = ElMessage.error.mock.calls[0][0];
+    expect(msg).toContain("a#b.png");
+    expect(msg).toContain("#");
+    expect(msg).toContain("特殊字符");
+  });
+
+  it("text 模式粘贴含特殊字符文件名的文件：同样拦截", async () => {
+    const httpRequest = vi.fn();
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+    });
+    const file = new File(["%PDF"], "100%报告.pdf", {
+      type: "application/pdf",
+    });
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [file]);
+    await flushPromises();
+    expect(httpRequest).not.toHaveBeenCalled();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+    expect(ElMessage.error).toHaveBeenCalledTimes(1);
+    expect(ElMessage.error.mock.calls[0][0]).toContain("100%报告.pdf");
+  });
+
+  it("文件名安全时正常上传（不触发拦截提示）", async () => {
+    const httpRequest = vi.fn();
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+    });
+    const file = new File(["%PDF"], "说明书 v2.pdf", {
+      type: "application/pdf",
+    });
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [file]);
+    await flushPromises();
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+    expect(ElMessage.error).not.toHaveBeenCalled();
   });
 });
 
