@@ -905,6 +905,24 @@ describe("FormPro 配置式表单", () => {
     expect(formData.value.a).toBe("1");
   });
 
+  it("mutableModel + removeHiddenValues：隐藏字段值从父级 reactive 对象原地移除", async () => {
+    const formData = reactive({ a: "1", b: "2" });
+    const wrapper = mountFormPro({
+      modelValue: formData,
+      mutableModel: true,
+      removeHiddenValues: true,
+      items: [
+        { prop: "a", label: "A", itemRender: { name: "ElInput" } },
+        { prop: "b", label: "B", visible: false },
+      ],
+    });
+    await flushPromises();
+    // hiddenValueProps 初始化回抛走 pushModelValue 原地路径：b 被删除、a 保留
+    expect(formData).not.toHaveProperty("b");
+    expect(formData.a).toBe("1");
+    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+  });
+
   it("getSubmitData：暴露方法返回已移除隐藏值的提交数据", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "1", b: "2" },

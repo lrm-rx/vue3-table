@@ -280,6 +280,24 @@ describe("CommentSimple 删除权限", () => {
     await flushPromises();
     expect(wrapper.emitted("delete")).toHaveLength(1);
   });
+
+  it("mutableComments：删除后父级 reactive 数组原地缩减，不 emit update:comments", async () => {
+    confirmFn.mockResolvedValueOnce("confirm");
+    const comments = reactive([
+      { ...makeComment(1), author: { ...me, name: "我" } },
+      makeComment(2),
+    ]);
+    const wrapper = mountSimple({ comments, mutableComments: true });
+    await wrapper.find(".bili-comment-item__delete").trigger("click");
+    await flushPromises();
+
+    // 同一数组引用原地缩减 2 → 1，被删评论消失
+    expect(comments.length).toBe(1);
+    expect(comments.some((c) => c.content === "评论内容1")).toBe(false);
+    expect(wrapper.emitted("update:comments")).toBeFalsy();
+    // delete 业务事件不受影响
+    expect(wrapper.emitted("delete")).toHaveLength(1);
+  });
 });
 
 describe("CommentSimple 排序", () => {

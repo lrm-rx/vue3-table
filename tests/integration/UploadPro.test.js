@@ -1003,6 +1003,23 @@ describe("UploadPro 对 el-upload API 的完整集成", () => {
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
 
+  it("mutableModel + valueFormat=string：父级数组原地同步为 string[]", async () => {
+    const files = reactive(["https://x/a.png"]);
+    const wrapper = mountUpload({
+      modelValue: files,
+      mutableModel: true,
+      valueFormat: "string",
+      listType: "text",
+    });
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    // 清空 → 原地 splice：字符串元素按值同步，引用不变、不 emit
+    wrapper.vm.clearFiles();
+    await flushPromises();
+    expect(files).toHaveLength(0);
+    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+  });
+
   it("clearFiles 代理：清空列表并经 v-model 回抛空数组", async () => {
     const wrapper = mountUpload({
       modelValue: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],

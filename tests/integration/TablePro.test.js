@@ -143,6 +143,26 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     ]);
   });
 
+  it("mutablePagerConfig：修改 pageSize 同样原地写入且不 emit", async () => {
+    const rows = makeRows(25);
+    const pagerConfig = reactive({ currentPage: 1, pageSize: 10, total: 0 });
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: rows,
+      pagination: true,
+      pagerConfig,
+      mutablePagerConfig: true,
+    });
+    wrapper.findComponent(ElPaginationStub).vm.$emit("size-change", 5);
+    await flushPromises();
+
+    // 原地合并：pageSize 写入同一 reactive 对象，不 emit
+    expect(pagerConfig.pageSize).toBe(5);
+    expect(wrapper.emitted("update:pagerConfig")).toBeFalsy();
+    // 切片按新 pageSize 更新为前 5 条
+    expect(gridAttrs(wrapper).data.map((r) => r.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it("数据长度变化时 currentPage 被夹紧（最后一页越界回退）", async () => {
     const rows = makeRows(25);
     const { wrapper } = await mountTablePro({
