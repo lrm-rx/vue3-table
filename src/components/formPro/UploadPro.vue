@@ -18,12 +18,15 @@
  *     showPreview() 唤起内置全屏查看器（preview-src-list / initial-index，
  *     teleport 到 body），支持左右切换、缩放、旋转，无需 el-dialog 外壳；
  *  4. 非图片文件（text / picture 列表 + show-file-list）：自定义 #file 渲染，
- *     在打勾 / 打叉状态图标「之前」放置眼睛图标，点击触发 preview 事件，
- *     作为后续接入文件预览组件的预留触发机制（本组件不实现非图片预览）；
- *  5. 支持多个上传项：每个 FormPro 字段对应独立实例，fileList / 预览弹窗 /
+ *     - 眼睛图标（位于打勾 / 打叉状态图标「之前」，showPreviewIcon 可隐藏）：
+ *       图片走内置预览，非图片触发 preview 事件（预留外部文件预览组件挂载点）；
+ *     - 文件名点击：视为下载，触发 download 事件由外部接管下载行为；
+ *  5. 禁用态合并：disabled 优先级 item 配置（显式 true / false）> el-form 的
+ *     disabled，未配置时跟随表单；禁用时隐藏粘贴入口与删除按钮、忽略粘贴；
+ *  6. 支持多个上传项：每个 FormPro 字段对应独立实例，fileList / 预览弹窗 /
  *     粘贴入口互不影响；
- *  6. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）；
- *  7. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
+ *  7. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）；
+ *  8. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
  *     buttonSize（对应 el-button 的 size）。
  *
  * v-model 值：成功文件数组，元素支持两种形态
@@ -39,7 +42,7 @@ import {
   useAttrs,
   useSlots,
 } from "vue";
-import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage } from "element-plus";
+import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage, useFormDisabled } from "element-plus";
 import {
   Plus,
   Upload as UploadIcon,
@@ -78,7 +81,10 @@ const props = defineProps({
   multiple: { type: Boolean, default: false },
   accept: { type: String, default: "" },
   limit: { type: Number, default: 0 },
-  disabled: { type: Boolean, default: false },
+  // disabled 默认值必须为 undefined（而非 false）：
+  // 合并规则 = props.disabled ?? el-form.disabled ?? false（见下方 mergedDisabled），
+  // item 显式配置 true / false 均优先于表单级 disabled；未配置时跟随 el-form
+  disabled: { type: Boolean, default: undefined },
   autoUpload: { type: Boolean, default: true },
   // —— UploadPro 扩展配置 ——
   // 是否显示「粘贴上传」入口（默认 true）：
@@ -90,6 +96,8 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  // 是否显示文件行（text / picture 列表）的预览眼睛图标；隐藏后文件名点击仍可下载
+  showPreviewIcon: { type: Boolean, default: true },
   // text / picture 模式触发按钮尺寸（对应 el-button size：large / default / small）
   buttonSize: { type: String, default: "" },
   // 拖拽区域宽高：数字 → px；字符串原样（如 '100%'、'480px'）；不传用 el-upload 默认
@@ -122,9 +130,11 @@ const props = defineProps({
 
 const emit = defineEmits([
   "update:modelValue",
-  // 非图片文件预览触发（眼睛图标 / 文件名点击）：payload { file, name, url, index, fileList }
+  // 非图片文件预览触发（仅眼睛图标）：payload { file, name, url, index, fileList }
   // —— 后续文件预览组件挂载点，本组件只负责抛事件
   "preview",
+  // 文件名点击视为下载：payload 同 preview，本组件只抛事件，由外部接管下载行为
+  "download",
   // 透传 el-upload 事件（签名与 el-upload 一致）
   "success",
   "error",
@@ -140,6 +150,10 @@ const slots = useSlots();
 const uploadRef = ref(null);
 
 const isCard = computed(() => props.listType === "picture-card");
+
+// 禁用态合并：props.disabled（item 显式 true / false）?? el-form.disabled ?? false。
+// el-upload 内部走同一 hook，模板中所有禁用判断统一改用 mergedDisabled
+const mergedDisabled = useFormDisabled();
 
 // 粘贴入口文案：用户未配置时按模式回退（照片墙贴图片，其余模式贴任意文件）
 const pasteLabel = computed(
@@ -235,7 +249,7 @@ const onExceed = (files, oldFiles) => {
 // —— 粘贴上传：单入口（根容器 @paste），按焦点所在实例投递，多实例互不干扰 ——
 // 照片墙仅提取图片；text / picture / drag 等文件场景提取剪贴板全部文件
 const onPaste = (e) => {
-  if (props.disabled) return;
+  if (mergedDisabled.value) return;
   const files = extractClipboardFiles(e, isCard.value);
   if (!files.length) return; // 无文件粘贴：不拦截，保持浏览器原生行为
   e.preventDefault();
@@ -275,8 +289,9 @@ const onPasteEntryClick = (e) => {
   e.currentTarget?.focus?.();
 };
 
-/** 编程式粘贴入口（测试 / 外部调用）：直接传入 File 列表 */
+/** 编程式粘贴入口（测试 / 外部调用）：直接传入 File 列表；禁用态下忽略 */
 const pasteImages = (files) => {
+  if (mergedDisabled.value) return;
   const images = (Array.isArray(files) ? files : [files]).filter(
     (f) => f && f.type && f.type.startsWith("image/"),
   );
@@ -295,8 +310,8 @@ const preview = reactive({
 });
 const elImageRef = ref(null);
 
-/** 构造非图片 preview 事件载荷（后续预览组件可直接消费） */
-const buildPreviewPayload = (file) => {
+/** 构造 preview / download 事件载荷（外部预览 / 下载组件可直接消费） */
+const buildFilePayload = (file) => {
   const desc = resolveFileDescriptor(file, resolveOpts.value);
   const index = fileList.value.findIndex((f) => f.uid === file.uid);
   return {
@@ -318,7 +333,7 @@ const openImagePreview = async (file) => {
     .filter(Boolean);
   if (!urls.length) {
     // 没有可用图片地址（极少数情况）：退化为非图片预览事件
-    emit("preview", buildPreviewPayload(file));
+    emit("preview", buildFilePayload(file));
     return;
   }
   const idx = images.findIndex((f) => f.uid === file.uid);
@@ -333,14 +348,23 @@ const openImagePreview = async (file) => {
 };
 
 /**
- * 统一预览入口：
+ * 统一预览入口（眼睛图标 / 缩略图 / 照片墙覆盖层 / el-upload on-preview）：
  *  - 图片（照片墙 / 图片文件）→ 内置 el-image 查看器预览；
  *  - 非图片文件 → 抛 preview 事件（预留外部预览组件挂载点）。
  */
 const handlePreview = (file) => {
   if (!file || file.status === "uploading") return;
   if (isImageFile(file)) openImagePreview(file);
-  else emit("preview", buildPreviewPayload(file));
+  else emit("preview", buildFilePayload(file));
+};
+
+/**
+ * 下载入口（text / picture 列表点击文件名触发）：与眼睛图标的 handlePreview 区分——
+ * 眼睛只负责预览；文件名点击视为下载，抛 download 事件由外部接管下载行为。
+ */
+const handleDownload = (file) => {
+  if (!file || file.status === "uploading") return;
+  emit("download", buildFilePayload(file));
 };
 
 // 自定义文件行删除（非图片列表 #file 插槽内）
@@ -410,7 +434,7 @@ defineExpose({
       :multiple="multiple"
       :accept="accept"
       :limit="limit"
-      :disabled="disabled"
+      :disabled="mergedDisabled"
       :auto-upload="autoUpload"
       :before-upload="handleBeforeUpload"
       :before-remove="handleBeforeRemove"
@@ -438,7 +462,7 @@ defineExpose({
             <!-- 粘贴入口位于触发卡片内部：@click.stop 阻止冒泡到 el-upload
                  触发区（否则会弹出系统选文件窗），仅聚焦等待 Ctrl+V -->
             <span
-              v-if="pasteable && !disabled"
+              v-if="pasteable && !mergedDisabled"
               class="upload-pro__card-paste"
               tabindex="0"
               role="button"
@@ -453,14 +477,14 @@ defineExpose({
         <template v-else>
           <!-- 按钮行：上传按钮 + 右侧粘贴入口（粘贴任意文件） -->
           <div class="upload-pro__trigger-row">
-            <ElButton :type="buttonType" :size="buttonSize" :disabled="disabled">
+            <ElButton :type="buttonType" :size="buttonSize" :disabled="mergedDisabled">
               <ElIcon style="margin-right: 4px"><UploadIcon /></ElIcon>
               {{ buttonText }}
             </ElButton>
             <!-- 粘贴入口位于 el-upload 触发区内部，点击必须 stopPropagation
                  截断冒泡（否则弹出系统选文件窗），仅聚焦等待 Ctrl+V -->
             <span
-              v-if="pasteable && !disabled"
+              v-if="pasteable && !mergedDisabled"
               class="upload-pro__btn-paste"
               tabindex="0"
               role="button"
@@ -503,7 +527,7 @@ defineExpose({
             <ElIcon class="el-icon--zoom-in"><ZoomIn /></ElIcon>
           </span>
           <span
-            v-if="!disabled"
+            v-if="!mergedDisabled"
             class="el-upload-list__item-delete"
             @click.stop="removeOne(file)"
           >
@@ -540,9 +564,10 @@ defineExpose({
           @click.stop="handlePreview(file)"
         />
         <div class="el-upload-list__item-info">
+          <!-- 文件名点击视为下载（handleDownload），与眼睛图标的预览区分开 -->
           <a
             class="el-upload-list__item-name"
-            @click.prevent="handlePreview(file)"
+            @click.prevent="handleDownload(file)"
           >
             <ElIcon class="el-icon--document"><Document /></ElIcon>
             <span class="el-upload-list__item-file-name" :title="file.name">
@@ -558,9 +583,10 @@ defineExpose({
           />
         </div>
 
-        <!-- 眼睛：位于打勾/打叉状态图标之前；图片走内置预览，非图片抛 preview 事件 -->
+        <!-- 眼睛：位于打勾/打叉状态图标之前；图片走内置预览，非图片抛 preview 事件；
+             showPreviewIcon=false 时整体隐藏（不影响文件名点击下载） -->
         <ElIcon
-          v-if="file.status === 'success' || file.status === 'fail'"
+          v-if="showPreviewIcon && (file.status === 'success' || file.status === 'fail')"
           class="upload-pro__eye"
           title="预览"
           @click.stop="handlePreview(file)"
@@ -587,9 +613,9 @@ defineExpose({
           </ElIcon>
         </label>
 
-        <!-- 删除（沿用原生 el-icon--close：hover 行时显示） -->
+        <!-- 删除（沿用原生 el-icon--close：hover 行时显示；禁用态隐藏） -->
         <ElIcon
-          v-if="!disabled"
+          v-if="!mergedDisabled"
           class="el-icon--close"
           @click.stop="removeOne(file)"
         >
@@ -742,6 +768,10 @@ defineExpose({
   transform: translateY(-50%);
   z-index: 1;
   display: inline-flex;
+  // 扩大可点区域：四周补 padding（绝对定位不影响布局）；总高约 14+10=24px，
+  // 不超过 text 列表行高（font-size 14 × line-height 1.8 ≈ 25px）
+  padding: 5px 6px;
+  box-sizing: border-box;
   cursor: pointer;
   color: var(--el-text-color-secondary);
   opacity: 0.85;
@@ -760,7 +790,7 @@ defineExpose({
   left: 6px;
   right: auto;
   transform: none;
-  padding: 2px;
+  padding: 4px;
   border-radius: 4px;
   background-color: rgba(255, 255, 255, 0.85);
 }

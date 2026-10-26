@@ -86,6 +86,12 @@ const routes = [
         meta: { title: "FormPro 联动交互", icon: "Connection" },
       },
       {
+        path: "form-model-mode",
+        name: "FormProModelMode",
+        component: () => import("@/views/FormProModelModeDemo.vue"),
+        meta: { title: "FormPro ref/reactive 兼容", icon: "Document" },
+      },
+      {
         path: "float-ball",
         name: "FloatBall",
         component: () => import("@/views/FloatBallDemo.vue"),

@@ -18,6 +18,11 @@
  *  9. 紧凑模式（compact）：item 垂直间隔收紧（无 tip 行 18px→6px，含 tip 行保持默认）、
  *     label 与控件距离减半、校验错误改用 el-tooltip 在 item 右上角展示（error 主色调背景、
  *     白色文字、2px 内边距、任意 el-dialog 之上），errorTipDuration 秒后自动隐藏
+ *
+ * 约束：v-model 推荐用 ref 承载（不可变替换 + update:modelValue 事件语义）。
+ * 父级坚持 reactive 时，请改用 :model-value + mutable-model（原地合并写入、不 emit），
+ * 勿用 v-model——其编译的 formData = $event 赋值对 reactive 代理会抛错（const）/丢响应式（let）。
+ * 组件无法自动区分 ref(obj).value 与 reactive(obj)（同为 reactive 代理），故需显式声明。
  */
 import {
   ref,
@@ -76,6 +81,11 @@ const props = defineProps({
   // 自动补全初始值：根据 items 配置为未声明的字段填充合理默认值（Switch→false，CheckboxGroup→[]，其余→""），
   // 免去逐个声明 ""。item.defaultValue 可指定固定默认值；用户在 modelValue 中已提供的值始终优先。默认 true。
   autoFillDefaults: { type: Boolean, default: true },
+  // 原地同步模式（兼容 reactive 承载）：开启后不 emit update:modelValue，
+  // 字段变更直接原地合并写入 props.modelValue（要求其为可变对象，通常配合 reactive 使用）。
+  // 用法：<FormPro :model-value="formData" mutable-model />（勿再写 v-model / @update:modelValue）。
+  // 默认 false：emit 新快照由父级整体替换（ref + v-model 的推荐用法）。
+  mutableModel: { type: Boolean, default: false },
   // 边框表格样式：开启后表单渲染为带边框的表格外观（外框 + 单元格网格线 + label 表头底色），
   // 适用于信息录入/详情描述类表单。默认 false，保持原外观（向后兼容）。推荐配合 gutter=0 使用。
   border: { type: Boolean, default: false },
@@ -339,6 +349,24 @@ watch(
   { deep: true },
 );
 
+// 回抛父级统一入口：
+// - 默认（ref + v-model）：emit update:modelValue，父级以新快照整体替换（不可变语义）；
+// - mutableModel（reactive 承载）：原地合并写入 props.modelValue、不 emit——
+//   模板 v-model 编译的 formData = $event 赋值对 reactive 代理会抛错（const）/ 丢响应式（let），
+//   故父级改用 :model-value + mutable-model，由组件直接原地写回；
+//   原地写入会触发上方 props.modelValue 深 watch → syncFromParent，与 emit 路径同样收敛。
+const pushModelValue = (snapshot) => {
+  if (isEqual(snapshot, props.modelValue)) return;
+  if (props.mutableModel) {
+    const target = props.modelValue;
+    if (!target || typeof target !== "object") return;
+    for (const k of Object.keys(target)) if (!(k in snapshot)) delete target[k];
+    Object.assign(target, snapshot);
+    return;
+  }
+  emit("update:modelValue", snapshot);
+};
+
 // 内部 formData 变化 → 向父级回抛（值未变则跳过，避免回环）
 // 当 removeHiddenValues 开启时，回抛数据会排除「因 visible / visibleMethod 隐藏」的字段值
 // （onlyRequired 隐藏的字段不受影响，值保留）。
@@ -351,9 +379,7 @@ watch(
   () => {
     if (suppressEmit) return;
     syncFromParent(props.modelValue);
-    const snapshot = buildSubmitData(formData);
-    if (isEqual(snapshot, props.modelValue)) return;
-    emit("update:modelValue", snapshot);
+    pushModelValue(buildSubmitData(formData));
   },
   { deep: true },
 );
@@ -381,9 +407,7 @@ watch(
   hiddenValueProps,
   () => {
     if (suppressEmit) return;
-    const snapshot = buildSubmitData(formData);
-    if (isEqual(snapshot, props.modelValue)) return;
-    emit("update:modelValue", snapshot);
+    pushModelValue(buildSubmitData(formData));
   },
   { immediate: true },
 );

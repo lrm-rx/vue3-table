@@ -33,6 +33,16 @@ const items = ref([
 </script>
 ```
 
+> **`v-model` 推荐用 `ref` 承载。** FormPro 默认回抛 `update:modelValue` 新快照、由父级整体替换（不可变语义）。
+> 若父级坚持 `reactive`，请改用 `:model-value` + `mutable-model`（组件原地合并写入、不再 emit），
+> 勿写 `v-model`——其编译结果是 `formData = $event` 的变量赋值，对 reactive 代理会抛错（`const`）/丢响应式（`let`）。
+> 组件无法自动区分 `ref(obj).value` 与 `reactive(obj)`（同为 reactive 代理），故该模式需显式声明；
+> 此模式下父级无法监听 `update:modelValue` 事件。
+>
+> ```vue
+> <FormPro :model-value="formData" mutable-model :items="items" />
+> ```
+
 ---
 
 ## 2. 组件 Props

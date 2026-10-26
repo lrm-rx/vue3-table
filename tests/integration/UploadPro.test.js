@@ -5,7 +5,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "@vue/compiler-sfc";
-import ElementPlus, { ElMessage } from "element-plus";
+import ElementPlus, { ElMessage, ElForm } from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn";
 import UploadPro from "../../src/components/formPro/UploadPro.vue";
@@ -364,7 +364,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     ).toBeTruthy();
   });
 
-  it("点击眼睛 / 文件名触发 preview 事件，载荷含 name/url/index/fileList", async () => {
+  it("点击眼睛触发 preview 事件，载荷含 name/url/index/fileList", async () => {
     const wrapper = mountUpload({
       modelValue: [
         { name: "a.pdf", url: "https://example.com/a.pdf" },
@@ -375,7 +375,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     await flushPromises();
     const eyes = wrapper.findAll(".upload-pro__eye");
     await eyes[1].trigger("click");
-    let evts = wrapper.emitted("preview");
+    const evts = wrapper.emitted("preview");
     expect(evts).toBeTruthy();
     expect(evts[0][0]).toMatchObject({
       name: "b.doc",
@@ -383,11 +383,47 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
       index: 1,
     });
     expect(evts[0][0].fileList).toHaveLength(2);
+  });
 
-    // 文件名点击同样触发
+  it("点击文件名触发 download 事件（与眼睛预览区分开，下载行为由外部接管）", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { name: "a.pdf", url: "https://example.com/a.pdf" },
+        { name: "b.doc", url: "https://example.com/b.doc" },
+      ],
+      listType: "text",
+    });
+    await flushPromises();
     await wrapper.findAll(".el-upload-list__item-name")[0].trigger("click");
-    evts = wrapper.emitted("preview");
-    expect(evts[1][0].name).toBe("a.pdf");
+    // download 事件载荷与 preview 同构
+    const evts = wrapper.emitted("download");
+    expect(evts).toBeTruthy();
+    expect(evts[0][0]).toMatchObject({
+      name: "a.pdf",
+      url: "https://example.com/a.pdf",
+      index: 0,
+    });
+    expect(evts[0][0].fileList).toHaveLength(2);
+    // 文件名点击不再抛 preview
+    expect(wrapper.emitted("preview")).toBeFalsy();
+  });
+
+  it("showPreviewIcon=false 时隐藏眼睛图标，文件名点击下载不受影响", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],
+      listType: "text",
+      showPreviewIcon: false,
+    });
+    await flushPromises();
+    expect(wrapper.find(".upload-pro__eye").exists()).toBe(false);
+    // 眼睛隐藏不影响下载：文件名点击仍抛 download
+    await wrapper.find(".el-upload-list__item-name").trigger("click");
+    expect(wrapper.emitted("download")?.[0]?.[0]).toMatchObject({
+      name: "a.pdf",
+    });
+    // 响应式切回 true 后眼睛恢复显示
+    await wrapper.setProps({ showPreviewIcon: true });
+    expect(wrapper.find(".upload-pro__eye").exists()).toBe(true);
   });
 
   it("删除按钮触发 el-upload 移除并回抛空数组（v-model 同步）", async () => {
@@ -533,6 +569,123 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     await flushPromises();
     expect(ev.defaultPrevented).toBe(false);
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+  });
+});
+
+// 禁用态合并：mergedDisabled = item 显式 disabled（true/false）?? el-form.disabled ?? false。
+// el-form 禁用时：粘贴入口与文件行删除叉号隐藏、粘贴事件被忽略；
+// item 配置显式 false 可覆盖表单级禁用，显式 true 在表单未禁用时同样生效。
+describe("UploadPro 禁用态：item disabled 优先于 el-form disabled", () => {
+  const mountInForm = (formDisabled, uploadProps = {}) =>
+    mount(
+      defineComponent({
+        setup() {
+          return () =>
+            h(ElForm, { disabled: formDisabled }, () =>
+              h(UploadPro, {
+                modelValue: [
+                  { name: "a.pdf", url: "https://example.com/a.pdf" },
+                ],
+                listType: "text",
+                autoUpload: false,
+                ...uploadProps,
+              }),
+            );
+        },
+      }),
+      { global: globalConfig },
+    );
+
+  it("el-form disabled=true（item 未配置）：粘贴入口 / 删除叉号隐藏，粘贴被忽略", async () => {
+    const wrapper = mountInForm(true);
+    await flushPromises();
+    const up = wrapper.findComponent(UploadPro);
+    // 粘贴入口与删除叉号隐藏
+    expect(up.find(".upload-pro__btn-paste").exists()).toBe(false);
+    expect(up.find(".el-icon--close").exists()).toBe(false);
+    // el-upload 同步禁用
+    expect(up.findComponent({ name: "ElUpload" }).props("disabled")).toBe(true);
+    // 直接在根节点派发 paste：被禁用守卫忽略（不拦截、不入队）
+    const file = new File(["x"], "pasted.pdf", { type: "application/pdf" });
+    const ev = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clipboardData", {
+      value: {
+        items: [{ kind: "file", type: "application/pdf", getAsFile: () => file }],
+        files: [],
+      },
+    });
+    up.find(".upload-pro").element.dispatchEvent(ev);
+    await flushPromises();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(up.findAll(".el-upload-list__item").length).toBe(1); // 仍为初始 1 个
+  });
+
+  it("el-form disabled=true + item disabled=false：item 覆盖表单，粘贴/删除恢复可用", async () => {
+    const wrapper = mountInForm(true, { disabled: false });
+    await flushPromises();
+    const up = wrapper.findComponent(UploadPro);
+    expect(up.find(".upload-pro__btn-paste").exists()).toBe(true);
+    expect(up.find(".el-icon--close").exists()).toBe(true);
+    expect(up.findComponent({ name: "ElUpload" }).props("disabled")).toBe(false);
+    // 粘贴正常入队
+    const file = new File(["x"], "pasted.pdf", { type: "application/pdf" });
+    const ev = dispatchImagePaste(up.find(".upload-pro__btn-paste").element, [
+      file,
+    ]);
+    expect(ev.defaultPrevented).toBe(true);
+    await flushPromises();
+    expect(up.findAll(".el-upload-list__item").length).toBe(2);
+  });
+
+  it("el-form disabled=false + item disabled=true：item 显式禁用优先生效", async () => {
+    const wrapper = mountInForm(false, { disabled: true });
+    await flushPromises();
+    const up = wrapper.findComponent(UploadPro);
+    expect(up.find(".upload-pro__btn-paste").exists()).toBe(false);
+    expect(up.find(".el-icon--close").exists()).toBe(false);
+    expect(up.findComponent({ name: "ElUpload" }).props("disabled")).toBe(true);
+  });
+
+  it("FormPro 集成：表单 disabled 透传到 UploadPro；itemRender.props.disabled=false 覆盖恢复", async () => {
+    const makeForm = (itemDisabled) =>
+      mount(FormPro, {
+        props: {
+          modelValue: {
+            files: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],
+          },
+          disabled: true,
+          items: [
+            {
+              prop: "files",
+              label: "附件",
+              itemRender: {
+                name: "UploadPro",
+                props: {
+                  listType: "text",
+                  ...(itemDisabled === undefined
+                    ? {}
+                    : { disabled: itemDisabled }),
+                },
+              },
+            },
+          ],
+        },
+        global: globalConfig,
+      });
+
+    // item 未配置 disabled → 跟随 FormPro（el-form）禁用
+    let wrapper = makeForm(undefined);
+    await flushPromises();
+    let up = wrapper.findComponent(UploadPro);
+    expect(up.find(".upload-pro__btn-paste").exists()).toBe(false);
+    expect(up.find(".el-icon--close").exists()).toBe(false);
+
+    // item 显式 disabled=false → 覆盖表单级禁用，恢复可用
+    wrapper = makeForm(false);
+    await flushPromises();
+    up = wrapper.findComponent(UploadPro);
+    expect(up.find(".upload-pro__btn-paste").exists()).toBe(true);
+    expect(up.find(".el-icon--close").exists()).toBe(true);
   });
 });
 

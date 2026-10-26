@@ -6,6 +6,8 @@
  *     按钮尺寸 buttonSize 按 el-button size 设置；按钮右侧粘贴入口可粘贴任意文件
  *  3. 同一表单配置多个上传项（照片墙 / 单图 / 附件 / 缩略图 / 拖拽）
  *  4. 拖拽上传区域自定义宽高（dragWidth / dragHeight）
+ *  5. 禁用态优先级：表单级 disabled 开关；item 配置 disabled=false 可覆盖表单级禁用
+ *  6. 眼睛图标显隐（showPreviewIcon）与文件名点击下载（download 事件，外部接管下载行为）
  *
  * 演示用 httpRequest 为本地模拟（进度 + blob: URL）；真实项目改为
  * itemRender.props.action = '/api/upload' 或传入自己的 httpRequest 即可。
@@ -59,6 +61,21 @@ const onFilePreview = (payload) => {
   console.log("[UploadPro preview]", payload);
 };
 
+// 文件名点击下载：UploadPro 只抛 download 事件，下载行为由外部接管（此处演示 a[download] 实现）
+const onFileDownload = (payload) => {
+  const { name, url } = payload || {};
+  ElMessage.success(`【download 事件】下载文件：${name}`);
+  if (!url) return;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name || "";
+  a.target = "_blank";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
+
 const formData = ref({
   // 照片墙：初始回填 2 张
   photos: [
@@ -76,7 +93,18 @@ const formData = ref({
   // 拖拽上传
   dragImages: [],
   dragFiles: [],
+  // 禁用态优先级演示
+  sealFile: [
+    { name: "盖章合同.pdf", url: "https://example.com/files/contract-sealed.pdf" },
+  ],
+  // 眼睛图标显隐演示
+  noEyeFile: [
+    { name: "年报汇总.xlsx", url: "https://example.com/files/annual.xlsx" },
+  ],
 });
+
+// 表单级禁用开关（演示 item disabled 与 el-form disabled 的优先级）
+const formDisabled = ref(false);
 
 // 校验规则
 const rules = {
@@ -137,7 +165,7 @@ const items = ref([
     label: "附件材料",
     span: 24,
     required: true,
-    tip: "buttonSize=small 控制按钮尺寸；按钮右侧粘贴入口点击聚焦后 Ctrl+V 可粘贴任意文件；眼睛图标 / 文件名点击触发 preview 事件",
+    tip: "buttonSize=small 控制按钮尺寸；按钮右侧粘贴入口点击聚焦后 Ctrl+V 可粘贴任意文件；眼睛图标触发 preview 事件，文件名点击触发下载",
     itemRender: {
       name: "UploadPro",
       props: {
@@ -149,7 +177,7 @@ const items = ref([
         buttonSize: "small",
         httpRequest: mockHttpRequest,
       },
-      events: { preview: onFilePreview },
+      events: { preview: onFilePreview, download: onFileDownload },
     },
   },
   {
@@ -165,7 +193,44 @@ const items = ref([
         accept: "image/*",
         httpRequest: mockHttpRequest,
       },
-      events: { preview: onFilePreview },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
+
+  {
+    group: true,
+    title: "禁用态优先级 / 眼睛图标显隐",
+  },
+  {
+    prop: "sealFile",
+    label: "始终可编辑",
+    span: 12,
+    tip: "item disabled=false：打开上方「表单禁用」后本项仍可上传 / 删除（item 配置优先于表单级）",
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        disabled: false,
+        buttonSize: "small",
+        httpRequest: mockHttpRequest,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
+  {
+    prop: "noEyeFile",
+    label: "隐藏眼睛图标",
+    span: 12,
+    tip: "showPreviewIcon=false：不显示眼睛图标；文件名点击仍触发 download 事件下载",
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        showPreviewIcon: false,
+        buttonSize: "small",
+        httpRequest: mockHttpRequest,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
     },
   },
 
@@ -192,6 +257,7 @@ const items = ref([
       },
       events: {
         preview: onFilePreview,
+        download: onFileDownload,
         success: (_resp, file) =>
           console.log("[dragImages] 上传成功：", file.name),
       },
@@ -213,7 +279,7 @@ const items = ref([
         buttonText: "选择文件",
         httpRequest: mockHttpRequest,
       },
-      events: { preview: onFilePreview },
+      events: { preview: onFilePreview, download: onFileDownload },
     },
   },
 ]);
@@ -241,6 +307,12 @@ const onReset = () => {
     <div style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center">
       <el-button type="primary" @click="onSubmit">提交校验</el-button>
       <el-button @click="onReset">重置</el-button>
+      <el-switch
+        v-model="formDisabled"
+        active-text="表单禁用"
+        inactive-text="表单启用"
+        inline-prompt
+      />
       <el-tag type="info" effect="plain">
         粘贴：点照片墙「点击此处粘贴图片」或附件按钮右侧「点击此处粘贴文件」聚焦 → Ctrl+V；多个上传项各自独立
       </el-tag>
@@ -253,6 +325,7 @@ const onReset = () => {
       :span="24"
       :title-colon="true"
       :rules="rules"
+      :disabled="formDisabled"
       label-width="110px"
     />
 

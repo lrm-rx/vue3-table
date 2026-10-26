@@ -54,6 +54,30 @@ describe("FormPro 配置式表单", () => {
     expect(formData.value.name).toBe("hello");
   });
 
+  it("mutableModel 兼容 reactive 承载：原地合并写入，不 emit update:modelValue", async () => {
+    const formData = reactive({ name: "张三" });
+    const onUpdate = vi.fn();
+    const wrapper = mountFormPro({
+      modelValue: formData,
+      mutableModel: true,
+      "onUpdate:modelValue": onUpdate,
+      items: [
+        { prop: "name", label: "名称", itemRender: { name: "ElInput" } },
+      ],
+    });
+    await flushPromises();
+    await wrapper.find("input").setValue("李四");
+    await flushPromises();
+    // 原地写入：同一 reactive 代理被直接更新
+    expect(formData.name).toBe("李四");
+    // 不 emit：父级无需（也不能用 v-model）接收 update:modelValue
+    expect(onUpdate).not.toHaveBeenCalled();
+    // 父级原地直写仍能同步进内部控件（既有深 watch 路径不受影响）
+    formData.name = "王五";
+    await flushPromises();
+    expect(wrapper.find("input").element.value).toBe("王五");
+  });
+
   it("24 栅格分列：item.span 优先级 > 表单级 span", async () => {
     const wrapper = mountFormPro({
       modelValue: {},
