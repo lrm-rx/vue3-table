@@ -32,6 +32,8 @@
  * v-model 值：成功文件数组，元素支持两种形态
  *   - 字符串 URL：'https://x.com/a.png'
  *   - 对象：{ name: 'a.png', url: 'https://...' }（valueFormat 默认 'file'）
+ *   对象形态的业务字段（id 等）全程保真：回写时以原对象为基底仅覆盖 name/url；
+ *   remove / preview / download 事件的 file 上亦可直接取到（file.id）
  */
 import {
   ref,
@@ -165,13 +167,16 @@ const pasteLabel = computed(
   () => props.pasteText || (isCard.value ? "点击此处粘贴图片" : "点击此处粘贴文件"),
 );
 
-// 透传给 el-upload 的 attrs：剔除已由本组件显式接管的键
+// 透传给 el-upload 的 attrs：剔除已由本组件显式接管的键；
+// action 未传时默认 "#"（el-upload 的 action 为必填语义，自定义 httpRequest
+// 场景下无实际用途，默认占位避免缺省告警/异常）
 const uploadAttrs = computed(() => {
   const out = {};
   for (const [k, v] of Object.entries(attrs)) {
     if (k === "onUpdate:modelValue") continue;
     out[k] = v;
   }
+  if (out.action == null || out.action === "") out.action = "#";
   return out;
 });
 

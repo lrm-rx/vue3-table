@@ -5,8 +5,11 @@
  *  - v-model 值为「已上传成功」的文件描述符数组，支持两种元素形态：
  *      ① 字符串：'https://x.com/a.png'（按 URL 末段推导文件名）
  *      ② 对象：  { name: 'a.png', url: 'https://...' }
+ *  - 对象形态的业务字段（id 等）全程保真：归一化时挂在 file.__rawItem 上并
+ *    平铺到 file 本身（remove/preview 等事件可取 file.id），序列化时以原对象
+ *    为基底仅覆盖 name/url，回写不丢字段
  *  - 组件内部统一归一化为 UploadUserFile（el-upload fileList 项）：
- *      { name, url, status: 'success', uid?, response?, raw? }
+ *      { name, url, status: 'success', uid?, response?, raw?, __rawItem? }
  */
 import { get } from "lodash-es";
 
@@ -65,10 +68,13 @@ export const normalizeIncoming = (value) =>
       }
       if (!item.url) return null;
       return {
+        ...item, // 业务字段平铺到 file 上：remove / preview 等事件可直接取 file.id
         name: item.name || nameFromUrl(item.url, `file-${i + 1}`),
         url: item.url,
         status: "success",
         ...(item.response !== undefined ? { response: item.response } : null),
+        // 序列化时的保真基底：serializeValue 以其为底仅覆盖 name/url
+        __rawItem: item,
       };
     })
     .filter(Boolean);
@@ -138,7 +144,8 @@ export const resolveFileDescriptor = (
   if (typeof resolveResponse === "function") {
     const custom = resolveResponse(resp, file);
     if (custom && typeof custom === "object") {
-      if (custom.url) return { name: custom.name || file.name, url: custom.url };
+      // 返回对象整体透传（id 等业务字段保留），仅确保 name/url 就位
+      if (custom.url) return { ...custom, name: custom.name || file.name };
     } else if (typeof custom === "string" && custom) {
       return { name: file.name, url: custom };
     }
@@ -156,7 +163,9 @@ export const resolveFileDescriptor = (
 /**
  * 将内部 fileList 序列化为对外 v-model 值。
  * 仅保留 success 项；valueFormat='url' 时返回 URL 字符串数组，
- * 否则返回 { name, url } 对象数组。
+ * 否则返回对象数组——以 file.__rawItem（外部传入的原始对象）为基底仅覆盖
+ * name/url（响应解析结果优先），回填项的业务字段（id 等）全程保真；
+ * 新上传项无 __rawItem，直接使用响应解析结果（含 resolveResponse 透传字段）。
  * @param {Array<UploadUserFile>} fileList
  * @param {Object} opts responseKey / resolveResponse / valueFormat
  */
@@ -164,7 +173,9 @@ export const serializeValue = (fileList, opts = {}) => {
   const list = (fileList || []).filter((f) => f && f.status === "success");
   return list.map((f) => {
     const desc = resolveFileDescriptor(f, opts);
-    return opts.valueFormat === "url" ? desc.url : desc;
+    if (opts.valueFormat === "url") return desc.url;
+    const raw = f.__rawItem && typeof f.__rawItem === "object" ? f.__rawItem : null;
+    return raw ? { ...raw, ...desc } : desc;
   });
 };
 

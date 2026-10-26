@@ -903,6 +903,18 @@ describe("UploadPro 对 el-upload API 的完整集成", () => {
     expect(el.props("crossorigin")).toBe("anonymous");
   });
 
+  it("action 未传或为空串时默认 '#'；显式传入时透传", () => {
+    // 未传
+    const noAction = mountUpload({ modelValue: [] });
+    expect(noAction.findComponent({ name: "ElUpload" }).props("action")).toBe("#");
+    // 空串同样回退默认
+    const emptyAction = mountUpload({ modelValue: [], action: "" });
+    expect(emptyAction.findComponent({ name: "ElUpload" }).props("action")).toBe("#");
+    // 显式传入：透传原值
+    const withAction = mountUpload({ modelValue: [], action: "/api/upload" });
+    expect(withAction.findComponent({ name: "ElUpload" }).props("action")).toBe("/api/upload");
+  });
+
   it("外部默认插槽整体替换内置触发器；不传插槽时回退内置按钮", () => {
     const withSlot = mount(
       defineComponent({
@@ -1030,6 +1042,106 @@ describe("UploadPro 对 el-upload API 的完整集成", () => {
     await flushPromises();
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
+    expect(emitted[emitted.length - 1][0]).toEqual([]);
+  });
+});
+
+describe("UploadPro 业务字段保真（id 等）", () => {
+  it("回填对象的业务字段在删除其他项后的回写中保留", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { id: 101, name: "合同.pdf", url: "https://example.com/a.pdf" },
+        { id: 102, name: "发票.pdf", url: "https://example.com/b.pdf" },
+      ],
+      listType: "text",
+    });
+    await flushPromises();
+    // 删除第二项 → 触发回写，剩余项应以原对象为基底（id 保留）
+    const rows = wrapper.findAll(".el-icon--close");
+    expect(rows.length).toBe(2);
+    await rows[1].trigger("click");
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted).toBeTruthy();
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    expect(last[0].id).toBe(101);
+    expect(last[0].name).toBe("合同.pdf");
+    expect(last[0].url).toBe("https://example.com/a.pdf");
+  });
+
+  it("remove / 事件链路的 file 上可直接取到业务字段（file.id）", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ id: 101, name: "合同.pdf", url: "https://example.com/a.pdf" }],
+      listType: "text",
+    });
+    await flushPromises();
+    await wrapper.find(".el-icon--close").trigger("click");
+    await flushPromises();
+    const removed = wrapper.emitted("remove");
+    expect(removed).toBeTruthy();
+    expect(removed[0][0].id).toBe(101);
+  });
+
+  it("resolveResponse 返回对象整体透传：新上传文件的服务端字段（id）进入 v-model", async () => {
+    const httpRequest = (option) =>
+      Promise.resolve({
+        code: 200,
+        data: { id: "srv-9001", url: "https://example.com/new.pdf" },
+      });
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+      resolveResponse: (resp) => ({
+        id: resp.data.id,
+        url: resp.data.url,
+      }),
+    });
+    await flushPromises();
+    const file = new File(["%PDF"], "新文件.pdf", { type: "application/pdf" });
+    wrapper.vm.handleStart(file);
+    // handleStart 仅入队（status=ready），需显式 submit 触发 httpRequest
+    wrapper.vm.submit();
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted).toBeTruthy();
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    // name 回退为文件名；id / url 来自 resolveResponse 透传
+    expect(last[0].id).toBe("srv-9001");
+    expect(last[0].name).toBe("新文件.pdf");
+    expect(last[0].url).toBe("https://example.com/new.pdf");
+  });
+
+  it("mutableModel 模式下业务字段同样保真", async () => {
+    const files = reactive([
+      { id: 201, name: "a.pdf", url: "https://example.com/a.pdf" },
+      { id: 202, name: "b.pdf", url: "https://example.com/b.pdf" },
+    ]);
+    const wrapper = mountUpload({
+      modelValue: files,
+      mutableModel: true,
+      listType: "text",
+    });
+    await flushPromises();
+    await wrapper.findAll(".el-icon--close")[1].trigger("click");
+    await flushPromises();
+    expect(files).toHaveLength(1);
+    expect(files[0].id).toBe(201);
+    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+  });
+
+  it("valueFormat=url 时不受保真逻辑影响（仍为纯 URL 字符串）", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ id: 101, name: "合同.pdf", url: "https://example.com/a.pdf" }],
+      listType: "text",
+      valueFormat: "url",
+    });
+    await flushPromises();
+    await wrapper.find(".el-icon--close").trigger("click");
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
     expect(emitted[emitted.length - 1][0]).toEqual([]);
   });
 });

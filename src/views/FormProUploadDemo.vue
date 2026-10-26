@@ -84,9 +84,9 @@ const formData = ref({
   ],
   // 单图证件照：1 张
   idPhoto: [{ name: "证件照.svg", url: svgImage("#e6a23c", "ID Photo") }],
-  // 附件：非图片文件
+  // 附件：非图片文件（id 为业务字段，删除/回写全程保真）
   attachments: [
-    { name: "项目说明书-v1.pdf", url: "https://example.com/files/project-v1.pdf" },
+    { id: 1001, name: "项目说明书-v1.pdf", url: "https://example.com/files/project-v1.pdf" },
   ],
   // 缩略图列表
   thumbs: [{ name: "缩略图.svg", url: svgImage("#909399", "Thumb") }],
