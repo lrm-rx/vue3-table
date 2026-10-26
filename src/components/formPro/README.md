@@ -87,6 +87,7 @@ const items = ref([
 | `disabledWhen(ctx)` / `readonlyWhen(ctx)` | 动态禁用 / 只读：依据当前表单数据求值（`ctx = { value, prop, data }`），render 期自动追踪依赖、随依赖字段变化实时切换；与静态 `itemRender.props.disabled / readonly` 为「或」关系（静态 `true` 恒生效）。只读仅对支持 `readonly` 的控件有效（如 ElInput），选择类控件请用禁用（见 §14） |
 | `optionsSource` | 声明式异步选项：`{ deps, fetch, when?, clearValue?, debounce? }`——「输入/选择/切换 → 请求接口 → 刷新本字段 options」，内置 loading、防竞态、依赖变化自动清空本字段值（见 §14）。与 `itemRender.options` 互斥（配置后由 optionsSource 接管 options） |
 | `removeValueOnHidden` | 项级：隐藏时是否移除值（覆盖表单级 `removeHiddenValues`） |
+| `modelModifiers` | v-model 修饰符（配置式渲染无法写模板 `v-model.trim`，在此声明）：`{ trim?: true, number?: true }`——`trim` 回写时去除首尾空白；`number` 尽力转数字（可解析则转、否则保留原字符串，同 Vue `looseToNumber` 语义）；组合时先 trim 再转数字。仅作用于字符串值，非字符串原样透传。`lazy` 不支持（组件场景请改用 `itemRender.events.change` 自行监听） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
 | `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示 |

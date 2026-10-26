@@ -922,7 +922,88 @@ describe("FormPro 配置式表单", () => {
     expect(formData.a).toBe("1");
     expect(wrapper.emitted("update:modelValue")).toBeFalsy();
   });
+});
 
+describe("FormPro modelModifiers（v-model 修饰符）", () => {
+  it("trim：回写时去除首尾空白", async () => {
+    const formData = ref({ name: "" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :items="[
+          { prop: 'name', label: '名称', modelModifiers: { trim: true }, itemRender: { name: 'ElInput' } }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    await wrapper.find("input").setValue("  张三  ");
+    await flushPromises();
+    expect(formData.value.name).toBe("张三");
+  });
+
+  it("number：可解析转数字，不可解析保留原字符串（looseToNumber 语义）", async () => {
+    const formData = ref({ price: "" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :items="[
+          { prop: 'price', label: '价格', modelModifiers: { number: true }, itemRender: { name: 'ElInput' } }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    await wrapper.find("input").setValue("12.5");
+    await flushPromises();
+    expect(formData.value.price).toBe(12.5);
+    await wrapper.find("input").setValue("abc");
+    await flushPromises();
+    expect(formData.value.price).toBe("abc");
+  });
+
+  it("trim + number 组合：先 trim 再转数字", async () => {
+    const formData = ref({ age: "" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :items="[
+          { prop: 'age', label: '年龄', modelModifiers: { trim: true, number: true }, itemRender: { name: 'ElInput' } }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    await wrapper.find("input").setValue("  42  ");
+    await flushPromises();
+    expect(formData.value.age).toBe(42);
+  });
+
+  it("未配置修饰符的字段原样回写；非字符串值直接透传", async () => {
+    const formData = ref({ name: "", count: 0 });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :items="[
+          { prop: 'name', label: '名称', itemRender: { name: 'ElInput' } },
+          { prop: 'count', label: '数量', modelModifiers: { trim: true }, itemRender: { name: 'ElInputNumber' } }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    // 无修饰符：保留空格
+    await wrapper.find("input").setValue("  张三  ");
+    await flushPromises();
+    expect(formData.value.name).toBe("  张三  ");
+    // 数字控件 emit 的是 number，trim 不影响非字符串
+    wrapper.findComponent({ name: "ElInputNumber" }).vm.$emit("update:modelValue", 7);
+    await flushPromises();
+    expect(formData.value.count).toBe(7);
+  });
+});
+
+describe("FormPro 配置式表单", () => {
   it("getSubmitData：暴露方法返回已移除隐藏值的提交数据", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "1", b: "2" },

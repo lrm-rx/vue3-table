@@ -76,8 +76,23 @@ const entries = computed(() =>
       }),
 );
 
-const setField = (field, v) => {
-  props.formData[field] = v;
+// v-model 修饰符（item.modelModifiers）：配置式渲染无法使用模板 v-model.trim，
+// 在统一回写入口等效应用——trim：去除首尾空白；number：尽力转数字（语义同 Vue
+// looseToNumber：可解析则转、否则保留原字符串）。仅作用于字符串值；
+// lazy 不支持（组件场景请改用 itemRender.events.change 自行监听）
+const applyModelModifiers = (v, mods) => {
+  if (!mods || typeof v !== "string") return v;
+  let val = v;
+  if (mods.trim) val = val.trim();
+  if (mods.number) {
+    const n = parseFloat(val);
+    val = Number.isNaN(n) ? val : n;
+  }
+  return val;
+};
+
+const setField = (field, v, item) => {
+  props.formData[field] = applyModelModifiers(v, item?.modelModifiers);
 };
 
 // —— 紧凑模式（compact）：可视行划分 ——
@@ -119,7 +134,7 @@ const renderByItemRender = (ir, item, ctx) => {
   const bindProps = {
     ...(ir.props || {}),
     modelValue: ctx.value,
-    "onUpdate:modelValue": (v) => setField(item.prop, v),
+    "onUpdate:modelValue": (v) => setField(item.prop, v, item),
   };
   // 动态禁用 / 只读：item.disabledWhen / item.readonlyWhen 依据当前表单数据求值（ctx 同 options 函数形态），
   // 与静态 itemRender.props.disabled / readonly 为「或」关系（静态 true 恒生效，动态侧只追加不覆盖）。

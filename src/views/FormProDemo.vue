@@ -231,7 +231,9 @@ const items = ref([
     titleBold: true,
     titlePrefix: markRaw(InfoFilled),
     titlePrefixTip: "请输入真实姓名",
-    tip: "请输入 2-20 位字符的真实姓名",
+    tip: "请输入 2-20 位字符的真实姓名（modelModifiers.trim：回写自动去首尾空格）",
+    // v-model 修饰符：配置式渲染无法写 v-model.trim，用 modelModifiers 声明
+    modelModifiers: { trim: true },
     itemRender: {
       name: "ElInput",
       props: { placeholder: "请输入姓名", clearable: true },
