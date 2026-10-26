@@ -115,6 +115,34 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     });
   });
 
+  it("mutablePagerConfig：翻页原地合并写入父级对象，不 emit update:pagerConfig", async () => {
+    const rows = makeRows(25);
+    const pagerConfig = reactive({ currentPage: 1, pageSize: 10, total: 0 });
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: rows,
+      pagination: true,
+      pagerConfig,
+      mutablePagerConfig: true,
+    });
+    wrapper.findComponent(ElPaginationStub).vm.$emit("current-change", 2);
+    await flushPromises();
+
+    // 同一 reactive 对象被原地合并（引用不变）
+    expect(pagerConfig.currentPage).toBe(2);
+    expect(pagerConfig.pageSize).toBe(10);
+    // 不 emit：父级无需（也不能用 v-model:pager-config）接收
+    expect(wrapper.emitted("update:pagerConfig")).toBeFalsy();
+    // page-change 事件仍正常抛出，且切片正确更新
+    expect(wrapper.emitted("page-change")[0][0]).toMatchObject({
+      currentPage: 2,
+      pageSize: 10,
+    });
+    expect(gridAttrs(wrapper).data.map((r) => r.id)).toEqual([
+      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ]);
+  });
+
   it("数据长度变化时 currentPage 被夹紧（最后一页越界回退）", async () => {
     const rows = makeRows(25);
     const { wrapper } = await mountTablePro({

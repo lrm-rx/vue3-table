@@ -73,6 +73,11 @@ defineOptions({ name: "UploadPro", inheritAttrs: false });
 const props = defineProps({
   // v-model：成功文件数组（string[] 或 {name,url}[]）
   modelValue: { type: Array, default: () => [] },
+  // 原地同步模式（兼容 reactive 承载，语义同 FormPro mutableModel）：
+  // 开启后列表变更原地 splice 写入 props.modelValue、不 emit update:modelValue——
+  // v-model 编译的 files = $event 赋值对 reactive 代理会抛错，故该模式下父级
+  // 改用 :model-value + mutable-model（勿写 v-model）。默认 false：emit 新数组整体替换
+  mutableModel: { type: Boolean, default: false },
   // —— el-upload 常用属性（显式声明给默认值/便于配置；其余属性走 $attrs 透传）——
   // 列表形态：text（文件列表）/ picture（缩略图列表）/ picture-card（照片墙）
   listType: { type: String, default: "picture-card" },
@@ -195,8 +200,16 @@ watch(
   fileList,
   () => {
     const val = serializeValue(fileList.value, resolveOpts.value);
-    if (valueSignature(val) !== valueSignature(props.modelValue))
-      emit("update:modelValue", val);
+    if (valueSignature(val) === valueSignature(props.modelValue)) return;
+    // mutableModel：原地 splice 写入父级数组、不 emit（兼容 reactive([]) 承载）；
+    // 写入触发上方 modelValue 深 watch，签名一致跳过重建，与 emit 路径同样收敛
+    if (props.mutableModel) {
+      if (Array.isArray(props.modelValue)) {
+        props.modelValue.splice(0, props.modelValue.length, ...val);
+      }
+      return;
+    }
+    emit("update:modelValue", val);
   },
   { deep: true },
 );

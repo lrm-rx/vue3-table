@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { reactive } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
@@ -100,6 +101,35 @@ describe("CommentSection 发送一级评论", () => {
     const publish = findButton(wrapper, "发布");
     expect(publish.attributes("disabled")).toBeDefined();
     expect(wrapper.emitted("send")).toBeFalsy();
+  });
+
+  it("mutableComments：发布评论原地 splice 写入父级数组，不 emit update:comments", async () => {
+    const comments = reactive([]);
+    const wrapper = mountSection({ comments, mutableComments: true });
+    await wrapper.find(".bili-comment-editor__collapse").trigger("click");
+    await wrapper.find("textarea").setValue("reactive 首评");
+    await findButton(wrapper, "发布").trigger("click");
+    await flushPromises();
+
+    // 同一 reactive 数组被原地插入（引用不变，长度 0 → 1）
+    expect(comments.length).toBe(1);
+    expect(comments[0].content).toBe("reactive 首评");
+    // 不 emit update:comments；send / update:sort 等业务事件不受影响
+    expect(wrapper.emitted("update:comments")).toBeFalsy();
+    expect(wrapper.emitted("send")).toHaveLength(1);
+    // 父级原地直写（push）经深 watch 同步进列表
+    comments.push({
+      id: "c-x",
+      floor: 99,
+      author: { id: "u9", name: "外部用户", avatar: "" },
+      content: "父级追加的评论",
+      createTime: Date.now(),
+      likeCount: 0,
+      liked: false,
+      replies: [],
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain("父级追加的评论");
   });
 });
 

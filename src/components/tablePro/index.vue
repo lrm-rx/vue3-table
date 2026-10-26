@@ -157,6 +157,11 @@ const props = defineProps({
     type: Object,
     default: () => ({ currentPage: 1, pageSize: 10, total: 0 }),
   },
+  // v-model:pager-config 原地同步模式（兼容 reactive 承载，语义同 FormPro mutableModel）：
+  // 开启后分页变更原地合并写入 props.pagerConfig、不 emit update:pagerConfig——
+  // v-model 编译的 pagerConfig = $event 赋值对 reactive 代理会抛错，故该模式下父级
+  // 改用 :pager-config + mutable-pager-config（勿写 v-model:pager-config）
+  mutablePagerConfig: { type: Boolean, default: false },
   // 分页切换前置拦截（透传内部分页组件，见 Pagination.vue）：
   // 返回 false 或 Promise reject（含 resolve 为 false）时阻止切换页码/分页大小并回滚 UI
   beforePageChange: { type: Function, default: null },
@@ -1747,7 +1752,13 @@ const onPagerChange = (newPager) => {
       pageSize: newPager.pageSize,
     };
   }
-  emit("update:pagerConfig", newPager);
+  // mutablePagerConfig：原地合并写入父级 pagerConfig、不 emit（兼容 reactive 承载）；
+  // 写入触发 props.pagerConfig 深 watch 回同步 localPager（值相同，无害收敛）
+  if (props.mutablePagerConfig && props.pagerConfig) {
+    Object.assign(props.pagerConfig, newPager);
+  } else {
+    emit("update:pagerConfig", newPager);
+  }
   emit("page-change", newPager);
 };
 

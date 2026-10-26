@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { ref, defineComponent, h } from "vue";
+import { ref, reactive, defineComponent, h } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -981,6 +981,26 @@ describe("UploadPro 对 el-upload API 的完整集成", () => {
     // 经 el-upload 移除链路 → onRemove 向外抛出（ready 文件未成功上传，
     // v-model 本就是 []，无成功项可序列化故不产生 update:modelValue）
     expect(wrapper.emitted("remove")).toBeTruthy();
+  });
+
+  it("mutableModel：reactive 数组承载时原地 splice 同步，不 emit update:modelValue", async () => {
+    const files = reactive([{ name: "a.png", url: "https://x/a.png" }]);
+    const wrapper = mountUpload({
+      modelValue: files,
+      mutableModel: true,
+      listType: "text",
+    });
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    // 清空内部列表 → 同一 reactive 数组被原地清空（引用不变），且不 emit
+    wrapper.vm.clearFiles();
+    await flushPromises();
+    expect(files).toHaveLength(0);
+    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+    // 父级原地直写（push）仍能经深 watch 重建内部列表
+    files.push({ name: "b.png", url: "https://x/b.png" });
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
 
   it("clearFiles 代理：清空列表并经 v-model 回抛空数组", async () => {

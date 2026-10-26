@@ -20,6 +20,11 @@ import { createId, isTempId, sortRootComments } from "./utils/format.js";
 const props = defineProps({
   // 评论列表（v-model:comments），由业务侧传入
   comments: { type: Array, default: () => [] },
+  // v-model:comments 原地同步模式（兼容 reactive 承载，语义同 FormPro mutableModel）：
+  // 开启后列表变更原地 splice 写入 props.comments、不 emit update:comments——
+  // v-model 编译的 comments = $event 赋值对 reactive 代理会抛错，故该模式下父级
+  // 改用 :comments + mutable-comments（勿写 v-model:comments）
+  mutableComments: { type: Boolean, default: false },
   // 当前登录用户（头像/昵称展示、发布署名、删除权限判断）
   currentUser: { type: Object, default: () => ({ id: "", name: "", avatar: "" }) },
   // 排序：hot 最热 / latest 最新 / floor 楼层升序（v-model:sort）
@@ -84,7 +89,8 @@ watch(
     // 楼层号由后端生成并随数据返回，组件直接透传，不做补排
     innerComments.value = val ?? [];
   },
-  { immediate: true },
+  // mutableComments 模式下父级原地改数组（push/splice）引用不变，需 deep 才能感知
+  { immediate: true, deep: props.mutableComments },
 );
 
 // —— 排序：受控优先 ——
@@ -253,6 +259,14 @@ watch(
 
 // 任意变更后向父组件同步列表
 const syncComments = () => {
+  // mutableComments：原地 splice 写入父级数组、不 emit（兼容 reactive([]) 承载）；
+  // 写入触发上方深 watch 回读（同引用赋值，ref 的 Object.is 判等直接跳过）
+  if (props.mutableComments) {
+    if (Array.isArray(props.comments)) {
+      props.comments.splice(0, props.comments.length, ...innerComments.value);
+    }
+    return;
+  }
   emit("update:comments", innerComments.value);
 };
 

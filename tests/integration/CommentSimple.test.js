@@ -7,6 +7,7 @@
  *       吸顶容器 / 底部状态文本。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { reactive } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import ElementPlus from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
@@ -128,6 +129,26 @@ describe("CommentSimple 发送一级评论", () => {
     expect(publish.attributes("disabled")).toBeDefined();
     await publish.trigger("click");
     expect(wrapper.emitted("send")).toBeFalsy();
+  });
+
+  it("mutableComments：发布评论原地 splice 写入父级数组，不 emit update:comments", async () => {
+    const comments = reactive(makeComments(2));
+    const wrapper = mountSimple({ comments, mutableComments: true });
+    await wrapper.find(".bili-comment-editor__collapse").trigger("click");
+    await wrapper.find("textarea").setValue("reactive 评论");
+    await findButton(wrapper, "发布").trigger("click");
+    await flushPromises();
+
+    // 同一 reactive 数组被原地插入（引用不变，长度 2 → 3）
+    expect(comments.length).toBe(3);
+    expect(comments.some((c) => c.content === "reactive 评论")).toBe(true);
+    // 不 emit update:comments；send 等业务事件不受影响
+    expect(wrapper.emitted("update:comments")).toBeFalsy();
+    expect(wrapper.emitted("send")).toHaveLength(1);
+    // 父级原地直写（push）经深 watch 同步进列表
+    comments.push(makeComment(99));
+    await flushPromises();
+    expect(wrapper.text()).toContain("评论内容99");
   });
 });
 

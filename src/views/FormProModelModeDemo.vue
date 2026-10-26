@@ -10,8 +10,15 @@
  *  3. 组件无法自动区分 ref(obj).value 与 reactive(obj)（同为 reactive 代理），
  *     两种模式需按上方写法各自配对，不能混用
  *  4. 两种模式下「父级直写」均能同步进表单控件（既有深 watch 路径）
+ *  5. 同款兼容已覆盖其余对象/数组值组件（下方第二行）：
+ *     UploadPro（mutable-model）、TablePro 分页（mutable-pager-config）、
+ *     评论区（mutable-comments）
  */
 import { ref, reactive } from "vue";
+import FormPro from "@/components/formPro/index.vue";
+import UploadPro from "@/components/formPro/UploadPro.vue";
+import TablePro from "@/components/tablePro/index.vue";
+import CommentSimple from "@/components/commentSimple/index.vue";
 
 // 两侧共用同一套 items 配置，保证行为可对比
 const baseItems = [
@@ -102,6 +109,48 @@ const resetReactive = () => {
   for (const k of Object.keys(reactiveData)) delete reactiveData[k];
   Object.assign(reactiveData, initialData(), { name: "李四" });
 };
+
+// —— 第二行：其余组件的 reactive 兼容模式 ——
+// UploadPro：:model-value + mutable-model（原地 splice，不 emit update:modelValue）
+const upFiles = reactive([{ name: "已上传合同.pdf", url: "https://example.com/contract.pdf" }]);
+const mockUpload = (option) =>
+  new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          code: 200,
+          data: { url: URL.createObjectURL(option.file), name: option.file.name },
+        }),
+      300,
+    ),
+  );
+
+// TablePro：:pager-config + mutable-pager-config（原地合并，不 emit update:pagerConfig）
+const tablePager = reactive({ currentPage: 1, pageSize: 5, total: 0 });
+const tableColumns = [
+  { field: "name", title: "姓名" },
+  { field: "dept", title: "部门" },
+];
+const tableRows = Array.from({ length: 18 }, (_, i) => ({
+  id: i + 1,
+  name: `成员-${i + 1}`,
+  dept: ["研发", "产品", "设计"][i % 3],
+}));
+
+// CommentSimple：:comments + mutable-comments（原地 splice，不 emit update:comments）
+const commentList = reactive([
+  {
+    id: "c1",
+    floor: 1,
+    author: { id: "u1", name: "张三", avatar: "" },
+    content: " reactive 承载的评论列表，直接 push 也会同步 ",
+    createTime: Date.now() - 3600000,
+    likeCount: 3,
+    liked: false,
+    replies: [],
+  },
+]);
+const me = { id: "me", name: "我", avatar: "" };
 </script>
 
 <template>
@@ -172,6 +221,51 @@ const resetReactive = () => {
 
           <el-divider style="margin: 8px 0">实时数据</el-divider>
           <pre style="background: #f5f7fa; padding: 12px; border-radius: 4px; max-height: 220px; overflow: auto">{{ JSON.stringify(reactiveData, null, 2) }}</pre>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-divider>其余组件的 reactive 兼容模式</el-divider>
+    <el-row :gutter="16">
+      <el-col :span="8">
+        <el-card shadow="never">
+          <template #header>UploadPro：:model-value + mutable-model</template>
+          <UploadPro
+            :model-value="upFiles"
+            mutable-model
+            list-type="text"
+            button-size="small"
+            :http-request="mockUpload"
+          />
+          <pre style="background: #f5f7fa; padding: 8px; border-radius: 4px; margin-top: 8px; max-height: 140px; overflow: auto">{{ JSON.stringify(upFiles, null, 2) }}</pre>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="never">
+          <template #header>TablePro：:pager-config + mutable-pager-config</template>
+          <TablePro
+            :columns="tableColumns"
+            :data="tableRows"
+            :pager-config="tablePager"
+            mutable-pager-config
+            :show-toolbar="false"
+            height="260"
+          />
+          <pre style="background: #f5f7fa; padding: 8px; border-radius: 4px; margin-top: 8px">{{ JSON.stringify(tablePager) }}</pre>
+        </el-card>
+      </el-col>
+      <el-col :span="8">
+        <el-card shadow="never">
+          <template #header>CommentSimple：:comments + mutable-comments</template>
+          <CommentSimple
+            :comments="commentList"
+            mutable-comments
+            :current-user="me"
+            :remote-has-more="false"
+          />
+          <div style="margin-top: 8px; font-size: 12px; color: #909399">
+            父级数组长度：{{ commentList.length }}（发送评论后原地 +1，引用不变）
+          </div>
         </el-card>
       </el-col>
     </el-row>
