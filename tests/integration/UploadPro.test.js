@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ref, reactive, defineComponent, h } from "vue";
 import { mount, flushPromises } from "@vue/test-utils";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "@vue/compiler-sfc";
-import ElementPlus, { ElMessage, ElForm } from "element-plus";
+import ElementPlus, { ElMessage, ElMessageBox, ElForm } from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn";
 import UploadPro from "../../src/components/formPro/UploadPro.vue";
@@ -439,6 +439,106 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted).toBeTruthy();
     expect(emitted[emitted.length - 1][0]).toEqual([]);
+  });
+
+  describe("confirmRemove：删除 / 移除二次确认", () => {
+    let confirmSpy;
+
+    beforeEach(() => {
+      confirmSpy = vi
+        .spyOn(ElMessageBox, "confirm")
+        .mockResolvedValue("confirm");
+    });
+
+    afterEach(() => {
+      confirmSpy.mockRestore();
+    });
+
+    it("默认 false：删除不弹确认框，直接移除", async () => {
+      const wrapper = mountUpload({
+        modelValue: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],
+        listType: "text",
+      });
+      await flushPromises();
+      await wrapper.find(".el-icon--close").trigger("click");
+      await flushPromises();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
+    });
+
+    it("true + 无 raw：按「删除」提示，取消则保留文件", async () => {
+      confirmSpy.mockRejectedValue("cancel");
+      const wrapper = mountUpload({
+        modelValue: [
+          { name: "server.pdf", url: "https://example.com/server.pdf" },
+        ],
+        listType: "text",
+        confirmRemove: true,
+      });
+      await flushPromises();
+      await wrapper.find(".el-icon--close").trigger("click");
+      await flushPromises();
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0][1]).toBe("删除确认");
+      expect(confirmSpy.mock.calls[0][2]).toMatchObject({
+        type: "warning",
+        confirmButtonText: "删除",
+      });
+      expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+      expect(wrapper.emitted("remove")).toBeFalsy();
+    });
+
+    it("true + 无 raw + 确认：删除并同步 v-model", async () => {
+      const wrapper = mountUpload({
+        modelValue: [
+          { name: "server.pdf", url: "https://example.com/server.pdf" },
+        ],
+        listType: "text",
+        confirmRemove: true,
+      });
+      await flushPromises();
+      await wrapper.find(".el-icon--close").trigger("click");
+      await flushPromises();
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      const emitted = wrapper.emitted("update:modelValue");
+      expect(emitted[emitted.length - 1][0]).toEqual([]);
+    });
+
+    it("true + 带 raw（本地文件流）：按「移除」提示，取消则不删除", async () => {
+      confirmSpy.mockRejectedValue("cancel");
+      const wrapper = mountUpload({
+        modelValue: [],
+        listType: "text",
+        autoUpload: false,
+        confirmRemove: true,
+      });
+      wrapper.vm.handleStart(
+        new File(["%PDF"], "local.pdf", { type: "application/pdf" }),
+      );
+      await flushPromises();
+      await wrapper.find(".el-icon--close").trigger("click");
+      await flushPromises();
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(confirmSpy.mock.calls[0][1]).toBe("移除确认");
+      expect(confirmSpy.mock.calls[0][2]).toMatchObject({
+        confirmButtonText: "移除",
+      });
+      expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    });
+
+    it("用户 beforeRemove 返回 false：不弹确认框且不移除", async () => {
+      const wrapper = mountUpload({
+        modelValue: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],
+        listType: "text",
+        confirmRemove: true,
+        beforeRemove: () => false,
+      });
+      await flushPromises();
+      await wrapper.find(".el-icon--close").trigger("click");
+      await flushPromises();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    });
   });
 
   it("picture 模式图片点击走内置图片预览而非 preview 事件", async () => {

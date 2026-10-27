@@ -495,6 +495,7 @@ watch(formData, () => {
 | `valueFormat` | String | `file` | `file` → `{name,url}[]`；`url` → `string[]`（无 url 项为空串） |
 | `fieldMap` | Object | `{ name: 'name', url: 'url' }` | 字段映射：v-model 对象元素 / 接口返回的字段名非 `name`/`url` 时配置，如 `{ name: 'fileName', url: 'fileUrl' }`；读取、展示、回写均按映射键处理，新上传项文件名优先取响应 `data` 中映射的 name 字段（URL 仍由 `responseKey` 指定） |
 | `showExceedMessage` / `showErrorMessage` | Boolean | `true` | 超限 / 失败默认提示开关 |
+| `confirmRemove` | Boolean | `false` | 删除 / 移除文件前是否二次确认：文件带 `raw`（本地文件流）时按「移除」提示，否则按「删除」提示；点取消则中止本次移除。与用户 `beforeRemove` 钩子串联，钩子返回 `false` 时不弹框 |
 
 > 其余 el-upload 属性（`action` / `headers` / `method` / `data` / `name` / `withCredentials` / `httpRequest` / `directory` / `crossorigin`）经 `$attrs` 原样透传内部 `el-upload`；`action` 未传或为空串时默认 `"#"`（自定义 `httpRequest` 场景下无实际用途，占位避免缺省告警）；`beforeUpload` / `beforeRemove` 由组件包装（内置大小校验 + 用户钩子串联，用户钩子照常生效）。
 

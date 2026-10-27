@@ -50,7 +50,7 @@ import {
   useAttrs,
   useSlots,
 } from "vue";
-import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage, useFormDisabled } from "element-plus";
+import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage, ElMessageBox, useFormDisabled } from "element-plus";
 import {
   Plus,
   Upload as UploadIcon,
@@ -142,6 +142,10 @@ const props = defineProps({
   showExceedMessage: { type: Boolean, default: true },
   // 上传失败时是否弹出默认提示
   showErrorMessage: { type: Boolean, default: true },
+  // 删除 / 移除文件前是否二次确认（默认 false）：
+  // 文件带 raw（本地文件流）时按「移除」提示，否则按「删除」提示；
+  // 取消确认则中止本次移除（与用户透传的 beforeRemove 钩子串联，钩子返回 false 时不弹框）
+  confirmRemove: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -255,10 +259,31 @@ const handleBeforeUpload = async (rawFile) => {
   if (typeof userHook === "function") return userHook(rawFile);
   return true;
 };
-const handleBeforeRemove = (uploadFile, uploadFiles) => {
+const handleBeforeRemove = async (uploadFile, uploadFiles) => {
   const userHook = attrs.beforeRemove;
-  if (typeof userHook === "function") return userHook(uploadFile, uploadFiles);
-  return true;
+  if (typeof userHook === "function") {
+    const passed = await userHook(uploadFile, uploadFiles);
+    if (passed === false) return false;
+  }
+  if (!props.confirmRemove) return true;
+  // 有 raw（本地文件流）→ 移除；无 raw（仅服务端 url）→ 删除
+  const isRemoving = !!uploadFile?.raw;
+  try {
+    await ElMessageBox.confirm(
+      isRemoving
+        ? `确定要移除文件「${uploadFile?.name || ""}」吗？`
+        : `确定要删除文件「${uploadFile?.name || ""}」吗？删除后不可恢复。`,
+      isRemoving ? "移除确认" : "删除确认",
+      {
+        type: "warning",
+        confirmButtonText: isRemoving ? "移除" : "删除",
+        cancelButtonText: "取消",
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 // —— el-upload 事件：内部处理 + 原样向外抛出（签名与 el-upload 一致）——
