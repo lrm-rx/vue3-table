@@ -204,6 +204,56 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     expect(wrapper.emitted("sort-change")).toHaveLength(1);
   });
 
+  it("localFilterSort=true：静态分页下排序后重置回第一页", async () => {
+    const rows = makeRows(25);
+    const { wrapper, grid } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: rows,
+      pagination: true,
+      localFilterSort: true,
+    });
+
+    // 先翻到第 2 页
+    wrapper.findComponent(ElPaginationStub).vm.$emit("current-change", 2);
+    await flushPromises();
+    expect(gridAttrs(wrapper).data.map((r) => r.id)).toEqual([
+      11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ]);
+
+    grid.mock.sorts = [{ field: "age", order: "desc" }];
+    gridAttrs(wrapper).onSortChange({});
+    await flushPromises();
+
+    // 排序改变顺序后回到第 1 页，展示全量排序结果的前 10 条
+    expect(wrapper.findComponent(Pagination).props("pagerConfig").currentPage).toBe(
+      1,
+    );
+    expect(gridAttrs(wrapper).data.map((r) => r.id)).toEqual([
+      25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
+    ]);
+  });
+
+  it("sortConfig 默认传 chronological=true（多列优先点击顺序），可显式覆盖", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(3),
+      localFilterSort: true,
+    });
+    expect(gridAttrs(wrapper).sortConfig).toMatchObject({
+      remote: true,
+      chronological: true,
+    });
+
+    // 用户显式配置优先（退化为列声明顺序）
+    const { wrapper: custom } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(3),
+      localFilterSort: true,
+      sortConfig: { chronological: false },
+    });
+    expect(gridAttrs(custom).sortConfig.chronological).toBe(false);
+  });
+
   it("localFilterSort 默认 false：静态模式 sort-change 不做本地排序（交由 vxe 原生）", async () => {
     const rows = makeRows(25);
     const { wrapper, grid } = await mountTablePro({

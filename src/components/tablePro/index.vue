@@ -1218,6 +1218,11 @@ const applySortStateAndSearch = (sorts) => {
   const { params: sortParams, paramKeys } = sortStateToParams(sorts);
   if (props.localFilterSort) {
     // 本地模式：后端不参与，bump 触发 localProcessedData 重新收集排序状态并本地排序
+    // 排序改变结果顺序，静态分页重置到第一页（与下方远程 search() 语义一致）；
+    // 远程模式（传 requestApi）本地只排当前页，不在此翻页，避免触发额外请求
+    if (!isRemoteMode.value && props.pagination) {
+      localPager.value.currentPage = 1;
+    }
     bumpLocalFilterSort();
     return;
   }
@@ -1706,7 +1711,9 @@ const gridProps = computed(() => {
               ...props.editConfig,
             },
           }),
-      sortConfig: { trigger: "button", ...props.sortConfig },
+      // chronological: 多列排序按点击先后决定主次（vxe 缺省为列声明顺序），
+      // 同时保证 getSortColumns() 的返回顺序即本地排序的比较优先级
+      sortConfig: { trigger: "button", chronological: true, ...props.sortConfig },
       filterConfig: { remote: true, ...props.filterConfig },
       // 仅显式传入时转发树配置（undefined 保持平铺模式，见 treeConfig prop 注释）
       treeConfig: props.treeConfig || undefined,

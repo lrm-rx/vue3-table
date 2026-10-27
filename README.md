@@ -408,17 +408,18 @@ const onConfirm = ({ row, field, value }) => { /* 确定按钮：value 为已保
 
 ## 排序（sortConfig）
 
-默认配置：`{ remote: true, multiple: false, trigger: 'button' }`。
+默认配置：`{ remote: true, multiple: false, trigger: 'button', chronological: true }`。
 
 ### 静态模式本地排序
 
 未传 `requestApi` 时，组件对全量数据本地排序：
 
-- **多字段排序优先级**：按 vxe `getSortColumns()` 返回顺序依次比较（即用户点击列头的先后顺序）；是否允许多字段排序由 `sortConfig.multiple` 决定
+- **多字段排序优先级**：按 vxe `getSortColumns()` 返回顺序依次比较；组件默认向 vxe 传入 `chronological: true`，因此该顺序即用户点击列头的先后顺序（需要按列声明顺序时显式传 `sortConfig.chronological: false`）；是否允许多字段排序由 `sortConfig.multiple` 决定
 - **比较规则优先级**：两端均可转为数字 → 按数值比较；否则均可解析为日期 → 按时间戳比较；否则按字符串比较
 - **空值处理**：空值（`null` / `undefined` / `''`）**恒排在最后**，不随 `asc` / `desc` 翻转
 - **稳定排序**：使用 `Array.prototype.sort`（现代引擎稳定排序），比较相等的行保持原顺序
 - **与过滤的组合**：先执行过滤、后对过滤结果排序（`localProcessedData` 单次 computed 完成）
+- **分页与排序**：静态分页下排序后自动重置到第一页（远程模式由 `search()` 重置），避免停留在旧页码看到排序结果的中间片段
 - **`sortConfig.remote: false`** 时排序交给 vxe 原生处理，本地仅做过滤
 - **与 `initParam` 默认排序的关系**：清除用户新增的排序后，`initParam` 预设的默认排序（如 `sortField: 'createTime', sortOrder: 'desc'`）会重新生效
 - 排序激活态（`.sort--active`）由 vxe 管理，多字段排序时多列可同时显示激活态
