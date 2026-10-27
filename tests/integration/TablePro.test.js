@@ -223,6 +223,31 @@ describe("TablePro 静态模式（本地数据 + 分页 + 列转换）", () => {
     expect(wrapper.emitted("sort-change")).toHaveLength(1);
   });
 
+  it("localFilterSort=true：工具栏隐藏「刷新」按钮；显式 toolbarConfig.refresh 可覆盖", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(3),
+      localFilterSort: true,
+    });
+    expect(gridAttrs(wrapper).toolbarConfig.refresh).toBe(false);
+
+    // 用户显式配置优先
+    const { wrapper: w2 } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(3),
+      localFilterSort: true,
+      toolbarConfig: { refresh: true },
+    });
+    expect(gridAttrs(w2).toolbarConfig.refresh).toBe(true);
+
+    // 默认（false）保持显示
+    const { wrapper: w3 } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(3),
+    });
+    expect(gridAttrs(w3).toolbarConfig.refresh).toBe(true);
+  });
+
   it("透传事件：调用 grid 的 onCellClick 会 emit cell-click", async () => {
     const { wrapper } = await mountTablePro({
       columns: STATIC_COLUMNS,

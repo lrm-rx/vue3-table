@@ -1494,7 +1494,9 @@ const toolbarConfig = computed(() => {
   const cfg = {
     custom: props.showColumnSetting ? true : null,
     zoom: true,
-    refresh: true,
+    // localFilterSort 为本地过滤/排序模式：数据不来自远端，「刷新」无意义，隐藏该按钮
+    // （toolbarConfig.refresh 显式配置时以用户配置为准，见下方 ...userCfg 覆盖）
+    refresh: props.localFilterSort ? false : true,
     refreshOptions: {
       icon: "vxe-icon-refresh",
       queryMethod: handleToolbarRefresh,
