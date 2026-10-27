@@ -186,12 +186,14 @@ export const resolveFileDescriptor = (
 
 /**
  * 将内部 fileList 序列化为对外 v-model 值。
- * 不再过滤非 success 项：uploading / fail / 无 url 项同样进入绑定值。
- * valueFormat='url' 时返回 URL 字符串数组（无 url 项为空串），
- * 否则返回对象数组——以 file.__rawItem（外部传入的原始对象）为基底，
- * 按 fieldMap 覆盖映射的 name/url 字段（响应解析结果优先），回填项的
- * 业务字段（id 等）全程保真；新上传项无 __rawItem，直接使用响应解析
- * 结果（含 resolveResponse 透传字段）。
+ * 全量保真：不丢弃任何字段——以内部 file 对象全量平铺为基底（含回填对象的
+ * 全部业务字段、uid / status / percentage / raw / response / size 等
+ * el-upload 内部字段），再叠加响应解析透传字段（resolveResponse 返回值），
+ * 最后按 fieldMap 覆盖映射的 name/url 字段（响应解析结果优先）；
+ * 内部标记 __rawItem 与映射冲突时的字面 name/url 键不出现在输出中。
+ * valueFormat='url' 时返回 URL 字符串数组（无 url 项为空串）。
+ * 不再过滤非 success 项：uploading / fail / 无 url 项同样进入绑定值——
+ * 延迟上传场景可在「确认」时从绑定值筛出带 raw 的项手动上传。
  * @param {Array<UploadUserFile>} fileList
  * @param {Object} opts responseKey / resolveResponse / valueFormat / fieldMap
  */
@@ -202,16 +204,20 @@ export const serializeValue = (fileList, opts = {}) => {
     .map((f) => {
       const desc = resolveFileDescriptor(f, opts);
       if (opts.valueFormat === "url") return desc.url;
-      const raw = f.__rawItem && typeof f.__rawItem === "object" ? f.__rawItem : null;
-      // desc 的 name/url 只按映射字段写入（自定义映射时不额外产生 name/url 键）；
-      // resolveResponse 透传的其他字段（id 等）照常保留
-      const { name: _n, url: _u, ...rest } = desc;
-      return {
-        ...raw,
+      // 内部标记不对外；file 全量平铺（业务字段在归一化时已平铺到 file 上）
+      const { __rawItem: _drop, ...rest } = f;
+      // desc 的 name/url 只按映射字段写入；resolveResponse 透传字段照常保留
+      const { name: _n, url: _u, ...restDesc } = desc;
+      const out = {
         ...rest,
+        ...restDesc,
         [map.name]: desc.name,
         [map.url]: desc.url,
       };
+      // 自定义映射时不额外产生字面 name/url 键
+      if (map.name !== "name") delete out.name;
+      if (map.url !== "url") delete out.url;
+      return out;
     });
 };
 

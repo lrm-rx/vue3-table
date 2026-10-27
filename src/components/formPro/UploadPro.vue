@@ -36,6 +36,9 @@
  *   字段名非 name/url 时用 fieldMap 映射（如 { name: 'fileName', url: 'fileUrl' }），
  *   读取 / 展示 / 回写均按映射键处理；
  *   对象形态的业务字段（id 等）全程保真：回写时以原对象为基底仅覆盖映射字段；
+ *   同时携带 el-upload 内部状态字段（存在时）：uid / status / percentage / raw
+ *   （原始 File 引用）——autoUpload=false 延迟上传场景可在「确认」时从绑定值
+ *   筛出带 raw 的项后调 submit() 手动上传；
  *   remove / preview / download 事件的 file 上亦可直接取到（file.id）
  */
 import {
@@ -266,7 +269,15 @@ const onError = (err, file, files) => {
     ElMessage.error(`文件「${file?.name || ""}」上传失败`);
   emit("error", err, file, files);
 };
-const onRemove = (file, files) => emit("remove", file, files);
+// 已移除文件归档：每次移除（UI 叉号 / 照片墙删除 / 编程式 handleRemove 均经此处）
+// 把该文件的序列化快照入档（含 raw / 业务字段），供 getRemovedFiles 取回——
+// 典型用途：点「确认」时向服务端发删除请求、回收 blob: URL 等
+const removedFiles = ref([]);
+const onRemove = (file, files) => {
+  const snap = serializeValue([file], resolveOpts.value)[0];
+  if (snap) removedFiles.value.push(snap);
+  emit("remove", file, files);
+};
 const onProgress = (evt, file, files) => emit("progress", evt, file, files);
 const onChange = (file, files) => emit("change", file, files);
 const onExceed = (files, oldFiles) => {
@@ -431,6 +442,23 @@ const rootStyle = computed(() => {
   return s;
 });
 
+// 收集当前带原始 File（raw）的文件项（与 v-model 同构的序列化形态）——
+// 延迟上传场景（autoUpload=false）点「确认」后筛出待上传项，取 raw 手动提交
+const getRawFiles = () =>
+  serializeValue(fileList.value, resolveOpts.value).filter(
+    (it) => it && typeof it === "object" && it.raw,
+  );
+// 收集累计被移除的文件数据（序列化快照数组，含业务字段与 raw）。
+// - 不传 field：全部已移除项
+// - 传 field（如 'id'）：仅返回「存在该属性且有值」的项
+// - valuesOnly=true：改为收集该属性的值（如 collect url → string[]）
+const getRemovedFiles = (field, valuesOnly = false) => {
+  const list = [...removedFiles.value];
+  if (!field) return list;
+  const hit = list.filter((it) => it && typeof it === "object" && it[field]);
+  return valuesOnly ? hit.map((it) => it[field]) : hit;
+};
+
 defineExpose({
   // 原始 el-upload 实例（abort / submit / clearFiles / handleStart / handleRemove）
   uploadRef,
@@ -442,6 +470,9 @@ defineExpose({
   handleRemove: (file) => uploadRef.value?.handleRemove?.(file),
   // 编程式粘贴
   pasteImages,
+  // 数据收集
+  getRawFiles,
+  getRemovedFiles,
 });
 </script>
 

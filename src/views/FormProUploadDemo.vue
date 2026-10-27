@@ -105,7 +105,11 @@ const formData = ref({
   idPhoto: [{ name: "证件照.svg", url: svgImage("#e6a23c", "ID Photo") }],
   // 附件：非图片文件（id 为业务字段，删除/回写全程保真）
   attachments: [
-    { id: 1001, name: "项目说明书-v1.pdf", url: "https://example.com/files/project-v1.pdf" },
+    {
+      id: 1001,
+      name: "项目说明书-v1.pdf",
+      url: "https://example.com/files/project-v1.pdf",
+    },
   ],
   // 缩略图列表
   thumbs: [{ name: "缩略图.svg", url: svgImage("#909399", "Thumb") }],
@@ -114,7 +118,10 @@ const formData = ref({
   dragFiles: [],
   // 禁用态优先级演示
   sealFile: [
-    { name: "盖章合同.pdf", url: "https://example.com/files/contract-sealed.pdf" },
+    {
+      name: "盖章合同.pdf",
+      url: "https://example.com/files/contract-sealed.pdf",
+    },
   ],
   // 眼睛图标显隐演示
   noEyeFile: [
@@ -122,12 +129,14 @@ const formData = ref({
   ],
   // fieldMap 演示：接口字段为 fileId/fileName/fileUrl
   mappedFiles: [
-    { fileId: "f-1001", fileName: "接口合同.pdf", fileUrl: "https://example.com/files/contract.pdf" },
+    {
+      fileId: "f-1001",
+      fileName: "接口合同.pdf",
+      fileUrl: "https://example.com/files/contract.pdf",
+    },
   ],
   // 无 url 项演示：待补传文件（无 url 也正常展示并保留在绑定值中）
-  pendingFiles: [
-    { name: "线下材料-待补传.zip" },
-  ],
+  pendingFiles: [{ name: "线下材料-待补传.zip" }],
 });
 
 // 表单级禁用开关（演示 item disabled 与 el-form disabled 的优先级）
@@ -135,7 +144,9 @@ const formDisabled = ref(false);
 
 // 校验规则
 const rules = {
-  photos: [{ required: true, message: "请至少上传一张现场照片", trigger: "change" }],
+  photos: [
+    { required: true, message: "请至少上传一张现场照片", trigger: "change" },
+  ],
   idPhoto: [{ required: true, message: "请上传证件照", trigger: "change" }],
   attachments: [{ required: true, message: "请上传附件", trigger: "change" }],
 };
@@ -160,6 +171,7 @@ const items = ref([
         limit: 8,
         accept: "image/*",
         maxSizeMb: 5,
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview },
@@ -178,6 +190,7 @@ const items = ref([
         limit: 1,
         accept: "image/*",
         maxSizeMb: 5,
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
     },
@@ -202,6 +215,7 @@ const items = ref([
         accept: ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt",
         maxSizeMb: 20,
         buttonSize: "small",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -218,6 +232,7 @@ const items = ref([
         listType: "picture",
         multiple: true,
         accept: "image/*",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -239,6 +254,7 @@ const items = ref([
         listType: "text",
         disabled: false,
         buttonSize: "small",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -255,6 +271,7 @@ const items = ref([
         listType: "text",
         showPreviewIcon: false,
         buttonSize: "small",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -278,6 +295,7 @@ const items = ref([
         buttonSize: "small",
         fieldMap: { name: "fileName", url: "fileUrl" },
         responseKey: "data.fileUrl",
+        autoUpload: true,
         httpRequest: mockHttpRequestMapped,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -294,6 +312,7 @@ const items = ref([
         listType: "text",
         multiple: true,
         buttonSize: "small",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -318,7 +337,8 @@ const items = ref([
         accept: "image/*",
         dragWidth: "100%",
         dragHeight: 220,
-        dragText: '将图片拖到此处，或<em>点击选择</em>',
+        dragText: "将图片拖到此处，或<em>点击选择</em>",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: {
@@ -343,6 +363,7 @@ const items = ref([
         dragWidth: 480,
         dragHeight: 160,
         buttonText: "选择文件",
+        autoUpload: true,
         httpRequest: mockHttpRequest,
       },
       events: { preview: onFilePreview, download: onFileDownload },
@@ -370,7 +391,9 @@ const onReset = () => {
 
 <template>
   <div style="max-width: 1080px; padding: 16px">
-    <div style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center">
+    <div
+      style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center"
+    >
       <el-button type="primary" @click="onSubmit">提交校验</el-button>
       <el-button @click="onReset">重置</el-button>
       <el-switch
@@ -380,7 +403,8 @@ const onReset = () => {
         inline-prompt
       />
       <el-tag type="info" effect="plain">
-        粘贴：点照片墙「点击此处粘贴图片」或附件按钮右侧「点击此处粘贴文件」聚焦 → Ctrl+V；多个上传项各自独立
+        粘贴：点照片墙「点击此处粘贴图片」或附件按钮右侧「点击此处粘贴文件」聚焦
+        → Ctrl+V；多个上传项各自独立
       </el-tag>
     </div>
 
@@ -396,8 +420,14 @@ const onReset = () => {
     />
 
     <el-divider>实时数据（v-model）</el-divider>
-    <pre style="background: #f5f7fa; padding: 12px; border-radius: 4px; max-height: 300px; overflow: auto">{{
-      JSON.stringify(formData, null, 2)
-    }}</pre>
+    <pre
+      style="
+        background: #f5f7fa;
+        padding: 12px;
+        border-radius: 4px;
+        max-height: 300px;
+        overflow: auto;
+      "
+      >{{ JSON.stringify(formData, null, 2) }}</pre>
   </div>
 </template>

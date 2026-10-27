@@ -461,11 +461,12 @@ watch(formData, () => {
 
 | Prop | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `modelValue` (v-model) | Array | `[]` | 文件数组：`string[]`（URL）或 `{ name, url }[]`（`valueFormat` 控制输出）。**包含上传中/失败等无 url 项**（`url` 为空串），不再仅保留成功项。对象形态的**业务字段（如 `id`）全程保真**：回写以原对象为基底仅覆盖映射的 name/url 字段，`remove`/`preview`/`download` 事件的 `file` 上亦可直接取到（`file.id`），删除时可直接使用 |
+| `modelValue` (v-model) | Array | `[]` | 文件数组：`string[]`（URL）或 `{ name, url }[]`（`valueFormat` 控制输出）。**包含上传中/失败等无 url 项**（`url` 为空串），不再仅保留成功项；各项同时携带 el-upload 内部状态字段（存在时）：`uid` / `status` / `percentage` / `raw`（原始 `File` 引用）——延迟上传场景（`autoUpload=false`）可在「确认」时从绑定值筛出带 `raw` 的项后调 `submit()` 手动上传。对象形态的**业务字段（如 `id`）全程保真**：回写以原对象为基底仅覆盖映射的 name/url 字段，`remove`/`preview`/`download` 事件的 `file` 上亦可直接取到（`file.id`），删除时可直接使用 |
 | `listType` | String | `picture-card` | 同 el-upload：`text` / `picture` / `picture-card` |
 | `showFileList` | Boolean | `true` | 同 el-upload |
 | `drag` | Boolean | `false` | 同 el-upload，拖拽上传 |
-| `multiple` / `accept` / `limit` / `disabled` / `autoUpload` | - | el-upload 默认 | 常用 el-upload 属性显式透出 |
+| `multiple` / `accept` / `limit` / `disabled` | - | el-upload 默认 | 常用 el-upload 属性显式透出 |
+| `autoUpload` | Boolean | `false` | 入队后是否自动上传；`false` 时需手动调实例 `submit()`（绑定值中带 `raw` 的项即待上传项） |
 | `pasteable` | Boolean | `true` | 是否显示粘贴入口（picture-card → `+` 号下方；text / picture → 按钮右侧） |
 | `pasteText` | String | 按模式回退 | 粘贴入口文案；未设置时照片墙为「点击此处粘贴图片」，text / picture 为「点击此处粘贴文件」 |
 | `dragWidth` / `dragHeight` | Number/String | `""` | 拖拽区宽高；数字 → px，字符串原样；不传用 el-upload 默认 |
@@ -500,6 +501,8 @@ el-upload 暴露的 **5 个方法全部提供便捷代理**：
 - `handleStart(rawFile)` —— 编程式添加文件到队列
 - `handleRemove(file)` —— 编程式移除文件（传 UploadFile 或原始 File）
 - `pasteImages(files)` —— 编程式粘贴：直接传入 `File[]`（仅图片）走同一上传链路
+- `getRawFiles()` —— 收集当前带原始 `File`（`raw`）的文件项，返回与 v-model 同构的数组。延迟上传场景（`autoUpload: false`）点「确认」后取 `raw` 手动 `submit()` 或自行 `FormData` 提交
+- `getRemovedFiles(field?, valuesOnly?)` —— 收集累计被移除的文件数据（每次移除归档序列化快照，含业务字段与 `raw`；返回副本）。不传 `field` 返回全部已移除项；传 `field`（如 `'id'`）仅返回存在该属性且有值的项；`valuesOnly: true` 时改为收集该属性的值（如 `getRemovedFiles('url', true)` → `string[]`）。典型用途：点「确认」时向服务端发删除请求、回收 `blob:` URL。注：`clearFiles()` 不触发归档（el-upload 的 clearFiles 本身也不派发 on-remove）
 
 ### 插槽
 

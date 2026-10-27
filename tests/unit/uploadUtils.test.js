@@ -241,12 +241,20 @@ describe("uploadUtils.serializeValue", () => {
     { name: "c.pdf", status: "success", url: "uc" },
   ];
 
-  it("不再过滤非 success 项，默认 {name,url} 形态", () => {
-    expect(serializeValue(files)).toEqual([
-      { name: "a.png", url: "ua" },
-      { name: "b.png", url: "" },
-      { name: "c.pdf", url: "uc" },
-    ]);
+  it("不再过滤非 success 项；全量保真（status / response 等内部字段一并带出）", () => {
+    const out = serializeValue(files);
+    expect(out[0]).toEqual({
+      name: "a.png",
+      url: "ua",
+      status: "success",
+      response: { data: { url: "ua" } },
+    });
+    expect(out[1]).toEqual({ name: "b.png", url: "", status: "uploading" });
+    expect(out[2]).toEqual({
+      name: "c.pdf",
+      url: "uc",
+      status: "success",
+    });
   });
 
   it("valueFormat=url 输出字符串数组（无 url 项为空串）", () => {
@@ -262,7 +270,29 @@ describe("uploadUtils.serializeValue", () => {
       [{ name: "a.pdf", url: "u", status: "success" }],
       { fieldMap: { name: "fileName", url: "fileUrl" } },
     );
-    expect(out).toEqual([{ fileName: "a.pdf", fileUrl: "u" }]);
+    expect(out).toEqual([{ fileName: "a.pdf", fileUrl: "u", status: "success" }]);
+  });
+
+  it("携带 el-upload 内部状态字段：uid / status / percentage / raw（存在时）", () => {
+    const raw = { name: "x.png" }; // 模拟 File 对象
+    const out = serializeValue([
+      {
+        name: "a.png",
+        url: "ua",
+        status: "ready",
+        uid: 123,
+        percentage: 0,
+        raw,
+      },
+    ]);
+    expect(out[0]).toMatchObject({
+      name: "a.png",
+      url: "ua",
+      status: "ready",
+      uid: 123,
+      percentage: 0,
+    });
+    expect(out[0].raw).toBe(raw); // raw 保持原引用，确认按钮后可取出手动上传
   });
 });
 

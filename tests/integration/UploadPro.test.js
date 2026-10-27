@@ -1201,6 +1201,132 @@ describe("UploadPro 非 success / 无 url 项也进入绑定值", () => {
     expect(last).toHaveLength(1);
     expect(last[0]).toMatchObject({ name: "失败.pdf", url: "" });
   });
+
+  it("延迟上传场景：autoUpload=false 入队后绑定值携带 raw/status/uid，可筛出 raw 手动上传", async () => {
+    const httpRequest = vi.fn();
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+      autoUpload: false,
+    });
+    await flushPromises();
+    const file = new File(["%PDF"], "待确认.pdf", { type: "application/pdf" });
+    wrapper.vm.handleStart(file);
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted).toBeTruthy();
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    // raw 保持 File 原引用；status 为 ready；uid 已分配
+    expect(last[0].raw).toBeInstanceOf(File);
+    expect(last[0].raw.name).toBe("待确认.pdf");
+    expect(last[0].status).toBe("ready");
+    expect(last[0].uid).toBeTruthy();
+    // 模拟「确认」动作：筛出带 raw 的项手动 submit
+    expect(last.filter((it) => it.raw).length).toBe(1);
+    wrapper.vm.submit();
+    await flushPromises();
+    expect(httpRequest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("UploadPro 实例方法：getRawFiles / getRemovedFiles", () => {
+  it("getRawFiles：仅返回带 File(raw) 的项，回填项（无 raw）不计入", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ name: "已存.pdf", url: "https://example.com/a.pdf" }],
+      listType: "text",
+      autoUpload: false,
+      httpRequest: () => new Promise(() => {}),
+    });
+    await flushPromises();
+    expect(wrapper.vm.getRawFiles()).toEqual([]);
+    wrapper.vm.handleStart(new File(["1"], "新文件1.txt", { type: "text/plain" }));
+    wrapper.vm.handleStart(new File(["2"], "新文件2.txt", { type: "text/plain" }));
+    await flushPromises();
+    const rawFiles = wrapper.vm.getRawFiles();
+    expect(rawFiles).toHaveLength(2);
+    expect(rawFiles[0].raw).toBeInstanceOf(File);
+    expect(rawFiles.map((it) => it.name)).toEqual(["新文件1.txt", "新文件2.txt"]);
+    // 与 v-model 同构（含 status/uid）
+    expect(rawFiles[0].status).toBe("ready");
+    expect(rawFiles[0].uid).toBeTruthy();
+  });
+
+  it("getRemovedFiles：累计收集被移除文件的完整数据（含业务字段）", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { id: 1, name: "甲.pdf", url: "https://example.com/a.pdf" },
+        { id: 2, name: "乙.pdf", url: "https://example.com/b.pdf" },
+      ],
+      listType: "text",
+      autoUpload: false,
+      httpRequest: () => new Promise(() => {}),
+    });
+    await flushPromises();
+    expect(wrapper.vm.getRemovedFiles()).toEqual([]);
+    await wrapper.findAll(".el-icon--close")[0].trigger("click");
+    await flushPromises();
+    // 待上传（含 raw）的项被移除同样归档
+    wrapper.vm.handleStart(new File(["x"], "待上传.txt", { type: "text/plain" }));
+    await flushPromises();
+    await wrapper.findAll(".el-icon--close")[1].trigger("click");
+    await flushPromises();
+    const removed = wrapper.vm.getRemovedFiles();
+    expect(removed).toHaveLength(2);
+    expect(removed[0]).toMatchObject({
+      id: 1,
+      name: "甲.pdf",
+      url: "https://example.com/a.pdf",
+    });
+    expect(removed[1].name).toBe("待上传.txt");
+    expect(removed[1].raw).toBeInstanceOf(File);
+    // 返回副本：外部修改不影响内部归档
+    removed.length = 0;
+    expect(wrapper.vm.getRemovedFiles()).toHaveLength(2);
+  });
+
+  it("getRemovedFiles(field)：仅收集存在该属性且有值的项", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { id: 1, name: "甲.pdf", url: "https://example.com/a.pdf" },
+        { name: "乙.pdf", url: "https://example.com/b.pdf" }, // 无 id
+        { id: 0, name: "丙.pdf", url: "https://example.com/c.pdf" }, // id 无值
+      ],
+      listType: "text",
+      autoUpload: false,
+      httpRequest: () => new Promise(() => {}),
+    });
+    await flushPromises();
+    for (const close of wrapper.findAll(".el-icon--close")) {
+      await close.trigger("click");
+      await flushPromises();
+    }
+    const withId = wrapper.vm.getRemovedFiles("id");
+    expect(withId).toHaveLength(1);
+    expect(withId[0].id).toBe(1);
+  });
+
+  it("getRemovedFiles(field, true)：收集该属性的值，返回数组", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { name: "甲.pdf", url: "https://example.com/a.pdf" },
+        { name: "乙.pdf", url: "https://example.com/b.pdf" },
+      ],
+      listType: "text",
+      autoUpload: false,
+      httpRequest: () => new Promise(() => {}),
+    });
+    await flushPromises();
+    for (const close of wrapper.findAll(".el-icon--close")) {
+      await close.trigger("click");
+      await flushPromises();
+    }
+    expect(wrapper.vm.getRemovedFiles("url", true)).toEqual([
+      "https://example.com/a.pdf",
+      "https://example.com/b.pdf",
+    ]);
+  });
 });
 
 describe("UploadPro fieldMap 字段映射", () => {
@@ -1223,11 +1349,14 @@ describe("UploadPro fieldMap 字段映射", () => {
     const emitted = wrapper.emitted("update:modelValue");
     const last = emitted[emitted.length - 1][0];
     expect(last).toHaveLength(1);
-    expect(last[0]).toEqual({
+    // 映射键 + id 保真（另携带 uid/status 等内部状态字段，此处不强约束）
+    expect(last[0]).toMatchObject({
       id: 7,
       fileName: "合同.pdf",
       fileUrl: "https://example.com/a.pdf",
     });
+    expect(last[0].name).toBeUndefined();
+    expect(last[0].url).toBeUndefined();
   });
 
   it("新上传：responseKey 指向映射 url 字段，文件名取响应 data 中映射 name 字段", async () => {
