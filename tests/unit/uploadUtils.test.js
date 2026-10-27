@@ -70,9 +70,18 @@ describe("uploadUtils.normalizeIncoming", () => {
     expect(out[0].response).toEqual({ code: 200 });
   });
 
-  it("丢弃非法项（null / 空串 / 无 url 对象），非数组返回空数组", () => {
-    expect(normalizeIncoming([null, "", { name: "x" }])).toEqual([]);
+  it("丢弃 null / 空串项；无 url 对象保留（url 归一为空串）；非数组返回空数组", () => {
+    const out = normalizeIncoming([null, "", { name: "x" }]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ name: "x", url: "", status: "success" });
     expect(normalizeIncoming(null)).toEqual([]);
+  });
+
+  it("fieldMap：按映射字段读取 name/url，业务字段平铺且原对象作保真基底", () => {
+    const item = { id: 7, fileName: "a.pdf", fileUrl: "u7" };
+    const out = normalizeIncoming([item], { name: "fileName", url: "fileUrl" });
+    expect(out[0]).toMatchObject({ id: 7, name: "a.pdf", url: "u7" });
+    expect(out[0].__rawItem).toBe(item);
   });
 });
 
@@ -228,22 +237,32 @@ describe("uploadUtils.serializeValue", () => {
       status: "success",
       response: { data: { url: "ua" } },
     },
-    { name: "b.png", status: "uploading" }, // 未成功不输出
+    { name: "b.png", status: "uploading" }, // 无 url 项同样输出（url 为空串）
     { name: "c.pdf", status: "success", url: "uc" },
   ];
 
-  it("仅输出 success 项，默认 {name,url} 形态", () => {
+  it("不再过滤非 success 项，默认 {name,url} 形态", () => {
     expect(serializeValue(files)).toEqual([
       { name: "a.png", url: "ua" },
+      { name: "b.png", url: "" },
       { name: "c.pdf", url: "uc" },
     ]);
   });
 
-  it("valueFormat=url 输出字符串数组", () => {
+  it("valueFormat=url 输出字符串数组（无 url 项为空串）", () => {
     expect(serializeValue(files, { valueFormat: "url" })).toEqual([
       "ua",
+      "",
       "uc",
     ]);
+  });
+
+  it("fieldMap：输出按映射键写回，不产生 name/url 键", () => {
+    const out = serializeValue(
+      [{ name: "a.pdf", url: "u", status: "success" }],
+      { fieldMap: { name: "fileName", url: "fileUrl" } },
+    );
+    expect(out).toEqual([{ fileName: "a.pdf", fileUrl: "u" }]);
   });
 });
 

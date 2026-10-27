@@ -29,10 +29,13 @@
  *  8. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
  *     buttonSize（对应 el-button 的 size）。
  *
- * v-model 值：成功文件数组，元素支持两种形态
+ * v-model 值：文件数组（含上传中 / 失败等无 url 项，不再仅保留成功项），
+ * 元素支持两种形态
  *   - 字符串 URL：'https://x.com/a.png'
  *   - 对象：{ name: 'a.png', url: 'https://...' }（valueFormat 默认 'file'）
- *   对象形态的业务字段（id 等）全程保真：回写时以原对象为基底仅覆盖 name/url；
+ *   字段名非 name/url 时用 fieldMap 映射（如 { name: 'fileName', url: 'fileUrl' }），
+ *   读取 / 展示 / 回写均按映射键处理；
+ *   对象形态的业务字段（id 等）全程保真：回写时以原对象为基底仅覆盖映射字段；
  *   remove / preview / download 事件的 file 上亦可直接取到（file.id）
  */
 import {
@@ -92,7 +95,7 @@ const props = defineProps({
   // 合并规则 = props.disabled ?? el-form.disabled ?? false（见下方 mergedDisabled），
   // item 显式配置 true / false 均优先于表单级 disabled；未配置时跟随 el-form
   disabled: { type: Boolean, default: undefined },
-  autoUpload: { type: Boolean, default: true },
+  autoUpload: { type: Boolean, default: false },
   // —— UploadPro 扩展配置 ——
   // 是否显示「粘贴上传」入口（默认 true）：
   //   picture-card → + 号下方；text / picture → 按钮右侧
@@ -129,6 +132,9 @@ const props = defineProps({
   resolveResponse: { type: Function, default: null },
  // v-model 值格式：'file' → {name,url}[]；'url' → string[]
   valueFormat: { type: String, default: "file" },
+  // 字段映射：v-model 对象元素 / 接口返回的字段名非 name/url 时配置，
+  // 如 { name: 'fileName', url: 'fileUrl' }；序列化回写同样按映射键输出
+  fieldMap: { type: Object, default: () => ({}) },
   // 超出 limit 时是否弹出默认提示
   showExceedMessage: { type: Boolean, default: true },
   // 上传失败时是否弹出默认提示
@@ -184,28 +190,33 @@ const resolveOpts = computed(() => ({
   responseKey: props.responseKey,
   resolveResponse: props.resolveResponse,
   valueFormat: props.valueFormat,
+  fieldMap: props.fieldMap,
 }));
 
 // —— fileList：外部 v-model ↔ el-upload 双向同步 ——
-const fileList = ref(normalizeIncoming(props.modelValue));
+const fileList = ref(normalizeIncoming(props.modelValue, props.fieldMap));
 
 // 外部值变化（编辑回填 / resetFields）→ 重建内部列表；与当前序列化值一致则跳过避免回环
 watch(
   () => props.modelValue,
   (val) => {
-    if (valueSignature(val) === valueSignature(serializeValue(fileList.value, resolveOpts.value)))
+    if (
+      valueSignature(val, props.fieldMap) ===
+      valueSignature(serializeValue(fileList.value, resolveOpts.value), props.fieldMap)
+    )
       return;
-    fileList.value = normalizeIncoming(val);
+    fileList.value = normalizeIncoming(val, props.fieldMap);
   },
   { deep: true },
 );
 
-// 内部列表变化（上传成功 / 删除）→ 回抛 v-model（仅 success 项）
+// 内部列表变化（上传成功 / 失败 / 删除）→ 回抛 v-model（含无 url 项，不再仅 success）
 watch(
   fileList,
   () => {
     const val = serializeValue(fileList.value, resolveOpts.value);
-    if (valueSignature(val) === valueSignature(props.modelValue)) return;
+    if (valueSignature(val, props.fieldMap) === valueSignature(props.modelValue, props.fieldMap))
+      return;
     // mutableModel：原地 splice 写入父级数组、不 emit（兼容 reactive([]) 承载）；
     // 写入触发上方 modelValue 深 watch，签名一致跳过重建，与 emit 路径同样收敛
     if (props.mutableModel) {

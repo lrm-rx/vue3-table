@@ -8,6 +8,8 @@
  *  4. 拖拽上传区域自定义宽高（dragWidth / dragHeight）
  *  5. 禁用态优先级：表单级 disabled 开关；item 配置 disabled=false 可覆盖表单级禁用
  *  6. 眼睛图标显隐（showPreviewIcon）与文件名点击下载（download 事件，外部接管下载行为）
+ *  7. fieldMap 字段映射：接口返回 fileName/fileUrl 等非 name/url 字段名时按映射读写；
+ *     无 url 项（上传中/失败/待补传）正常展示并保留在绑定值中
  *
  * 演示用 httpRequest 为本地模拟（进度 + blob: URL）；真实项目改为
  * itemRender.props.action = '/api/upload' 或传入自己的 httpRequest 即可。
@@ -49,6 +51,23 @@ const mockHttpRequest = (option) =>
       }
     }, 180);
   });
+
+// 模拟「非标字段名」接口：返回 fileId / fileName / fileUrl，配合 fieldMap + responseKey 演示
+const mockHttpRequestMapped = (option) =>
+  new Promise((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          code: 200,
+          data: {
+            fileId: `srv-${Date.now() % 100000}`,
+            fileName: option.file.name,
+            fileUrl: URL.createObjectURL(option.file),
+          },
+        }),
+      500,
+    ),
+  );
 
 // 非图片文件「眼睛」预览事件：当前仅演示触发机制，后续在此挂载文件预览组件
 const onFilePreview = (payload) => {
@@ -100,6 +119,14 @@ const formData = ref({
   // 眼睛图标显隐演示
   noEyeFile: [
     { name: "年报汇总.xlsx", url: "https://example.com/files/annual.xlsx" },
+  ],
+  // fieldMap 演示：接口字段为 fileId/fileName/fileUrl
+  mappedFiles: [
+    { fileId: "f-1001", fileName: "接口合同.pdf", fileUrl: "https://example.com/files/contract.pdf" },
+  ],
+  // 无 url 项演示：待补传文件（无 url 也正常展示并保留在绑定值中）
+  pendingFiles: [
+    { name: "线下材料-待补传.zip" },
   ],
 });
 
@@ -227,6 +254,45 @@ const items = ref([
       props: {
         listType: "text",
         showPreviewIcon: false,
+        buttonSize: "small",
+        httpRequest: mockHttpRequest,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
+
+  {
+    group: true,
+    title: "字段映射 / 无 url 项",
+  },
+  {
+    prop: "mappedFiles",
+    label: "接口字段映射",
+    span: 12,
+    tip: "fieldMap={ name:'fileName', url:'fileUrl' } + responseKey='data.fileUrl'：回填/展示/回写全走映射键，fileId 保真；下方实时数据可见",
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        multiple: true,
+        buttonSize: "small",
+        fieldMap: { name: "fileName", url: "fileUrl" },
+        responseKey: "data.fileUrl",
+        httpRequest: mockHttpRequestMapped,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
+  {
+    prop: "pendingFiles",
+    label: "无 url 项",
+    span: 12,
+    tip: "初始值含无 url 的「待补传」文件：正常展示且保留在绑定值中；上传中/失败的文件同样实时进入绑定值",
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        multiple: true,
         buttonSize: "small",
         httpRequest: mockHttpRequest,
       },

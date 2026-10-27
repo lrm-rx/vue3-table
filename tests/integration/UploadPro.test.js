@@ -294,7 +294,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
 describe("UploadPro 文件名特殊字符拦截", () => {
   it("照片墙粘贴含 # 文件名的图片：拦截上传、提示、不入列", async () => {
     const httpRequest = vi.fn();
-    const wrapper = mountUpload({ modelValue: [], httpRequest });
+    const wrapper = mountUpload({ modelValue: [], httpRequest, autoUpload: true });
     const file = new File(["abc"], "a#b.png", { type: "image/png" });
     const ev = dispatchImagePaste(
       wrapper.find(".upload-pro__card-paste").element,
@@ -317,6 +317,7 @@ describe("UploadPro 文件名特殊字符拦截", () => {
       modelValue: [],
       listType: "text",
       httpRequest,
+      autoUpload: true,
     });
     const file = new File(["%PDF"], "100%报告.pdf", {
       type: "application/pdf",
@@ -335,6 +336,7 @@ describe("UploadPro 文件名特殊字符拦截", () => {
       modelValue: [],
       listType: "text",
       httpRequest,
+      autoUpload: true,
     });
     const file = new File(["%PDF"], "说明书 v2.pdf", {
       type: "application/pdf",
@@ -1143,6 +1145,133 @@ describe("UploadPro 业务字段保真（id 等）", () => {
     await flushPromises();
     const emitted = wrapper.emitted("update:modelValue");
     expect(emitted[emitted.length - 1][0]).toEqual([]);
+  });
+});
+
+describe("UploadPro 非 success / 无 url 项也进入绑定值", () => {
+  it("回填无 url 对象：正常展示，删除后回写为空", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ name: "待补传.pdf" }],
+      listType: "text",
+    });
+    await flushPromises();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    expect(wrapper.find(".el-upload-list__item-name").text()).toContain("待补传.pdf");
+    await wrapper.find(".el-icon--close").trigger("click");
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted[emitted.length - 1][0]).toEqual([]);
+  });
+
+  it("上传中（未拿到 url）的文件也实时进入绑定值", async () => {
+    const httpRequest = () => new Promise(() => {}); // 永不 resolve：保持 uploading
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+      autoUpload: true,
+    });
+    await flushPromises();
+    wrapper.vm.handleStart(new File(["%PDF"], "传输中.pdf", { type: "application/pdf" }));
+    wrapper.vm.submit();
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted).toBeTruthy();
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ name: "传输中.pdf", url: "" });
+  });
+
+  it("上传失败的文件（无 url）同样保留在绑定值中", async () => {
+    const httpRequest = () => Promise.reject(new Error("500"));
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+      autoUpload: true,
+      showErrorMessage: false,
+    });
+    await flushPromises();
+    wrapper.vm.handleStart(new File(["%PDF"], "失败.pdf", { type: "application/pdf" }));
+    wrapper.vm.submit();
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted).toBeTruthy();
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ name: "失败.pdf", url: "" });
+  });
+});
+
+describe("UploadPro fieldMap 字段映射", () => {
+  it("回填 fileName/fileUrl 对象：正常显示，删除回写按映射键输出且业务字段保真", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { id: 7, fileName: "合同.pdf", fileUrl: "https://example.com/a.pdf" },
+        { id: 8, fileName: "发票.pdf", fileUrl: "https://example.com/b.pdf" },
+      ],
+      fieldMap: { name: "fileName", url: "fileUrl" },
+      listType: "text",
+    });
+    await flushPromises();
+    const names = wrapper.findAll(".el-upload-list__item-name");
+    expect(names.length).toBe(2);
+    expect(names[0].text()).toContain("合同.pdf");
+    // 删除第二项 → 回写剩余项应为映射键 + id 保真，且不多出 name/url 键
+    await wrapper.findAll(".el-icon--close")[1].trigger("click");
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    expect(last[0]).toEqual({
+      id: 7,
+      fileName: "合同.pdf",
+      fileUrl: "https://example.com/a.pdf",
+    });
+  });
+
+  it("新上传：responseKey 指向映射 url 字段，文件名取响应 data 中映射 name 字段", async () => {
+    const httpRequest = () =>
+      Promise.resolve({
+        code: 200,
+        data: { fileId: "f-1", fileName: "服务端命名.pdf", fileUrl: "https://example.com/s.pdf" },
+      });
+    const wrapper = mountUpload({
+      modelValue: [],
+      listType: "text",
+      httpRequest,
+      autoUpload: true,
+      fieldMap: { name: "fileName", url: "fileUrl" },
+      responseKey: "data.fileUrl",
+    });
+    await flushPromises();
+    wrapper.vm.handleStart(new File(["%PDF"], "本地名.pdf", { type: "application/pdf" }));
+    wrapper.vm.submit();
+    await flushPromises();
+    const emitted = wrapper.emitted("update:modelValue");
+    const last = emitted[emitted.length - 1][0];
+    expect(last).toHaveLength(1);
+    // 名称优先取响应 data.fileName；输出使用映射键，不产生 name/url 键
+    expect(last[0].fileName).toBe("服务端命名.pdf");
+    expect(last[0].fileUrl).toBe("https://example.com/s.pdf");
+    expect(last[0].name).toBeUndefined();
+    expect(last[0].url).toBeUndefined();
+  });
+
+  it("fieldMap 下签名比较防回环：父级回写相同值不触发重建/重复 emit", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ fileName: "a.pdf", fileUrl: "https://example.com/a.pdf" }],
+      fieldMap: { name: "fileName", url: "fileUrl" },
+      listType: "text",
+    });
+    await flushPromises();
+    // 父级以相同语义值（不同对象引用）回写 → 不应产生任何 emit
+    await wrapper.setProps({
+      modelValue: [{ fileName: "a.pdf", fileUrl: "https://example.com/a.pdf" }],
+    });
+    await flushPromises();
+    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
 });
 

@@ -461,7 +461,7 @@ watch(formData, () => {
 
 | Prop | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `modelValue` (v-model) | Array | `[]` | 成功文件数组：`string[]`（URL）或 `{ name, url }[]`（`valueFormat` 控制输出）。对象形态的**业务字段（如 `id`）全程保真**：回写以原对象为基底仅覆盖 `name/url`，`remove`/`preview`/`download` 事件的 `file` 上亦可直接取到（`file.id`），删除时可直接使用 |
+| `modelValue` (v-model) | Array | `[]` | 文件数组：`string[]`（URL）或 `{ name, url }[]`（`valueFormat` 控制输出）。**包含上传中/失败等无 url 项**（`url` 为空串），不再仅保留成功项。对象形态的**业务字段（如 `id`）全程保真**：回写以原对象为基底仅覆盖映射的 name/url 字段，`remove`/`preview`/`download` 事件的 `file` 上亦可直接取到（`file.id`），删除时可直接使用 |
 | `listType` | String | `picture-card` | 同 el-upload：`text` / `picture` / `picture-card` |
 | `showFileList` | Boolean | `true` | 同 el-upload |
 | `drag` | Boolean | `false` | 同 el-upload，拖拽上传 |
@@ -475,7 +475,8 @@ watch(formData, () => {
 | `maxSizeMb` | Number | `0` | 单文件大小上限（MB），内置 beforeUpload 拦截；0 不限制 |
 | `responseKey` | String | `data.url` | 成功响应中 URL 的 lodash-get 路径；取不到回退 `response.url` / 字符串响应 |
 | `resolveResponse` | Function | - | `(response, file) => { name, url, ... } \| url`，自定义响应解析，优先级最高；返回对象时**整体透传**（`id` 等服务端字段进入 v-model，仅确保 `name`/`url` 就位） |
-| `valueFormat` | String | `file` | `file` → `{name,url}[]`；`url` → `string[]` |
+| `valueFormat` | String | `file` | `file` → `{name,url}[]`；`url` → `string[]`（无 url 项为空串） |
+| `fieldMap` | Object | `{ name: 'name', url: 'url' }` | 字段映射：v-model 对象元素 / 接口返回的字段名非 `name`/`url` 时配置，如 `{ name: 'fileName', url: 'fileUrl' }`；读取、展示、回写均按映射键处理，新上传项文件名优先取响应 `data` 中映射的 name 字段（URL 仍由 `responseKey` 指定） |
 | `showExceedMessage` / `showErrorMessage` | Boolean | `true` | 超限 / 失败默认提示开关 |
 
 > 其余 el-upload 属性（`action` / `headers` / `method` / `data` / `name` / `withCredentials` / `httpRequest` / `directory` / `crossorigin`）经 `$attrs` 原样透传内部 `el-upload`；`action` 未传或为空串时默认 `"#"`（自定义 `httpRequest` 场景下无实际用途，占位避免缺省告警）；`beforeUpload` / `beforeRemove` 由组件包装（内置大小校验 + 用户钩子串联，用户钩子照常生效）。
