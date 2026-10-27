@@ -56,6 +56,10 @@ const props = defineProps({
   compact: { type: Boolean, default: false },
   // 紧凑模式：字段 prop → 校验错误 tooltip 是否可见（由 index.vue 的 validate 事件 + 定时器驱动）
   errorTipVisible: { type: Object, default: () => ({}) },
+  // 单位槽宽（px）：由 index.vue 测量表单内最宽静态单位文本后下发。
+  // >0 时，带单位的后缀固定为该宽度、不带单位的字段右侧渲染等宽占位符，
+  // 使上下各 item 的控件右边缘对齐；0 表示表单内无静态单位后缀（原样式不变）。
+  unitSlotWidth: { type: Number, default: 0 },
 });
 
 const emit = defineEmits(["toggle-group", "toggle-all"]);
@@ -259,16 +263,35 @@ const renderFieldContent = (item) => {
   const control = renderFieldControl(item);
   const prefixNode = resolveFieldAffix(item.prefix, ctx);
   const suffixNode = resolveFieldAffix(item.suffix, ctx);
-  // 无前后缀时直接返回控件，保持原有 DOM 结构不变（零侵入）
-  if (!prefixNode && !suffixNode) return control;
+  // 静态字符串后缀即「单位」：参与表单级单位槽宽测量（类名供 index.vue 查询），
+  // 并在样式上固定为统一槽宽；函数形态后缀为动态描述文本，不参与对齐。
+  const isUnitSuffix = typeof item.suffix === "string" && item.suffix !== "";
+  // 无后缀且表单存在单位时，在右侧渲染等宽占位符，使控件右边缘与带单位的 item 对齐
+  const reserveSlot = !suffixNode && props.unitSlotWidth > 0;
+  // 无前后缀且无需预留时直接返回控件，保持原有 DOM 结构不变（零侵入）
+  if (!prefixNode && !suffixNode && !reserveSlot) return control;
   const children = [
     prefixNode
       ? h("span", { class: "form-pro__field-prefix" }, [prefixNode])
       : null,
     h("div", { class: "form-pro__field-control" }, [control]),
     suffixNode
-      ? h("span", { class: "form-pro__field-suffix" }, [suffixNode])
-      : null,
+      ? h(
+          "span",
+          {
+            class: [
+              "form-pro__field-suffix",
+              isUnitSuffix && "form-pro__field-suffix--unit",
+            ],
+          },
+          [suffixNode],
+        )
+      : reserveSlot
+        ? h("span", {
+            class: "form-pro__field-suffix form-pro__field-suffix--reserve",
+            "aria-hidden": "true",
+          })
+        : null,
   ].filter(Boolean);
   return h("div", { class: "form-pro__field-control-wrap" }, children);
 };
@@ -560,6 +583,15 @@ defineExpose({ entries });
 // 前后缀纯文本节点（字符串形态）的样式占位
 :deep(.form-pro__field-affix-text) {
   display: inline;
+}
+// 单位槽宽对齐：带单位的静态后缀固定为统一槽宽（文本左端对齐，不同长度单位不挤动控件），
+// 不带单位的字段渲染同宽占位符——两类 item 的控件右边缘一致，垂直方向上下对齐。
+// 槽宽由 index.vue 测量最宽单位文本后以 CSS 变量 --form-pro-unit-slot 下发；
+// 变量缺失（表单内无静态单位后缀）时回退 auto，原样式不受影响。
+:deep(.form-pro__field-suffix--unit),
+:deep(.form-pro__field-suffix--reserve) {
+  width: var(--form-pro-unit-slot, auto);
+  justify-content: flex-start;
 }
 // 字段「填写/选择提示」：与 el-form-item 错误提示共用同一位置（控件正下方，绝对定位），
 // 颜色为 success 主色调。仅在字段未校验失败时渲染；校验失败时由 el-form-item 错误提示占据该位置。

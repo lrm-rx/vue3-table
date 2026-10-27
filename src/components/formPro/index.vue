@@ -169,9 +169,51 @@ const hideAllErrorTips = () => {
   for (const prop of Object.keys(errorTipVisible)) hideErrorTip(prop);
 };
 
+// —— 单位后缀对齐：统一「单位槽宽」 ——
+// 表单内存在静态字符串后缀（单位，如「元 / 个 / 岁」）时，测量所有单位文本的实际宽度取最大值，
+// 作为统一单位槽宽，经 CSS 变量 --form-pro-unit-slot 下发给所有表单项：
+//   - 带单位的控件：单位后缀固定为该槽宽，控件右边缘随之前移；
+//   - 不带单位的控件：FormBlock 在右侧渲染等宽占位符（.form-pro__field-suffix--reserve），
+//     控件右边缘同样前移——上下各 item 的控件右边缘对齐（垂直方向整齐）。
+// 函数形态后缀（动态描述文本，宽度随值变化）不参与测量、也不预留，避免把输入框挤窄。
+// 测量对象是单位文本内部 span（.form-pro__field-affix-text），不受槽宽样式影响，避免循环测量。
+const unitSlotWidth = ref(0);
+const unitSlotStyle = computed(() =>
+  unitSlotWidth.value > 0
+    ? { "--form-pro-unit-slot": `${unitSlotWidth.value}px` }
+    : {},
+);
+
+const measureUnitSlot = () => {
+  const root = formRef.value?.$el;
+  if (!root) return;
+  let max = 0;
+  root
+    .querySelectorAll(
+      ".form-pro__field-suffix--unit > .form-pro__field-affix-text",
+    )
+    .forEach((el) => {
+      max = Math.max(max, el.getBoundingClientRect().width);
+    });
+  // 取整上取：槽宽不小于任一本单位文本宽度，保证后缀不溢出
+  unitSlotWidth.value = max > 0 ? Math.ceil(max) : 0;
+};
+
+// 合并同一轮内的多次 DOM 变化为一次测量（分组展开、items 增删、显隐切换等）
+let measureUnitSlotPending = false;
+const scheduleMeasureUnitSlot = () => {
+  if (measureUnitSlotPending) return;
+  measureUnitSlotPending = true;
+  nextTick(() => {
+    measureUnitSlotPending = false;
+    measureUnitSlot();
+  });
+};
+
 // 给 el-form 原生错误提示（.el-form-item__error）自动补全 title：空间不足被省略为 … 时，
 // 鼠标悬浮可查看完整错误文本。用 MutationObserver 监听错误元素的出现与文本变化，
 // 不依赖校验事件时机（初始校验、异步校验、重新校验均能覆盖）。
+// 同一观察器顺带在 DOM 结构变化后重新测量单位槽宽（分组展开/收起、动态增删 items 等）。
 let errorTitleObserver = null;
 onMounted(() => {
   const root = formRef.value?.$el;
@@ -183,7 +225,34 @@ onMounted(() => {
     });
   };
   syncErrorTitles();
-  errorTitleObserver = new MutationObserver(syncErrorTitles);
+  measureUnitSlot();
+  errorTitleObserver = new MutationObserver((records) => {
+    syncErrorTitles();
+    // 只有「涉及单位后缀的结构变化」才重测，避免表单内嵌表格/富内容频繁更新时
+    // 每次都做一次全表单查询 + 强制布局读取：
+    //   - 节点增删：新增/移除的子树中包含单位后缀（分组展开收起、items 增删、显隐切换）；
+    //   - 文本变化：变化节点位于单位后缀内部（updateItems 修改静态 suffix 文本）。
+    // 动态函数后缀逐键更新（不在 --unit 内）不触发测量。
+    const needMeasure = records.some((r) => {
+      if (r.type === "characterData") {
+        return !!r.target.parentElement?.closest?.(
+          ".form-pro__field-suffix--unit",
+        );
+      }
+      if (r.type !== "childList") return false;
+      for (const node of [...r.addedNodes, ...r.removedNodes]) {
+        if (node.nodeType !== 1) continue;
+        if (
+          node.matches(".form-pro__field-suffix--unit") ||
+          node.querySelector(".form-pro__field-suffix--unit")
+        ) {
+          return true;
+        }
+      }
+      return false;
+    });
+    if (needMeasure) scheduleMeasureUnitSlot();
+  });
   errorTitleObserver.observe(root, {
     childList: true,
     subtree: true,
@@ -604,6 +673,7 @@ defineExpose(ownExposed);
     ref="formRef"
     v-bind="formPropsComputed"
     :class="{ 'form-pro--border': border, 'form-pro--compact': compact }"
+    :style="unitSlotStyle"
     @validate="onFormValidate"
   >
     <FormBlock
@@ -620,6 +690,7 @@ defineExpose(ownExposed);
       :field-errors="fieldErrors"
       :border="border"
       :compact="compact"
+      :unit-slot-width="unitSlotWidth"
       :error-tip-visible="errorTipVisible"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"

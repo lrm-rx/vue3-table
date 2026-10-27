@@ -511,6 +511,57 @@ const items = ref([
   },
   // 插槽式控件：引用外部 #remark 具名插槽
   { prop: "remark", label: "备注", span: 24, tip: "选填，最多 200 字", slot: "remark" },
+
+  // —— 分组 3：单位后缀自动对齐（零配置）——
+  // 表单内存在「静态字符串后缀」（如 元 / 万元）时，FormPro 自动测量最宽单位文本作为统一槽宽：
+  //   · 带单位字段：单位后缀固定为该槽宽；
+  //   · 不带单位字段：控件右侧渲染等宽占位符。
+  // 同一列中上下各 item 的控件右边缘因此对齐（垂直方向整齐）。
+  // 下列字段 span=24（各占整行）便于直接观察；函数形态后缀（动态描述文本）不参与对齐。
+  { group: true, title: "单位自动对齐" },
+  {
+    prop: "unitPrice",
+    label: "单价",
+    span: 24,
+    prefix: "￥",
+    suffix: "元",
+    defaultValue: 0,
+    tip: "带单位（元）：单位后缀固定为统一槽宽",
+    itemRender: {
+      name: "ElInputNumber",
+      props: { min: 0, precision: 2, controlsPosition: "right" },
+    },
+  },
+  {
+    prop: "unitIncome",
+    label: "年收入",
+    span: 24,
+    suffix: "万元",
+    defaultValue: 0,
+    tip: "带单位（万元）：单位文本更长，槽宽取表单内最宽的单位文本",
+    itemRender: {
+      name: "ElInputNumber",
+      props: { min: 0, controlsPosition: "right" },
+    },
+  },
+  {
+    prop: "unitWeight",
+    label: "重量",
+    span: 24,
+    defaultValue: 0,
+    tip: "不带单位：右侧自动预留等宽占位符，控件右边缘与上方带单位字段对齐",
+    itemRender: {
+      name: "ElInputNumber",
+      props: { min: 0, controlsPosition: "right" },
+    },
+  },
+  {
+    prop: "unitNote",
+    label: "规格说明",
+    span: 24,
+    tip: "不带单位：输入框右边缘同样与带单位字段对齐",
+    itemRender: { name: "ElInput", props: { placeholder: "请输入规格说明" } },
+  },
 ]);
 
 const formRef = ref();
