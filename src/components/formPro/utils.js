@@ -648,3 +648,94 @@ export const updateItems = (items, target, patch) => {
   }
   return touched;
 };
+
+/** 是否为二进制文件（File 继承自 Blob，一并覆盖） */
+const isBlobLike = (v) => typeof Blob !== "undefined" && v instanceof Blob;
+
+/** 取出文件二进制：File/Blob 自身，或 UploadPro 绑定值里的 { raw: File } 文件项 */
+const resolveBlob = (v) => {
+  if (isBlobLike(v)) return v;
+  if (isPlainObject(v) && isBlobLike(v.raw)) return v.raw;
+  return null;
+};
+
+/** 标量 → FormData 文本值（Date 走 ISO，布尔走 true/false） */
+const toFieldText = (v) => {
+  if (v instanceof Date) return v.toISOString();
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
+};
+
+const appendObjectEntries = (fd, prefix, obj, arrayFormat) => {
+  for (const [k, v] of Object.entries(obj)) {
+    appendField(fd, prefix ? `${prefix}[${k}]` : k, v, arrayFormat);
+  }
+};
+
+/** 递归追加单个字段：文件走二进制，数组 / 嵌套对象展开为键路径 */
+const appendField = (fd, key, value, arrayFormat) => {
+  // undefined / null 视为「不传该字段」，与 axios / qs 默认行为一致
+  if (value === undefined || value === null) return;
+
+  // 文件必须原样 append 二进制（File / Blob），不能 String() / JSON.stringify，
+  // 否则会变成 "[object File]" / "{}" 而丢内容；带 raw 的上传项取 raw
+  const blob = resolveBlob(value);
+  if (blob) {
+    fd.append(key, blob);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      if (item === undefined || item === null) return;
+      const itemBlob = resolveBlob(item);
+      if (itemBlob) {
+        // 多文件：默认同名重复键（FastAPI / Spring 的 List 直接可收），
+        // bracket 风格为 files[]，供 PHP / Laravel 等使用
+        fd.append(arrayFormat === "bracket" ? `${key}[]` : key, itemBlob);
+      } else if (isPlainObject(item)) {
+        // 对象数组按下标展开：items[0][name]，避免多项互相覆盖
+        appendObjectEntries(fd, `${key}[${index}]`, item, arrayFormat);
+      } else {
+        fd.append(arrayFormat === "bracket" ? `${key}[]` : key, toFieldText(item));
+      }
+    });
+    return;
+  }
+
+  if (isPlainObject(value)) {
+    appendObjectEntries(fd, key, value, arrayFormat);
+    return;
+  }
+
+  fd.append(key, toFieldText(value));
+};
+
+/**
+ * 对象 → FormData（multipart/form-data 提交，如 axios / fetch 上传文件）。
+ *
+ * 规则：
+ * - `File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }` 文件项）**始终以二进制
+ *   append**，绝不字符串化；项上的 name / url 等元数据不再展开（文件本身即数据）；
+ * - 嵌套对象展开为 `user[address][city]`；对象数组为 `items[0][name]`；
+ * - 数组（标量 / 文件）默认重复同名键 `files=a&files=b`，
+ *   `arrayFormat: 'bracket'` 时改为 `files[]=a&files[]=b`；
+ * - `Date` → ISO 字符串；`boolean` → `'true'` / `'false'`；`undefined` / `null` 跳过
+ *   （不产生该键）；空数组同样不产生键。
+ *
+ * @param {Object} source 待转换对象（通常为表单数据）
+ * @param {Object} [options]
+ * @param {'repeat'|'bracket'} [options.arrayFormat='repeat'] 数组键格式
+ * @returns {FormData}
+ *
+ * @example
+ * const fd = objectToFormData({ name: "张三", avatar: file, tags: ["a", "b"] });
+ * fd.getAll("tags"); // ["a", "b"]
+ */
+export const objectToFormData = (source, options = {}) => {
+  const fd = new FormData();
+  if (!isPlainObject(source)) return fd;
+  const arrayFormat = options.arrayFormat === "bracket" ? "bracket" : "repeat";
+  appendObjectEntries(fd, "", source, arrayFormat);
+  return fd;
+};

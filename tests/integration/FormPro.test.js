@@ -1036,6 +1036,214 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.vm.getSubmitData()).toEqual({ a: "1", b: "2" });
   });
 
+  it("toFormData：默认取提交数据，文件字段以二进制 append", async () => {
+    const file = new File(["x"], "a.txt", { type: "text/plain" });
+    const wrapper = mountFormPro({
+      modelValue: { name: "张三", hidden: "x", attachments: [] },
+      removeHiddenValues: true,
+      items: [
+        { prop: "name", label: "名称" },
+        { prop: "hidden", label: "隐藏", visible: false },
+        {
+          prop: "attachments",
+          label: "附件",
+          itemRender: {
+            name: "UploadPro",
+            props: { listType: "text", autoUpload: false },
+          },
+        },
+      ],
+    });
+    await flushPromises();
+    const vm = wrapper.vm;
+    // 走上传字段代理入队（等价的编程式选文件），模拟「页面上的待上传文件」
+    vm.handleStart("attachments", file);
+    await flushPromises();
+
+    const fd = vm.toFormData();
+    expect(fd).toBeInstanceOf(FormData);
+    expect(fd.get("name")).toBe("张三");
+    // removeHiddenValues 生效：隐藏字段不进入 FormData
+    expect(fd.has("hidden")).toBe(false);
+    const got = fd.get("attachments");
+    expect(got).toBeInstanceOf(File);
+    expect(got.name).toBe("a.txt");
+    expect(got.size).toBe(1);
+
+    // 显式传对象 + 数组格式选项
+    const fd2 = vm.toFormData(
+      { a: 1, b: [1, 2], empty: [] },
+      { arrayFormat: "bracket" },
+    );
+    expect(fd2.get("a")).toBe("1");
+    expect(fd2.getAll("b[]")).toEqual(["1", "2"]);
+    expect(fd2.has("empty[]")).toBe(false);
+  });
+
+  // —— 上传实例 API（UploadPro 实例经 FormPro 按字段暴露）——
+  // 覆盖：uploadRefs / getUpload / 代理方法（handleStart / pasteImages / getRawFiles /
+  // submit / clearFiles / handleRemove / getRemovedFiles）的字段隔离与隐藏清理
+  describe("上传实例 API（按字段）", () => {
+    const uploadItems = (visible = {}) => [
+      {
+        prop: "attachments",
+        label: "附件",
+        visible: visible.attachments !== false,
+        itemRender: {
+          name: "UploadPro",
+          props: { listType: "text", autoUpload: false },
+        },
+      },
+      {
+        prop: "photos",
+        label: "照片",
+        visible: visible.photos !== false,
+        itemRender: {
+          name: "UploadPro",
+          props: { listType: "picture-card", autoUpload: false },
+        },
+      },
+      { prop: "name", label: "名称", itemRender: { name: "ElInput" } },
+    ];
+
+    it("uploadRefs / getUpload：按字段取实例；非上传、未渲染字段为 undefined，隐藏后清空", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { attachments: [], photos: [] },
+        items: uploadItems(),
+      });
+      await flushPromises();
+      const vm = wrapper.vm;
+
+      const attachments = vm.getUpload("attachments");
+      const photos = vm.getUpload("photos");
+      expect(attachments).toBeTruthy();
+      expect(photos).toBeTruthy();
+      expect(attachments).not.toBe(photos);
+      expect(typeof attachments.getRawFiles).toBe("function");
+      // uploadRefs 只记录内置 UploadPro 字段
+      expect(Object.keys(vm.uploadRefs).sort()).toEqual(["attachments", "photos"]);
+      expect(vm.getUpload("name")).toBeUndefined();
+      expect(vm.getUpload("missing")).toBeUndefined();
+
+      // 隐藏字段：实例被卸载，代理方法静默降级
+      await wrapper.setProps({
+        items: uploadItems({ photos: false }),
+      });
+      await flushPromises();
+      expect(vm.getUpload("photos")).toBeUndefined();
+      expect(Object.keys(vm.uploadRefs)).toEqual(["attachments"]);
+      expect(vm.getRawFiles("photos")).toEqual([]);
+      expect(vm.getRemovedFiles("photos")).toEqual([]);
+      expect(vm.submit("photos")).toBeUndefined();
+      expect(vm.clearFiles("photos")).toBeUndefined();
+      expect(vm.pasteImages("photos", [])).toBeUndefined();
+
+      // 恢复显示后重新回填
+      await wrapper.setProps({ items: uploadItems() });
+      await flushPromises();
+      expect(vm.getUpload("photos")).toBeTruthy();
+      // 多实例同时存在
+      expect(Object.keys(vm.uploadRefs).sort()).toEqual(["attachments", "photos"]);
+    });
+
+    it("handleStart / pasteImages / getRawFiles / clearFiles：多字段互不串数据", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { attachments: [], photos: [] },
+        items: uploadItems(),
+      });
+      await flushPromises();
+      const vm = wrapper.vm;
+
+      const doc = new File(["doc"], "a.txt", { type: "text/plain" });
+      vm.handleStart("attachments", doc);
+      await flushPromises();
+      let raws = vm.getRawFiles("attachments");
+      expect(raws).toHaveLength(1);
+      expect(raws[0].name).toBe("a.txt");
+      // 绑定值保留原始 File 引用（延迟上传取 raw 用）
+      expect(raws[0].raw).toBe(doc);
+      expect(vm.getRawFiles("photos")).toEqual([]);
+
+      const png = new File(["img"], "b.png", { type: "image/png" });
+      vm.pasteImages("photos", [png]);
+      await flushPromises();
+      expect(vm.getRawFiles("photos")).toHaveLength(1);
+      expect(vm.getRawFiles("photos")[0].raw).toBe(png);
+
+      // 清空只影响指定字段
+      vm.clearFiles("attachments");
+      await flushPromises();
+      expect(vm.getRawFiles("attachments")).toEqual([]);
+      expect(vm.getRawFiles("photos")).toHaveLength(1);
+      // v-model 同步（FormPro 对外抛出）
+      expect(wrapper.emitted("update:modelValue")).toBeTruthy();
+    });
+
+    it("submit：autoUpload=false 时由字段代理手动提交，并走传入的 httpRequest", async () => {
+      const httpRequest = vi.fn((options) => {
+        options.onSuccess?.({ url: "https://example.com/uploaded.txt" });
+        return { abort: vi.fn() };
+      });
+      const wrapper = mountFormPro({
+        modelValue: { attachments: [] },
+        items: [
+          {
+            prop: "attachments",
+            label: "附件",
+            itemRender: {
+              name: "UploadPro",
+              props: { listType: "text", autoUpload: false, httpRequest },
+            },
+          },
+        ],
+      });
+      await flushPromises();
+      const vm = wrapper.vm;
+
+      vm.handleStart(
+        "attachments",
+        new File(["x"], "x.txt", { type: "text/plain" }),
+      );
+      await flushPromises();
+      // 未提交前不入上传队列
+      expect(httpRequest).not.toHaveBeenCalled();
+      expect(vm.getRawFiles("attachments")).toHaveLength(1);
+
+      vm.submit("attachments");
+      await flushPromises();
+      expect(httpRequest).toHaveBeenCalledTimes(1);
+      // abort 对不存在 / 未上传的文件安全无副作用
+      expect(() => vm.abort("attachments")).not.toThrow();
+      expect(() => vm.abort("attachments", { uid: -1 })).not.toThrow();
+    });
+
+    it("handleRemove / getRemovedFiles：按字段归档，移除后列表同步", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { attachments: [], photos: [] },
+        items: uploadItems(),
+      });
+      await flushPromises();
+      const vm = wrapper.vm;
+      const raw = new File(["x"], "remove-me.txt", { type: "text/plain" });
+      vm.handleStart("attachments", raw);
+      await flushPromises();
+      expect(vm.getRawFiles("attachments")).toHaveLength(1);
+
+      vm.handleRemove("attachments", raw);
+      await flushPromises();
+      expect(vm.getRawFiles("attachments")).toEqual([]);
+      const removed = vm.getRemovedFiles("attachments");
+      expect(removed).toHaveLength(1);
+      expect(removed[0].name).toBe("remove-me.txt");
+      expect(removed[0].raw).toBe(raw);
+      // 归档按字段隔离
+      expect(vm.getRemovedFiles("photos")).toEqual([]);
+      expect(vm.getRemovedFiles("attachments", "name", true)).toEqual([
+        "remove-me.txt",
+      ]);
+    });
+  });
+
   // —— 边框表格样式（border）——
   // 修复背景：border 模式下 el-form 根节点追加 .form-pro--border 类，
   // 全部边框/单元格样式（含「错误提示不被裁切」的流式占位样式）均限定在该类作用域内。

@@ -22,6 +22,7 @@ import {
   addItems,
   removeItems,
   updateItems,
+  objectToFormData,
 } from "../../src/components/formPro/utils.js";
 
 describe("formPro utils", () => {
@@ -648,6 +649,96 @@ describe("formPro utils", () => {
       expect(collectTipRows([], [])).toEqual(new Set());
       const entries = [{ kind: "field", item: { tip: "x" }, span: 24 }];
       expect(collectTipRows(entries, [0])).toEqual(new Set([0]));
+    });
+  });
+
+  describe("objectToFormData", () => {
+    it("标量 / 嵌套对象 / 数组（默认重复同名键）", () => {
+      const fd = objectToFormData({
+        name: "张三",
+        age: 18,
+        active: true,
+        birthday: new Date("2020-01-02T03:04:05.000Z"),
+        empty: null,
+        missing: undefined,
+        user: { address: { city: "北京" }, tags: ["a", "b"] },
+      });
+      expect(fd.get("name")).toBe("张三");
+      expect(fd.get("age")).toBe("18");
+      expect(fd.get("active")).toBe("true");
+      expect(fd.get("birthday")).toBe("2020-01-02T03:04:05.000Z");
+      // null / undefined 视为不传该字段
+      expect(fd.has("empty")).toBe(false);
+      expect(fd.has("missing")).toBe(false);
+      expect(fd.get("user[address][city]")).toBe("北京");
+      expect(fd.getAll("user[tags]")).toEqual(["a", "b"]);
+    });
+
+    it("文件始终以二进制 append：保留 File 实例、文件名 / 类型 / 字节", () => {
+      const avatar = new File([new Uint8Array([1, 2, 3])], "avatar.png", {
+        type: "image/png",
+      });
+      const docA = new File(["a"], "a.txt", { type: "text/plain" });
+      const docB = new File(["b"], "b.txt", { type: "text/plain" });
+      const fd = objectToFormData({ avatar, docs: [docA, docB] });
+
+      const got = fd.get("avatar");
+      expect(got).toBeInstanceOf(File);
+      expect(got).toBe(avatar);
+      expect(got.name).toBe("avatar.png");
+      expect(got.type).toBe("image/png");
+      expect(got.size).toBe(3);
+      // 数组内文件：同名重复键
+      expect(fd.getAll("docs").map((f) => f.name)).toEqual(["a.txt", "b.txt"]);
+    });
+
+    it("UploadPro 绑定值里的 { raw: File } 取 raw 二进制，而非字符串化对象", () => {
+      const raw = new File(["hello"], "pending.png", { type: "image/png" });
+      const fd = objectToFormData({
+        attachments: [
+          { name: "pending.png", url: "", status: "ready", raw },
+          { name: "done.pdf", url: "https://example.com/done.pdf", id: 9 },
+        ],
+      });
+      const files = fd.getAll("attachments");
+      // 第一项 raw 二进制
+      expect(files[0]).toBeInstanceOf(File);
+      expect(files[0]).toBe(raw);
+      expect(files[0].name).toBe("pending.png");
+      // 无 raw 的已上传项不会丢元数据：按下标展开
+      expect(fd.get("attachments[1][name]")).toBe("done.pdf");
+      expect(fd.get("attachments[1][url]")).toBe(
+        "https://example.com/done.pdf",
+      );
+      expect(fd.get("attachments[1][id]")).toBe("9");
+      // 不会把文件项整体字符串化
+      expect(fd.has("attachments[0][name]")).toBe(false);
+    });
+
+    it("arrayFormat='bracket'：标量 / 文件数组使用 key[]", () => {
+      const file = new File(["x"], "x.txt", { type: "text/plain" });
+      const fd = objectToFormData(
+        { tags: ["a", "b"], files: [file] },
+        { arrayFormat: "bracket" },
+      );
+      expect(fd.getAll("tags[]")).toEqual(["a", "b"]);
+      expect(fd.has("tags")).toBe(false);
+      const files = fd.getAll("files[]");
+      expect(files).toHaveLength(1);
+      expect(files[0].name).toBe("x.txt");
+      expect(fd.has("files")).toBe(false);
+    });
+
+    it("对象数组按下标展开；空数组 / 非对象入参不产生键", () => {
+      const fd = objectToFormData({
+        items: [{ name: "a" }, { name: "b" }],
+        empty: [],
+      });
+      expect(fd.get("items[0][name]")).toBe("a");
+      expect(fd.get("items[1][name]")).toBe("b");
+      expect(Array.from(fd.keys())).toEqual(["items[0][name]", "items[1][name]"]);
+      expect(objectToFormData(null).keys().next().done).toBe(true);
+      expect(objectToFormData("str").keys().next().done).toBe(true);
     });
   });
 });

@@ -50,6 +50,7 @@ import {
   addItems as addItemsConfig,
   removeItems as removeItemsConfig,
   updateItems as updateItemsConfig,
+  objectToFormData,
 } from "./utils.js";
 import FormBlock from "./FormBlock.vue";
 
@@ -494,6 +495,23 @@ watch(
  */
 const getSubmitData = () => buildSubmitData(formData);
 
+/**
+ * 对外暴露：对象 → FormData（multipart/form-data 提交）。
+ * 不传 source 时默认取 getSubmitData()（已按 removeHiddenValues 过滤）。
+ * 文件（File / Blob，含 UploadPro 绑定值里的 { raw: File } 文件项）以二进制 append，
+ * 不会被字符串化；嵌套对象 / 数组的键格式见 objectToFormData。
+ *
+ * @param {Object} [source] 待转换对象，默认提交数据
+ * @param {Object} [options] 见 objectToFormData（arrayFormat: 'repeat' | 'bracket'）
+ * @returns {FormData}
+ *
+ * @example
+ * const fd = formRef.value.toFormData(); // 当前表单（含待上传文件二进制）
+ * const fd2 = formRef.value.toFormData({ name: "张三", avatar: file });
+ */
+const toFormData = (source = getSubmitData(), options = {}) =>
+  objectToFormData(source, options);
+
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
 const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border", "compact", "errorTipDuration"];
 const attrs = useAttrs();
@@ -620,6 +638,8 @@ const ownExposed = {
     uploadRefs[prop]?.getRemovedFiles?.(field, valuesOnly) ?? [],
   // 获取提交数据：按 removeHiddenValues 规则移除隐藏字段值（保存/提交时使用）
   getSubmitData,
+  // 对象 → FormData（默认取提交数据；File/Blob 以二进制追加，用于 multipart 上传）
+  toFormData,
   // —— 运行时动态增删改 items（配置项联动：禁用/显隐/异步 options 等）——
   // 原地修改父级传入的 items 数组（保持引用，父级 ref 自动响应式更新）。
   // position：'end' | 'start' | number | { before: prop } | { after: prop }

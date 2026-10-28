@@ -134,9 +134,22 @@ formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
 
 **FormPro 自身方法**：
 - `getSubmitData()` —— 返回已按 `removeHiddenValues` 过滤的提交数据（见 §6）
+- `toFormData(source?, options?)` —— 对象 → `FormData`（multipart 提交）。不传 `source` 时取 `getSubmitData()`；`File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }`）始终以二进制 append，不会变成 `"[object File]"` 或 `{}`；嵌套对象展开为 `a[b]`，对象数组为 `a[0][b]`；标量/文件数组默认重复同名键（`arrayFormat: 'bracket'` 时用 `a[]`）；`Date` → ISO，布尔 → `'true'/'false'`，`null` / `undefined` 跳过
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`
 - 运行时动态配置：`addItems(entries, position?)` / `removeItems(target)` / `updateItems(target, patch)` —— 增删改 items（联动禁用/显隐、异步 options，详见 §13）
 - `formData` —— 内部完整数据（含隐藏字段值）
+
+```js
+// 直接把当前表单（含待上传文件的二进制）提交给后端
+const fd = formRef.value.toFormData();
+await axios.post("/api/save", fd);
+
+// 也可传任意对象：文件字段同样是二进制
+const fd2 = formRef.value.toFormData(
+  { name: formRef.value.formData.name, avatar: file, tags: ["a", "b"] },
+  { arrayFormat: "repeat" },
+); // tags=a&tags=b（bracket → tags[]=a&tags[]=b）
+```
 
 ---
 

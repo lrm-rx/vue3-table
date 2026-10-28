@@ -13,6 +13,9 @@
  *  8. FormPro 实例 API：通过 formRef.value.xxx('字段 prop') 调用上传实例方法
  *     （getRawFiles / getRemovedFiles / clearFiles / getUpload / submit / handleStart …），
  *     多上传项按字段区分；manualFiles 演示 autoUpload=false 延迟上传 + 手动 submit
+ *  9. toFormData：formRef.value.toFormData() 把当前表单（含待上传文件）转 FormData，
+ *     File/Blob 以二进制 append（不会变成 "[object File]"）；可切换 arrayFormat
+ *     观察 attachments / attachments[] 键格式差异
  *
  * 演示用 httpRequest 为本地模拟（进度 + blob: URL）；真实项目改为
  * itemRender.props.action = '/api/upload' 或传入自己的 httpRequest 即可。
@@ -461,6 +464,28 @@ const demoHandleStart = () => {
   formRef.value?.handleStart?.("manualFiles", file);
   ElMessage.success("handleStart('manualFiles', file) → 已入队，点上方 submit 上传");
 };
+
+// —— toFormData 演示：对象 → FormData，文件以二进制 append ——
+const formDataPreview = ref([]);
+const demoToFormData = (options) => {
+  // 不传 source 时默认取 getSubmitData()（已过滤隐藏字段）
+  const fd = formRef.value?.toFormData?.(undefined, options);
+  if (!fd) {
+    ElMessage.warning("toFormData 不可用");
+    return;
+  }
+  formDataPreview.value = Array.from(fd.entries()).map(([key, value]) => ({
+    key,
+    // 关键：文件条目拿到的是 File/Blob 实例，而不是 "[object File]" / "{}" 字符串
+    text:
+      value instanceof File
+        ? `File(name=${value.name}, size=${value.size}B, type=${value.type || "unknown"})`
+        : String(value),
+  }));
+  ElMessage.success(
+    `toFormData() → ${formDataPreview.value.length} 个条目；文件按二进制 append（未字符串化）`,
+  );
+};
 </script>
 
 <template>
@@ -515,6 +540,30 @@ const demoHandleStart = () => {
       </el-button>
     </div>
 
+    <!-- toFormData 示例：默认取提交数据；第二个示例切换数组键格式（repeat / bracket） -->
+    <div
+      style="
+        margin-bottom: 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      "
+    >
+      <el-tag type="info" effect="plain">
+        对象 → FormData：formRef.value.toFormData(source?, options?)
+      </el-tag>
+      <el-button size="small" @click="demoToFormData()">
+        toFormData()
+      </el-button>
+      <el-button
+        size="small"
+        @click="demoToFormData({ arrayFormat: 'bracket' })"
+      >
+        toFormData(…, { arrayFormat: 'bracket' })
+      </el-button>
+    </div>
+
     <FormPro
       ref="formRef"
       v-model="formData"
@@ -536,5 +585,24 @@ const demoHandleStart = () => {
         overflow: auto;
       "
       >{{ JSON.stringify(formData, null, 2) }}</pre>
+
+    <el-divider>FormData 条目（toFormData）</el-divider>
+    <div
+      v-if="!formDataPreview.length"
+      style="color: #909399; font-size: 13px"
+    >
+      点击上方 toFormData() 查看当前表单的转换结果；先选 / 粘贴几个文件即可看到
+      File 条目（二进制，不会被字符串化）
+    </div>
+    <pre
+      v-else
+      style="
+        background: #f5f7fa;
+        padding: 12px;
+        border-radius: 4px;
+        max-height: 300px;
+        overflow: auto;
+      "
+      >{{ formDataPreview.map((row) => `${row.key} = ${row.text}`).join("\n") }}</pre>
   </div>
 </template>
