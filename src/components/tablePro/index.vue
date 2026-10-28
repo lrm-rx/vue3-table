@@ -971,7 +971,14 @@ const applyInitVxeUIState = (sortFields, sortOrders) => {
     }
     // 4d) 本地过滤排序开关开启：默认过滤/排序已同步到 vxe UI 状态，触发本地重算
     // （开关关闭时数据由后端过滤排序，无需处理）
-    if (props.localFilterSort) bumpLocalFilterSort();
+    if (props.localFilterSort) {
+      bumpLocalFilterSort();
+      // vxe 可能在自身的 nextTick 中才完成 filter checked 状态的最终应用，
+      // 此处 nextTick 收集到的可能仍是 checked=false 的中间态。
+      // 延迟一拍（宏任务）确保收集到最终的激活状态，避免首屏本地过滤
+      // 与用户首次交互后的结果不一致（如默认过滤首屏未生效、交互后才生效）。
+      setTimeout(() => bumpLocalFilterSort(), 0);
+    }
   });
 };
 

@@ -13,7 +13,7 @@
  *       FilterCheckbox 的搜索框固定在顶部（flex-shrink:0），仅选项列表滚动。
  * 滚动：面板不因表格/页面滚动而关闭，由 tablePro 在滚动时重新定位面板（保持视觉跟随）。
  */
-import { computed, inject, watchEffect, ref } from 'vue'
+import { computed, inject, watchEffect, ref, nextTick } from 'vue'
 import { useElementSize } from '@vueuse/core'
 import { FILTER_DEFAULTS, isFilterActive } from './filter-config.js'
 import FilterInput from './FilterInput.vue'
@@ -78,11 +78,18 @@ const maxPanelHeight = computed(() => {
 // ========== 确定：收集组合参数 -> 抛出 filter-confirm -> 关闭面板 ==========
 const onConfirm = () => {
   const opt = option.value
-  // 标记当前列过滤是否激活（用于表头图标高亮）
-  if (opt) opt.checked = isFilterActive(name.value, opt.data)
+  const fName = name.value
+  const active = opt ? isFilterActive(fName, opt.data) : false
+  // 标记当前列过滤是否激活（用于表头图标高亮 + 本地过滤收集）
+  if (opt) opt.checked = active
   // 传递 params 以便 tablePro 清除该列的草稿快照（确认后不再恢复）
   ctx?.emitConfirm?.(props.params)
   ctx?.closePanel?.(props.params)
+  // vxe 的 closeFilter() 会在内部重置 option.checked，导致上面的设置丢失，
+  // 需在面板关闭后（nextTick）重新写入 checked，确保本地过滤/表头高亮状态持久化。
+  if (opt) {
+    nextTick(() => { opt.checked = isFilterActive(fName, opt.data) })
+  }
 }
 
 // 重置：清空当前列过滤条件 -> 抛 filter-reset 事件（面板保持打开）
