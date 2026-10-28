@@ -162,13 +162,15 @@ describe("FormPro 配置式表单", () => {
       ],
     });
     await flushPromises();
-    // 默认折叠 → 无表单项
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(0);
+    const body = () => wrapper.find(".form-pro__group-body");
+    // 默认折叠 → body 带 is-collapsed 类（内容通过 CSS grid 0fr 收起，不可见）
+    expect(body().classes()).toContain("is-collapsed");
     const header = wrapper.find(".form-pro__group-header-main");
     expect(header.exists()).toBe(true);
     // 点击展开
     await header.trigger("click");
     await flushPromises();
+    expect(body().classes()).not.toContain("is-collapsed");
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(2);
   });
 
@@ -186,13 +188,16 @@ describe("FormPro 配置式表单", () => {
     // 两个分组各自渲染一个 header（v-for key 不碰撞）
     const headers = wrapper.findAll(".form-pro__group-header-main");
     expect(headers.length).toBe(2);
-    // 默认都展开 → 2 个表单项
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(2);
+    const bodies = () => wrapper.findAll(".form-pro__group-body");
+    // 默认都展开 → 无 is-collapsed
+    expect(bodies().every((b) => !b.classes().includes("is-collapsed"))).toBe(true);
     // 折叠第一个分组：只影响第一个
     await headers[0].trigger("click");
     await flushPromises();
-    // 只剩 B（第二个分组的项）
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).map((i) => i.props("label"))).toEqual(["B"]);
+    expect(bodies()[0].classes()).toContain("is-collapsed");
+    expect(bodies()[1].classes()).not.toContain("is-collapsed");
+    // 第二个分组的项仍可见
+    expect(bodies()[1].findAllComponents({ name: "ElFormItem" }).length).toBe(1);
   });
 
   it("JSX 渲染：item.render(ctx, h) 产出控件", async () => {
@@ -646,10 +651,11 @@ describe("FormPro 配置式表单", () => {
     // 标题区仍可点击切换折叠
     const header = wrapper.find(".form-pro__group-header-main");
     expect(header.exists()).toBe(true);
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(1);
+    const body = wrapper.find(".form-pro__group-body");
+    expect(body.classes()).not.toContain("is-collapsed");
     await header.trigger("click");
     await flushPromises();
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(0);
+    expect(body.classes()).toContain("is-collapsed");
   });
 
   it("分组 collapsible:false：不显示折叠按钮且恒展开（忽略 fold）", async () => {
@@ -746,34 +752,37 @@ describe("FormPro 配置式表单", () => {
     });
     await flushPromises();
     const vm = wrapper.vm;
-    const countItems = () => wrapper.findAllComponents({ name: "ElFormItem" }).length;
+    const bodies = () => wrapper.findAll(".form-pro__group-body");
+    const collapsedCount = () =>
+      bodies().filter((b) => b.classes().includes("is-collapsed")).length;
     expect(typeof vm.toggleGroup).toBe("function");
     expect(typeof vm.setGroupCollapsed).toBe("function");
     expect(typeof vm.setGroupsCollapsed).toBe("function");
     expect(typeof vm.collapseAllGroups).toBe("function");
     expect(typeof vm.expandAllGroups).toBe("function");
-    // 默认都展开 → 2 项
-    expect(countItems()).toBe(2);
+    // 默认都展开 → 0 个折叠
+    expect(collapsedCount()).toBe(0);
     // 收起全部
     vm.collapseAllGroups();
     await flushPromises();
-    expect(countItems()).toBe(0);
+    expect(collapsedCount()).toBe(2);
     // 展开全部
     vm.expandAllGroups();
     await flushPromises();
-    expect(countItems()).toBe(2);
+    expect(collapsedCount()).toBe(0);
     // 折叠单个分组
     vm.setGroupCollapsed("G1", true);
     await flushPromises();
-    expect(countItems()).toBe(1);
+    expect(collapsedCount()).toBe(1);
+    expect(bodies()[0].classes()).toContain("is-collapsed");
     // 切换 G1 → 展开
     vm.toggleGroup("G1");
     await flushPromises();
-    expect(countItems()).toBe(2);
+    expect(collapsedCount()).toBe(0);
     // 批量折叠多个
     vm.setGroupsCollapsed(["G1", "G2"], true);
     await flushPromises();
-    expect(countItems()).toBe(0);
+    expect(collapsedCount()).toBe(2);
   });
 
   it("分组 allToggle：显示「折叠全部 / 展开全部」按钮，点击切换全部分组", async () => {
@@ -787,21 +796,24 @@ describe("FormPro 配置式表单", () => {
       ],
     });
     await flushPromises();
-    const countItems = () => wrapper.findAllComponents({ name: "ElFormItem" }).length;
+    const collapsedCount = () =>
+      wrapper
+        .findAll(".form-pro__group-body")
+        .filter((b) => b.classes().includes("is-collapsed")).length;
     const allToggle = wrapper.find(".form-pro__group-toggle-all");
     expect(allToggle.exists()).toBe(true);
     // 默认未全折叠 → 文案「折叠全部」
     expect(allToggle.text()).toContain("折叠全部");
-    expect(countItems()).toBe(2);
+    expect(collapsedCount()).toBe(0);
     // 点击 → 全部折叠
     await allToggle.trigger("click");
     await flushPromises();
-    expect(countItems()).toBe(0);
+    expect(collapsedCount()).toBe(2);
     expect(allToggle.text()).toContain("展开全部");
     // 再次点击 → 全部展开
     await allToggle.trigger("click");
     await flushPromises();
-    expect(countItems()).toBe(2);
+    expect(collapsedCount()).toBe(0);
     // 暴露方法 toggleAllGroups 等价
     expect(typeof wrapper.vm.toggleAllGroups).toBe("function");
   });
@@ -850,18 +862,20 @@ describe("FormPro 配置式表单", () => {
       },
     );
     await flushPromises();
-    // 默认折叠 → 无表单项
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(0);
+    const body = () => wrapper.find(".form-pro__group-body");
+    // 默认折叠 → body 带 is-collapsed
+    expect(body().classes()).toContain("is-collapsed");
     const extra = wrapper.find(".form-pro__group-header-extra");
     expect(extra.exists()).toBe(true);
     expect(extra.text()).toContain("插槽提示");
-    // 点击扩展区不应触发分组折叠（仍为折叠态，表单项数不变）
+    // 点击扩展区不应触发分组折叠（仍为折叠态）
     await extra.trigger("click");
     await flushPromises();
-    expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(0);
+    expect(body().classes()).toContain("is-collapsed");
     // 点击标题区才展开
     await wrapper.find(".form-pro__group-header-main").trigger("click");
     await flushPromises();
+    expect(body().classes()).not.toContain("is-collapsed");
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(1);
   });
 

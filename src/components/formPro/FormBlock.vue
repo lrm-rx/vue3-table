@@ -88,15 +88,13 @@ const slots = useSlots();
 const foldingCollapsed = ref(true);
 
 const entries = computed(() =>
-  props.collapsed
-    ? []
-    : resolveVisibleEntries(props.block.items, {
-        data: props.formData,
-        onlyRequired: props.onlyRequired,
-        formRules: props.formRules,
-        formSpan: props.formSpan,
-        foldingCollapsed: foldingCollapsed.value,
-      }),
+  resolveVisibleEntries(props.block.items, {
+    data: props.formData,
+    onlyRequired: props.onlyRequired,
+    formRules: props.formRules,
+    formSpan: props.formSpan,
+    foldingCollapsed: foldingCollapsed.value,
+  }),
 );
 
 // v-model 修饰符（item.modelModifiers）：配置式渲染无法使用模板 v-model.trim，
@@ -476,6 +474,15 @@ const renderInsertEntry = (entry) => {
   return <ElCol span={span}>{content}</ElCol>;
 };
 
+// —— 分组展开/折叠过渡动画 ——
+// 采用 CSS grid-template-rows: 0fr → 1fr 技巧实现高度平滑过渡：
+//   - 折叠时 grid-template-rows: 0fr，内容行高度收为 0；展开时 1fr，撑满内容高度
+//   - overflow:hidden 裁剪溢出内容，避免折叠过程中内容溢出
+//   - 过渡属性 grid-template-rows 现代浏览器均支持，无需 JS 测量 scrollHeight，
+//     也不依赖 transitionend 事件，比 JS 钩子方案更稳定可靠。
+// 展开/折叠时长统一由 CSS 变量 --form-pro-group-duration 控制（默认 300ms）。
+// （动画由 CSS 实现，render 中始终渲染 body，仅切换 is-collapsed 类）
+
 const render = () => {
   const { group } = props.block;
   const colNodes = entries.value.map((e, idx) => {
@@ -550,7 +557,14 @@ const render = () => {
           </span>
         ) : null}
       </div>
-      {!props.collapsed && <div class="form-pro__group-body">{row}</div>}
+      <div
+        class={{
+          "form-pro__group-body": true,
+          "is-collapsed": !!props.collapsed,
+        }}
+      >
+        {row}
+      </div>
     </div>
   );
 };
@@ -740,6 +754,27 @@ defineExpose({ entries });
   margin-left: 6px;
 }
 :deep(.form-pro__group-body) {
+  // 展开/折叠高度动画：用 grid-template-rows 0fr → 1fr 实现
+  // （0fr 时内容行高度收为 0，1fr 时撑满内容自然高度）
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--form-pro-group-duration, 300ms) ease,
+    opacity var(--form-pro-group-duration, 300ms) ease,
+    padding-top var(--form-pro-group-duration, 300ms) ease;
+  overflow: hidden;
   padding-top: 4px;
+
+  // 直接子元素（ElRow）需 min-height:0 + overflow:hidden，
+  // grid 折叠技巧才能将内容裁剪到 0 高度
+  > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+// 折叠态：grid-template-rows 收为 0fr，配合 opacity 淡出与 padding-top 收起
+:deep(.form-pro__group-body.is-collapsed) {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  padding-top: 0;
 }
 </style>
