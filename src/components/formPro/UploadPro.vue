@@ -748,6 +748,12 @@ defineExpose({
     width: 100%;
   }
 
+  // 还原 el-upload 原生行高：.el-form-item__content 的 line-height:32px 会被内部
+  // 文件行 / 提示文案继承（el-upload 自身未给 .el-upload-list__item 设行高），
+  // 把每行撑到 32px、文件间距变大；这里在根节点重置为浏览器默认行高，
+  // 组件内的文字表现与独立使用 el-upload 时一致
+  line-height: normal;
+
   // 拖拽区：el-upload 根为 inline-block，需拉满后 dragger 的 width:100%
   // 才相对表单项列宽生效
   &.upload-pro--drag :deep(.el-upload) {
@@ -853,8 +859,8 @@ defineExpose({
   transform: translateY(-50%);
   z-index: 1;
   display: inline-flex;
-  // 扩大可点区域：四周补 padding（绝对定位不影响布局）；总高约 14+10=24px，
-  // 不超过 text 列表行高（font-size 14 × line-height 1.8 ≈ 25px）
+  // 扩大可点区域：四周补 padding（绝对定位不参与布局，不改变文件行行高）；
+  // 总高约 14+10=24px
   padding: 5px 6px;
   box-sizing: border-box;
   cursor: pointer;
@@ -903,8 +909,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   font-size: 12px;
-  // 显式行高：el-form-item__content 的 line-height:32px 会被继承，
-  // 导致入口自然高度（约 37.6px）超过按钮（24/32px）并把按钮行撑高
+  // 显式行高：入口按 12px 字号收敛高度，避免随外部行高上下文变化而撑高按钮行
   line-height: 1.4;
   color: var(--el-text-color-secondary);
   border: 1px dashed var(--el-border-color);
