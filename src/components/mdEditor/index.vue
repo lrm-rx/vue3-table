@@ -242,6 +242,10 @@ const resolvedToolbars = computed(() => {
 // 合并后的 props（供 MdEditor 使用），排除本组件自定义的 props
 const mergedProps = computed(() => {
   const rest = { ...attrs }
+  // class / style 已应用到根 .base-md-editor 容器（见模板），不再透传给内层 MdEditor，
+  // 避免用户的 class/style 同时落到两层导致样式叠加
+  delete rest.class
+  delete rest.style
   // 移除可能被 attrs 捕获的本组件自定义 prop
   delete rest.uploadType
   delete rest.customUpload
@@ -398,13 +402,16 @@ const fsEditorStyle = computed(() =>
 <template>
   <div
     class="base-md-editor"
-    :class="{
-      'base-md-editor--with-catalog': editCatalog,
-      'base-md-editor--catalog-left': editCatalog && catalogPosition === 'left',
-      'base-md-editor--readonly-catalog': readonlyCatalog,
-      'base-md-editor--readonly-catalog-left': readonlyCatalog && catalogPosition === 'left',
-    }"
-    :style="showCatalog ? { '--catalog-width': normalizedCatalogWidth } : undefined"
+    :class="[
+      attrs.class,
+      {
+        'base-md-editor--with-catalog': editCatalog,
+        'base-md-editor--catalog-left': editCatalog && catalogPosition === 'left',
+        'base-md-editor--readonly-catalog': readonlyCatalog,
+        'base-md-editor--readonly-catalog-left': readonlyCatalog && catalogPosition === 'left',
+      },
+    ]"
+    :style="[attrs.style, showCatalog ? { '--catalog-width': normalizedCatalogWidth } : undefined]"
   >
     <!-- 只读模式：纯预览，无工具栏无边框；目录面板 sticky 吸顶（catalog prop / toggleCatalog 控制显隐） -->
     <template v-if="readOnly">
@@ -501,6 +508,18 @@ const fsEditorStyle = computed(() =>
 </template>
 
 <style scoped lang="scss">
+// 根容器基础样式：
+// 1. box-sizing: border-box：用户经 class/style 透传的 border/padding 计入宽度，不撑破父容器；
+// 2. overflow-x: clip：裁切内部可能的横向空白溢出（非 overflow:hidden，不创建滚动容器），
+//    避免垂直滚动条挤占宽度时触发布局水平滚动条。
+// 3. width:100%：显式约束不超出父容器。
+.base-md-editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
 // 开启目录时：编辑器保持在文档流（决定容器宽高），目录面板绝对定位贴边。
 // 这样面板高度严格等于编辑器高度（top/bottom 贴齐容器），
 // 目录项再多也不会撑高容器 —— 面板内部「头部固定 + 正文独立滚动」。

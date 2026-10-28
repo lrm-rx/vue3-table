@@ -187,7 +187,9 @@ const pasteLabel = computed(
 const uploadAttrs = computed(() => {
   const out = {};
   for (const [k, v] of Object.entries(attrs)) {
-    if (k === "onUpdate:modelValue") continue;
+    // class / style 已应用到根 .upload-pro 容器（见模板），不再透传给内层 el-upload，
+    // 避免用户的 class/style 同时落到两层导致样式叠加或定位异常
+    if (k === "class" || k === "style" || k === "onUpdate:modelValue") continue;
     out[k] = v;
   }
   if (out.action == null || out.action === "") out.action = "#";
@@ -509,8 +511,8 @@ defineExpose({
 <template>
   <div
     class="upload-pro"
-    :class="{ 'upload-pro--drag': drag }"
-    :style="rootStyle"
+    :class="[attrs.class, { 'upload-pro--drag': drag }]"
+    :style="[attrs.style, rootStyle]"
     @click="onRootClick"
   >
     <ElUpload
@@ -749,7 +751,12 @@ defineExpose({
   // 被压窄、长文件名截断（如「项目说明书-v1.pdf」显示不全），所有模式统一拉满
   display: block;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
+  // box-sizing: border-box：用户经 class/style 透传的 border/padding 计入宽度，不撑破父容器
+  box-sizing: border-box;
+  // overflow-x: clip：裁切内部可能的横向空白溢出（非 overflow:hidden），避免触发水平滚动条
+  overflow-x: clip;
 
   // text / picture 文件列表占满根节点宽度，保证长文件名有完整的截断空间
   :deep(.el-upload-list) {
