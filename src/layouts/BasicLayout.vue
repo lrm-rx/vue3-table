@@ -144,6 +144,9 @@ const activePath = computed(() => route.path);
   &__main {
     background-color: #f0f2f5;
     overflow: auto;
+    // 为垂直滚动条预留固定槽位：内容高度未溢出时也占位，避免滚动条出现/消失时
+    // 内容宽度跳动（跳动可能使原本刚好适配的内容溢出、产生水平滚动条）。
+    scrollbar-gutter: stable;
   }
 }
 </style>

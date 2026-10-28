@@ -714,7 +714,7 @@ defineExpose(ownExposed);
   <el-form
     ref="formRef"
     v-bind="formPropsComputed"
-    :class="{ 'form-pro--border': border, 'form-pro--compact': compact }"
+    :class="['form-pro', { 'form-pro--border': border, 'form-pro--compact': compact }]"
     :style="unitSlotStyle"
     @validate="onFormValidate"
   >
@@ -752,6 +752,21 @@ defineExpose(ownExposed);
 </template>
 
 <style lang="scss" scoped>
+// —— FormPro 根（el-form）基础样式 ——
+// 1. box-sizing: border-box：用户经 class/style 透传添加的 border / padding 会计入宽度，
+//    不再因 content-box 把边框/内边距叠加到总宽上而撑破父容器、触发水平滚动条。
+// 2. overflow-x: clip：裁切 el-row 因 gutter 产生的负 margin（左右各 gutter/2）空白溢出。
+//    注意这不是 overflow:hidden——clip 不创建滚动容器、不允许程序化滚动，仅裁切绘制溢出；
+//    被裁切的只有 el-row 的空白 margin 区域，列内容（el-col 及其 padding）不受影响。
+//    这样即使 FormPro 直接放在无 padding 的容器中，也不会因 el-row 负 margin 产生水平滚动条。
+// 3. width/max-width: 100%：显式约束表单不超出父容器宽度，与 border-box 配合确保不溢出。
+.form-pro {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
 // —— 紧凑型表单（compact 模式）——
 // 1. 垂直间隔收紧：无 tip 可视行的 el-form-item 间隔 18px → 6px。
 //    行内任一项配置了 tip 的行整体不加收紧类（FormBlock 侧按可视行判定）——tip 文案
