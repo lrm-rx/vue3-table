@@ -1422,8 +1422,9 @@ provide("tableProFilterContext", {
     const payload = { column: info, ...getFilterSortState() };
     applyFilterAndSyncHeader(payload);
     emit("filter-reset", payload);
-    // 重置会改变面板内容（如清空输入值），vxe 可能重新定位面板并覆盖我们注入的
-    // ARROW_EXTRA 偏移，导致面板上移约 10px。此处重新 clamp 一次，恢复箭头空间偏移。
+    // 重置会改变面板内容（如清空输入值），vxe 可能重新定位面板 top。
+    // 箭头空间偏移已通过 transform: translateY 施加，vxe 改写 top 不会丢失该偏移，
+    // 这里重新 clamp 仅为保证面板仍在视口边界内。
     if (col) openFilterPanel(col);
   },
   emitResetAll: () => {

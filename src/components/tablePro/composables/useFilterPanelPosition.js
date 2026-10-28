@@ -17,6 +17,11 @@ import { computed, nextTick } from "vue";
 import { useEventListener } from "@vueuse/core";
 
 export const useFilterPanelPosition = (gridRef) => {
+  // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
+  const ARROW_SIZE = 8;
+  const ARROW_GAP = 2;
+  const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
+
   // ========== 当前追踪的过滤列（滚动重定位目标）==========
   let activeFilterColumn = null;
   let repositionRafId = null;
@@ -84,11 +89,13 @@ export const useFilterPanelPosition = (gridRef) => {
   };
 
   // 4. 垂直边界 clamp（含箭头空间）
-  const clampFilterPanelVertical = (top, vh, ph, margin) => {
+  // arrowExtra：箭头空间已通过 transform: translateY(arrowExtra) 施加到面板，
+  // 视觉顶部 = top + arrowExtra，因此边界需同步减去 arrowExtra，保证面板整体（含箭头）在视口内。
+  const clampFilterPanelVertical = (top, vh, ph, margin, arrowExtra = 0) => {
     const docScrollTop =
       document.documentElement.scrollTop || document.body.scrollTop || 0;
-    const minTop = docScrollTop + margin;
-    const maxTop = docScrollTop + vh - ph - margin;
+    const minTop = docScrollTop + margin - arrowExtra;
+    const maxTop = docScrollTop + vh - ph - margin - arrowExtra;
     if (ph < vh - margin * 2) {
       if (top < minTop) top = minTop;
       else if (top > maxTop) top = maxTop;
@@ -117,10 +124,6 @@ export const useFilterPanelPosition = (gridRef) => {
     );
     if (!panel) return;
     const margin = 16;
-    // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
-    const ARROW_SIZE = 8;
-    const ARROW_GAP = 2;
-    const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
 
     const vw = document.documentElement.clientWidth || window.innerWidth;
     const vh = document.documentElement.clientHeight || window.innerHeight;
@@ -141,17 +144,19 @@ export const useFilterPanelPosition = (gridRef) => {
           document.documentElement.scrollTop || document.body.scrollTop || 0;
         const docScrollLeft =
           document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-        // 面板顶部 = 触发元素底部 + 箭头空间（document 坐标）
-        top = docScrollTop + rect.bottom + ARROW_EXTRA;
+        // 面板顶部 = 触发元素底部（document 坐标）
+        // 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失
+        top = docScrollTop + rect.bottom;
         // 面板左对齐触发元素中心
         const triggerCenterX = docScrollLeft + rect.left + rect.width / 2;
         left = triggerCenterX - pw / 2;
         // 水平边界
         left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-        // 垂直边界
-        top = clampFilterPanelVertical(top, vh, ph, margin);
+        // 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
+        top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
         panel.style.left = `${left}px`;
         panel.style.top = `${top}px`;
+        panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
         // 箭头水平偏移
         setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
         // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
@@ -164,15 +169,15 @@ export const useFilterPanelPosition = (gridRef) => {
     // 初次打开 clamp 逻辑：基于 vxe 已设置的 top/left 进行边界修正
     // 1. 获取触发元素中心 X
     const triggerCenterX = getFilterTriggerCenterX(column, left + pw / 2);
-    // 2. 面板整体向下挪 ARROW_EXTRA，给箭头留出表头下方到面板上方的可见空间
-    //    否则伪元素 translate(-100%) 会被表头白色背景挡住
-    top += ARROW_EXTRA;
+    // 2. 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失，
+    //    避免重置时 vxe 重新定位 top 后我们再补偏移造成的一帧闪烁。
     // 3. 水平边界
     left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-    // 4. 垂直边界
-    top = clampFilterPanelVertical(top, vh, ph, margin);
+    // 4. 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
+    top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
     panel.style.left = `${left}px`;
     panel.style.top = `${top}px`;
+    panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
     // 5. 箭头水平偏移
     setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
     // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
@@ -237,10 +242,12 @@ export const useFilterPanelPosition = (gridRef) => {
             vh,
             ph,
             margin,
+            ARROW_EXTRA,
           );
         }
         panel.style.left = `${left}px`;
         panel.style.top = `${top}px`;
+        // transform 偏移已在初次 clamp 时设置，滚动仅改 top/left，无需重复设置
         return;
       }
       // 无基准快照（极少出现）时回退到按触发元素整量重算
