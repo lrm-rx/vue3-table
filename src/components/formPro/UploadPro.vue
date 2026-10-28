@@ -10,8 +10,9 @@
  *       仅提取剪贴板中的图片；
  *     - text / picture 模式：触发按钮右侧渲染粘贴入口，可粘贴任意文件
  *       （如资源管理器复制的附件）；
- *     - 组件内单一 paste 入口（焦点/事件目标在哪个 UploadPro 实例内就上传到
- *       哪一个，多个上传项互不干扰），粘贴文件通过 el-upload 暴露的
+ *     - 单一 paste 入口：监听只挂在粘贴入口自身，必须「点击入口使其获得焦点」
+ *       后 Ctrl+V 才生效（不会因点了上传按钮 / 文件行而误接收粘贴），多个上传项
+ *       互不干扰；粘贴文件通过 el-upload 暴露的
  *       handleStart 入队、submit 触发，完整复用 beforeUpload 校验、进度、
  *       成功回填链路，不另造一套上传请求；
  *  3. 内置图片预览：组件内隐藏一个 el-image 作宿主，点击图片调用其
@@ -311,8 +312,12 @@ const onExceed = (files, oldFiles) => {
   emit("exceed", files, oldFiles);
 };
 
-// —— 粘贴上传：单入口（根容器 @paste），按焦点所在实例投递，多实例互不干扰 ——
-// 照片墙仅提取图片；text / picture / drag 等文件场景提取剪贴板全部文件
+// —— 粘贴上传：监听绑定在粘贴入口元素自身（见模板 @paste）——
+// paste 事件会派发到「当前聚焦元素」并向上冒泡，若挂在根节点，则只要焦点落在这
+// 个实例内的任意元素（上传按钮、隐藏的 file input、文件名链接、删除按钮…）就会
+// 被误当作粘贴入口，出现「没点粘贴区也能粘贴」。因此只在入口上监听：
+// 只有点击入口使其聚焦后，Ctrl+V 才走这里。照片墙仅提取图片；text / picture
+// 列表等文件场景提取剪贴板全部文件
 const onPaste = (e) => {
   if (mergedDisabled.value) return;
   const files = extractClipboardFiles(e, isCard.value);
@@ -506,7 +511,6 @@ defineExpose({
     class="upload-pro"
     :class="{ 'upload-pro--drag': drag }"
     :style="rootStyle"
-    @paste="onPaste"
     @click="onRootClick"
   >
     <ElUpload
@@ -545,7 +549,8 @@ defineExpose({
               <Plus />
             </ElIcon>
             <!-- 粘贴入口位于触发卡片内部：@click.stop 阻止冒泡到 el-upload
-                 触发区（否则会弹出系统选文件窗），仅聚焦等待 Ctrl+V -->
+                 触发区（否则会弹出系统选文件窗），仅聚焦等待 Ctrl+V；
+                 @paste 只挂在入口自身，避免实例内其他元素聚焦时误接收粘贴 -->
             <span
               v-if="pasteable && !mergedDisabled"
               class="upload-pro__card-paste"
@@ -554,6 +559,7 @@ defineExpose({
               :aria-label="pasteLabel"
               :title="pasteLabel"
               @click.stop="onPasteEntryClick"
+              @paste="onPaste"
             >
               {{ pasteLabel }}
             </span>
@@ -567,7 +573,8 @@ defineExpose({
               {{ buttonText }}
             </ElButton>
             <!-- 粘贴入口位于 el-upload 触发区内部，点击必须 stopPropagation
-                 截断冒泡（否则弹出系统选文件窗），仅聚焦等待 Ctrl+V -->
+                 截断冒泡（否则弹出系统选文件窗），仅聚焦等待 Ctrl+V；
+                 @paste 只挂在入口自身，避免实例内其他元素聚焦时误接收粘贴 -->
             <span
               v-if="pasteable && !mergedDisabled"
               class="upload-pro__btn-paste"
@@ -576,6 +583,7 @@ defineExpose({
               :aria-label="pasteLabel"
               :title="pasteLabel"
               @click.stop="onPasteEntryClick"
+              @paste="onPaste"
             >
               {{ pasteLabel }}
             </span>

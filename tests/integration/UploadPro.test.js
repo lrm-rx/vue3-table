@@ -140,6 +140,25 @@ describe("UploadPro 照片墙（picture-card）", () => {
     expect(URL.createObjectURL).toHaveBeenCalledWith(file);
   });
 
+  it("未点击粘贴入口时粘贴不入列：焦点在实例内其他元素也不会误接收", async () => {
+    const wrapper = mountUpload({
+      modelValue: [{ name: "a.pdf", url: "https://example.com/a.pdf" }],
+      listType: "text",
+      autoUpload: false,
+    });
+    await flushPromises();
+    const file = new File(["abc"], "from-clipboard.pdf", {
+      type: "application/pdf",
+    });
+    // 焦点在上传按钮（el-upload 触发区内）时按 Ctrl+V：
+    // paste 冒泡到根节点不再被接收，既不拦截也不入列
+    const btn = wrapper.find(".upload-pro__trigger-row .el-button");
+    const ev = dispatchImagePaste(btn.element, [file]);
+    await flushPromises();
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+  });
+
   it("粘贴非图片内容不拦截（保持原生粘贴行为）", async () => {
     const wrapper = mountUpload({ modelValue: [], autoUpload: false });
     const ev = new Event("paste", { bubbles: true, cancelable: true });
@@ -949,7 +968,7 @@ describe("UploadPro 拖拽上传宽高", () => {
     expect(wrapper.find(".el-upload__text").html()).toContain("<em>选择</em>");
   });
 
-  it("drag 模式粘贴文件（无按钮旁入口，走根节点 @paste）入队成功", async () => {
+  it("drag 模式无粘贴入口：根节点不再兜底接收 paste（只能拖拽 / 选择文件）", async () => {
     const wrapper = mountUpload({
       modelValue: [],
       drag: true,
@@ -958,7 +977,7 @@ describe("UploadPro 拖拽上传宽高", () => {
     });
     // drag 模式不渲染按钮旁粘贴入口
     expect(wrapper.find(".upload-pro__btn-paste").exists()).toBe(false);
-    // 直接在根节点派发 paste（模拟拖拽区获得焦点后 Ctrl+V）
+    // 直接在根节点派发 paste：没有入口监听 → 不拦截、不入列
     const file = new File(["x"], "drag-paste.pdf", { type: "application/pdf" });
     const ev = new Event("paste", { bubbles: true, cancelable: true });
     Object.defineProperty(ev, "clipboardData", {
@@ -969,7 +988,8 @@ describe("UploadPro 拖拽上传宽高", () => {
     });
     wrapper.find(".upload-pro").element.dispatchEvent(ev);
     await flushPromises();
-    expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
   });
 });
 
