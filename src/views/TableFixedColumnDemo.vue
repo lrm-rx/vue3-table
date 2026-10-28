@@ -240,11 +240,67 @@ const leftFixedColumn = {
   filterType: "FilterInput",
 };
 
+// 操作列左侧的右冻结列组（测试多列右冻结时过滤箭头定位）
+const rightFixedExtraColumns = [
+  {
+    field: "age",
+    title: "年龄",
+    width: 100,
+    fixed: "right",
+    sortable: true,
+    filterType: "FilterNumberRange",
+    filterRender: { name: "FilterNumberRange", suffix: "岁" },
+  },
+  {
+    field: "status",
+    title: "状态",
+    width: 100,
+    fixed: "right",
+    sortable: true,
+    filterType: "FilterCheckbox",
+    filterRender: { name: "FilterCheckbox" },
+    render: (params, h) => (
+      <ElTag type={params.cellValue ? "success" : "info"} size="small" effect="light">
+        {params.cellValue ? "启用" : "禁用"}
+      </ElTag>
+    ),
+  },
+  {
+    field: "role",
+    title: "角色",
+    width: 130,
+    fixed: "right",
+    sortable: true,
+    filterType: "FilterCheckbox",
+    filterRender: {
+      name: "FilterCheckbox",
+      props: {
+        options: [
+          { label: "管理员", value: "admin" },
+          { label: "编辑", value: "editor" },
+          { label: "访客", value: "viewer" },
+          { label: "开发者", value: "developer" },
+        ],
+      },
+    },
+  },
+];
+
+// 场景 0/3 使用的普通列（已排除被移到右冻结区的字段）
+const baseColumnsWithoutFrozen = baseColumns.filter(
+  (c) => !["age", "status", "role"].includes(c.field)
+);
+
 // ========== 各场景列配置 ==========
 const getColumns = (idx) => {
   switch (idx) {
-    case 0: // 综合：左固定 + 普通列 + 右固定
-      return [leftFixedColumn, ...baseColumns, rightFixedActionColumn];
+    case 0: // 综合：左固定 + 普通列 + 多列右固定（年龄/状态/角色/操作）
+      return [
+        leftFixedColumn,
+        ...baseColumnsWithoutFrozen,
+        ...rightFixedExtraColumns,
+        rightFixedActionColumn,
+      ];
     case 1: // 最小复现：少量普通列 + 右固定带过滤
       return [
         { type: "seq", width: 60, title: "序号" },
@@ -255,8 +311,13 @@ const getColumns = (idx) => {
       ];
     case 2: // 回归：无固定列，验证普通列图标不受影响
       return baseColumns;
-    case 3: // border=false：验证分界线不会突兀
-      return [leftFixedColumn, ...baseColumns, rightFixedActionColumn];
+    case 3: // border=false：验证分界线不会突兀（同样多列右冻结）
+      return [
+        leftFixedColumn,
+        ...baseColumnsWithoutFrozen,
+        ...rightFixedExtraColumns,
+        rightFixedActionColumn,
+      ];
     default:
       return baseColumns;
   }

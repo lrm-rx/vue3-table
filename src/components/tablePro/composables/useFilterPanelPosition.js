@@ -34,10 +34,30 @@ export const useFilterPanelPosition = (gridRef) => {
     };
   };
 
-  // 1. 获取触发元素中心 X（document 坐标系），优先 .vxe-filter--btn，回退列中心
+  // 1. 获取当前 grid 内触发列的「可见」表头单元格
+  //    冻结列会同时存在两份表头：
+  //      - 主表里的 fixed--hidden 副本（visibility:hidden，位置随横向滚动一起位移）
+  //      - fixed-left / fixed-right 浮层里的 fixed--visible 副本（用户实际点击的那个，位置固定）
+  //    document.querySelector 按 DOM 顺序会先命中主表副本，横向滚动后它已被滚走，
+  //    用它算 triggerCenterX 会让箭头指向错误位置 → 必须排除 fixed--hidden。
+  const getFilterColumnEl = (column) => {
+    if (!column || !column.id) return null;
+    const root = gridRef.value?.$el || document;
+    const id =
+      typeof CSS !== "undefined" && CSS.escape
+        ? CSS.escape(column.id)
+        : column.id;
+    const colEls = root.querySelectorAll(`.vxe-header--column.${id}`);
+    for (const el of colEls) {
+      if (!el.classList.contains("fixed--hidden")) return el;
+    }
+    return colEls[0] || null;
+  };
+
+  // 2. 获取触发元素中心 X（document 坐标系），优先 .vxe-filter--btn，回退列中心
   const getFilterTriggerCenterX = (column, fallbackX) => {
     if (!column || !column.id) return fallbackX;
-    const colEl = document.querySelector(`.vxe-header--column.${column.id}`);
+    const colEl = getFilterColumnEl(column);
     if (!colEl) return fallbackX;
     const docScrollLeft =
       document.documentElement.scrollLeft || document.body.scrollLeft || 0;
@@ -112,10 +132,7 @@ export const useFilterPanelPosition = (gridRef) => {
     if (recalcFromTrigger) {
       // 滚动重定位：基于触发元素当前 viewport 位置重新计算 top（document 坐标系）
       // 确保面板始终紧跟触发元素，不会因外层滚动容器滚动而偏移
-      const colEl =
-        column && column.id
-          ? document.querySelector(`.vxe-header--column.${column.id}`)
-          : null;
+      const colEl = getFilterColumnEl(column);
       const filterBtnEl = colEl?.querySelector(".vxe-filter--btn");
       const triggerEl = filterBtnEl || colEl;
       if (triggerEl) {
