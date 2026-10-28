@@ -118,6 +118,13 @@ const formItemRefs = reactive({});
 // 按 prop 取单个 el-form-item 实例（拿不到时返回 undefined）
 const getFormItem = (prop) => formItemRefs[prop];
 
+// 「字段 prop → 内置 UploadPro 实例」映射：由各 FormBlock 渲染时回填，
+// 用于对外暴露上传实例及其实例方法（abort / submit / clearFiles / handleStart /
+// handleRemove / pasteImages / getRawFiles / getRemovedFiles），多上传项按字段区分
+const uploadRefs = reactive({});
+// 按 prop 取单个 UploadPro 实例（拿不到时返回 undefined）
+const getUpload = (prop) => uploadRefs[prop];
+
 // 「字段 prop → 当前校验错误信息」映射：由 el-form 的 validate 事件同步。
 // 用于驱动字段「填写提示」(item.tip) 的显隐：无错误时显示 tip（success 色），
 // 校验不通过时隐藏 tip、让位给 el-form-item 的错误提示。
@@ -596,6 +603,21 @@ const ownExposed = {
   formItemRefs,
   // 按 prop 取单个 el-form-item 实例
   getFormItem,
+  // 每个上传字段对应的 UploadPro 完整实例映射（prop → 实例）
+  uploadRefs,
+  // 按 prop 取单个 UploadPro 实例（拿不到时返回 undefined）
+  getUpload,
+  // —— UploadPro 实例方法代理：首个参数为字段 prop，多上传项按字段区分 ——
+  // 字段未渲染（隐藏 / 折叠 / 非上传字段）时静默跳过；数据类方法回退空数组
+  abort: (prop, file) => uploadRefs[prop]?.abort?.(file),
+  submit: (prop) => uploadRefs[prop]?.submit?.(),
+  clearFiles: (prop, states) => uploadRefs[prop]?.clearFiles?.(states),
+  handleStart: (prop, rawFile) => uploadRefs[prop]?.handleStart?.(rawFile),
+  handleRemove: (prop, file) => uploadRefs[prop]?.handleRemove?.(file),
+  pasteImages: (prop, files) => uploadRefs[prop]?.pasteImages?.(files),
+  getRawFiles: (prop) => uploadRefs[prop]?.getRawFiles?.() ?? [],
+  getRemovedFiles: (prop, field, valuesOnly) =>
+    uploadRefs[prop]?.getRemovedFiles?.(field, valuesOnly) ?? [],
   // 获取提交数据：按 removeHiddenValues 规则移除隐藏字段值（保存/提交时使用）
   getSubmitData,
   // —— 运行时动态增删改 items（配置项联动：禁用/显隐/异步 options 等）——
@@ -696,6 +718,7 @@ defineExpose(ownExposed);
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :all-collapsed="allGroupsCollapsed"
       :form-item-refs="formItemRefs"
+      :upload-refs="uploadRefs"
       @toggle-group="block.group && isGroupCollapsible(block.group) && toggleGroup(block.group)"
       @toggle-all="toggleAllGroups"
     >

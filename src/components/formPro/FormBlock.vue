@@ -3,8 +3,24 @@
  * FormPro 内部：渲染单个「分组块」（匿名组或具名分组）。
  * 拆分为子组件，使 index.vue 模板保持简洁，同时 JSX 渲染逻辑独立可测。
  */
-import { computed, ref, useSlots, h, resolveComponent, mergeProps, isRef, toRaw } from "vue";
-import { ElRow, ElCol, ElFormItem, ElIcon, ElTooltip, ElTag } from "element-plus";
+import {
+  computed,
+  ref,
+  useSlots,
+  h,
+  resolveComponent,
+  mergeProps,
+  isRef,
+  toRaw,
+} from "vue";
+import {
+  ElRow,
+  ElCol,
+  ElFormItem,
+  ElIcon,
+  ElTooltip,
+  ElTag,
+} from "element-plus";
 import { ArrowRight, ArrowDown, ArrowUp } from "@element-plus/icons-vue";
 import {
   GRID_COLS,
@@ -49,6 +65,9 @@ const props = defineProps({
   fieldErrors: { type: Object, default: () => ({}) },
   // 由父级传入的「字段 prop → el-form-item 实例」映射，渲染时回填，供父级暴露
   formItemRefs: { type: Object, default: () => ({}) },
+  // 由父级传入的「字段 prop → 内置 UploadPro 实例」映射，渲染时回填，
+  // 供父级暴露上传实例及其方法（按字段区分）
+  uploadRefs: { type: Object, default: () => ({}) },
   // 边框表格样式开关：开启后在行/列单元格上追加修饰类，由 index.vue 的样式绘制边框
   border: { type: Boolean, default: false },
   // 紧凑型表单开关：控制「间隔收紧列」的修饰类，并在校验失败时以 el-tooltip 展示错误提示
@@ -140,6 +159,17 @@ const renderByItemRender = (ir, item, ctx) => {
     modelValue: ctx.value,
     "onUpdate:modelValue": (v) => setField(item.prop, v, item),
   };
+  // 内置 UploadPro：把组件实例回填到父级映射（按字段 prop 索引），
+  // 供 FormPro 暴露 uploadRefs / getUpload(prop) 及上传实例方法代理
+  if (comp === UploadPro) {
+    bindProps.ref = (el) => {
+      if (el) {
+        props.uploadRefs[item.prop] = el;
+      } else {
+        delete props.uploadRefs[item.prop];
+      }
+    };
+  }
   // 动态禁用 / 只读：item.disabledWhen / item.readonlyWhen 依据当前表单数据求值（ctx 同 options 函数形态），
   // 与静态 itemRender.props.disabled / readonly 为「或」关系（静态 true 恒生效，动态侧只追加不覆盖）。
   // 求值发生在 render 期间，依赖字段变化时自动重渲染（与函数形态 options 同理）。
@@ -164,8 +194,10 @@ const renderByItemRender = (ir, item, ctx) => {
           ? { value: opt.value, label: opt.label }
           : { label: opt.value };
         children.push(
-          h(optComp, { key: opt.value, ...optProps, ...(opt.props || {}) }, () =>
-            isOptionTag ? undefined : opt.label,
+          h(
+            optComp,
+            { key: opt.value, ...optProps, ...(opt.props || {}) },
+            () => (isOptionTag ? undefined : opt.label),
           ),
         );
       }
@@ -191,7 +223,10 @@ const renderTitleIcon = (icon) => {
   // 传入图标组件（如 @element-plus/icons-vue）→ 用 ElIcon 包裹；否则原样渲染
   // toRaw 防御：调用方若把组件对象塞进 reactive/ref，此处剥离响应式代理，避免
   // "Vue received a Component that was made a reactive object" 性能警告。
-  const comp = typeof icon === "function" || (icon && typeof icon === "object") ? toRaw(icon) : icon;
+  const comp =
+    typeof icon === "function" || (icon && typeof icon === "object")
+      ? toRaw(icon)
+      : icon;
   const inner =
     typeof comp === "function" || (comp && typeof comp === "object")
       ? h(comp)
@@ -371,7 +406,9 @@ const renderFieldEntry = (entry, idx) => {
       default: () => {
         const nodes = [renderFieldContent(item)];
         if (showTip) {
-          nodes.push(h("div", { class: "form-pro__field-tip", title: tip }, tip));
+          nodes.push(
+            h("div", { class: "form-pro__field-tip", title: tip }, tip),
+          );
         }
         return nodes;
       },
@@ -384,10 +421,8 @@ const renderFieldEntry = (entry, idx) => {
     "form-pro__col--tight": props.compact && !tipRows.value.has(rowIdx),
   };
   const errorTipNode = renderErrorTip(item);
-  return h(
-    ElCol,
-    { span, class: colClass },
-    () => (errorTipNode ? [formItem, errorTipNode] : formItem),
+  return h(ElCol, { span, class: colClass }, () =>
+    errorTipNode ? [formItem, errorTipNode] : formItem,
   );
 };
 
@@ -475,18 +510,27 @@ const render = () => {
     <div class="form-pro__group" data-collapsed={props.collapsed}>
       <div class={headerClass}>
         {/* 可点击区：箭头 + 标题（独立命中区，点击切换分组折叠） */}
-        <div class="form-pro__group-header-main" onClick={canCollapse ? toggle : undefined}>
+        <div
+          class="form-pro__group-header-main"
+          onClick={canCollapse ? toggle : undefined}
+        >
           {canCollapse ? (
             <ElIcon class="form-pro__group-arrow">
               {props.collapsed ? <ArrowRight /> : <ArrowDown />}
             </ElIcon>
           ) : null}
           {/* 分组标题：titleStyle 自定义颜色/字号等；titleBold 控制加粗（true→700 / false→400 / 默认继承 600） */}
-          <span class="form-pro__group-title" style={resolveGroupTitleStyle(group)}>
+          <span
+            class="form-pro__group-title"
+            style={resolveGroupTitleStyle(group)}
+          >
             {group.title}
           </span>
           {slots[`group-${group.title}`]
-            ? slots[`group-${group.title}`]({ group, collapsed: props.collapsed })
+            ? slots[`group-${group.title}`]({
+                group,
+                collapsed: props.collapsed,
+              })
             : null}
         </div>
         {/* 扩展区：标题与右侧按钮之间，渲染提示信息等（render / slot） */}

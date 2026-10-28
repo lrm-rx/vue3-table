@@ -121,6 +121,17 @@ const items = ref([
 formRef.value.getFormItem("email").clearValidate();
 ```
 
+**每个上传字段的 UploadPro 实例**（`itemRender.name = "UploadPro"` 的字段）：
+- `uploadRefs` —— `{ [prop]: UploadPro 实例 }`，字段显隐/增删时自动同步
+- `getUpload(prop)` —— 按 prop 取单个 UploadPro 实例（拿不到返回 `undefined`）
+- 实例方法按字段代理（首个参数为字段 prop）：`abort(prop, file?)` / `submit(prop)` / `clearFiles(prop, states?)` / `handleStart(prop, rawFile)` / `handleRemove(prop, file)` / `pasteImages(prop, files)` / `getRawFiles(prop)` / `getRemovedFiles(prop, field?, valuesOnly?)`；字段未渲染（隐藏/折叠）时静默跳过，数据类方法回退 `[]`
+
+```js
+formRef.value.getRawFiles("attachments"); // 取待上传的原始 File
+formRef.value.submit("attachments"); // 延迟上传场景手动提交
+formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
+```
+
 **FormPro 自身方法**：
 - `getSubmitData()` —— 返回已按 `removeHiddenValues` 过滤的提交数据（见 §6）
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`
@@ -520,6 +531,16 @@ el-upload 暴露的 **5 个方法全部提供便捷代理**：
 - `pasteImages(files)` —— 编程式粘贴：直接传入 `File[]`（仅图片）走同一上传链路
 - `getRawFiles()` —— 收集当前带原始 `File`（`raw`）的文件项，返回与 v-model 同构的数组。延迟上传场景（`autoUpload: false`）点「确认」后取 `raw` 手动 `submit()` 或自行 `FormData` 提交
 - `getRemovedFiles(field?, valuesOnly?)` —— 收集累计被移除的文件数据（每次移除归档序列化快照，含业务字段与 `raw`；返回副本）。不传 `field` 返回全部已移除项；传 `field`（如 `'id'`）仅返回存在该属性且有值的项；`valuesOnly: true` 时改为收集该属性的值（如 `getRemovedFiles('url', true)` → `string[]`）。典型用途：点「确认」时向服务端发删除请求、回收 `blob:` URL。注：`clearFiles()` 不触发归档（el-upload 的 clearFiles 本身也不派发 on-remove）
+
+> 通过 FormPro 使用时无需单独拿 UploadPro 的 ref：同一批方法在 FormPro 实例上按字段调用，首参为字段 `prop`（详见 §4）：
+>
+> ```js
+> // 延迟上传：itemRender.props.autoUpload = false 时，选文件先入队，提交时手动上传
+> formRef.value.getRawFiles("attachments"); // 带原始 File 的待上传项
+> formRef.value.submit("attachments");
+> // 其他：abort / clearFiles / handleStart / handleRemove / pasteImages / getRemovedFiles
+> formRef.value.getRemovedFiles("attachments", "id", true); // 已移除项的 id 列表
+> ```
 
 ### 插槽
 
