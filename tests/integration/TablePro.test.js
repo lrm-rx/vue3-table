@@ -1252,6 +1252,277 @@ describe("TablePro 列设置防抖落库", () => {
   });
 });
 
+describe("常驻编辑器（列 alwaysEdit）", () => {
+  const EDIT_ALWAYS_COLUMNS = [
+    { field: "name", title: "姓名" },
+    { field: "remark", title: "备注", editRender: { name: "ElInput" }, alwaysEdit: true },
+  ];
+
+  it("传入 vxe-grid 的列不再挂编辑态：编辑器常驻默认单元格插槽", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: EDIT_ALWAYS_COLUMNS,
+      data: makeRows(3),
+      editable: true,
+    });
+    const attrs = gridAttrs(wrapper);
+    const col = attrs.columns.find((c) => c.field === "remark");
+    expect(col.editRender).toBeUndefined();
+    expect(col.editable).toBeUndefined();
+    expect(col.className).toContain("table-pro__col--always-edit");
+
+    const row = attrs.data[1];
+    const renderCell = () =>
+      col.slots.default({ row, column: col, $rowIndex: 1, $columnIndex: 1, $table: {} });
+    expect(renderCell().props.modelValue).toBeUndefined();
+
+    // 输入只更新本地值：row 不变、单元格外显即时更新
+    renderCell().props["onUpdate:modelValue"]("说明");
+    expect(row.remark).toBeUndefined();
+    expect(renderCell().props.modelValue).toBe("说明");
+
+    // 失焦落盘
+    renderCell().props.onBlur();
+    expect(row.remark).toBe("说明");
+    expect(renderCell().props.modelValue).toBe("说明");
+
+    // 暴露的 flushAlwaysEdit 可强制落盘（保存前主动调用）
+    renderCell().props["onUpdate:modelValue"]("补充");
+    expect(row.remark).toBe("说明");
+    wrapper.vm.flushAlwaysEdit();
+    expect(row.remark).toBe("补充");
+
+    wrapper.unmount();
+  });
+
+  it("输入即时翻转 cellChanged；写回时才发射 cell-edit-change（参数等价编辑提交）", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: EDIT_ALWAYS_COLUMNS,
+      data: makeRows(3),
+      editable: true,
+    });
+    const attrs = gridAttrs(wrapper);
+    const col = attrs.columns.find((c) => c.field === "remark");
+    const row = attrs.data[0];
+    const vnode = col.slots.default({ row, column: col, $rowIndex: 0, $columnIndex: 1, $table: {} });
+    // 输入当下：cellChanged 即时翻转，但 row 尚未写回、cell-edit-change 未发射
+    vnode.props["onUpdate:modelValue"]("第一条备注");
+    expect(row.remark).toBeUndefined();
+    expect(wrapper.emitted("update:cellChanged")).toEqual([[true]]);
+    expect(wrapper.emitted("cell-edit-change")).toBeUndefined();
+
+    // 失焦写回：row 落地 + cell-edit-change（value 新值 / cellValue 旧值）
+    vnode.props.onBlur();
+    expect(row.remark).toBe("第一条备注");
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+    expect(wrapper.emitted("cell-edit-change")[0][0]).toMatchObject({
+      row,
+      field: "remark",
+      value: "第一条备注",
+      cellValue: undefined,
+    });
+
+    wrapper.unmount();
+  });
+});
+
+describe("常驻编辑器（alwaysEdit）防抖写回", () => {
+  const ALWAYS_COLUMNS = [
+    { field: "name", title: "姓名", editRender: { name: "ElInput" }, alwaysEdit: true },
+    { field: "age", title: "年龄", editRender: { name: "ElInputNumber" }, alwaysEdit: true },
+  ];
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const mountAlways = (rows, grid, extra = {}) =>
+    mountTablePro(
+      {
+        columns: ALWAYS_COLUMNS,
+        data: rows,
+        pagination: false,
+        showToolbar: false,
+        editable: true,
+        ...extra,
+      },
+      grid,
+    );
+
+  const cellOf = (wrapper, field, index = 0) => {
+    const attrs = gridAttrs(wrapper);
+    const col = attrs.columns.find((c) => c.field === field);
+    const row = attrs.data[index];
+    const render = () =>
+      col.slots.default({ row, column: col, $rowIndex: index, $columnIndex: 1, $table: {} });
+    return { col, row, render };
+  };
+
+  it("alwaysEdit 字段注入 editDirtyConfig.extraFields（vxe keepFields 不含已移除的 editRender）", async () => {
+    const { wrapper } = await mountAlways(makeRows(2));
+    const attrs = gridAttrs(wrapper);
+    expect(attrs.editDirtyConfig).toMatchObject({ extraFields: ["name", "age"] });
+    // 未配置 alwaysEdit 时不应无端注入
+    const { wrapper: plain } = await mountTablePro({
+      columns: [{ field: "name" }],
+      data: makeRows(2),
+      pagination: false,
+      showToolbar: false,
+    });
+    expect(gridAttrs(plain).editDirtyConfig).toEqual({});
+  });
+
+  it("用户配置 editDirtyConfig.includeFields（白名单）时并入 alwaysEdit 字段", async () => {
+    const { wrapper } = await mountAlways(makeRows(2), {}, {
+      editDirtyConfig: { includeFields: ["name"] },
+    });
+    const attrs = gridAttrs(wrapper);
+    // vxe 中 includeFields 优先于 extraFields，必须并入白名单才能跟踪 alwaysEdit 字段
+    expect(attrs.editDirtyConfig).toEqual({ includeFields: ["name", "age"] });
+  });
+
+  it("防抖写回：输入期间不动 row，停止输入后合并写回一次", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows);
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("A");
+    await wait(120);
+    render().props["onUpdate:modelValue"]("AB");
+    await wait(120);
+    // 距最后一次输入 240ms：仍在防抖窗口内
+    expect(row.name).toBe("name-0");
+    expect(wrapper.emitted("cell-edit-change")).toBeUndefined();
+
+    await wait(240);
+    expect(row.name).toBe("AB");
+    const events = wrapper.emitted("cell-edit-change");
+    expect(events).toHaveLength(1);
+    expect(events[0][0]).toMatchObject({
+      row,
+      field: "name",
+      value: "AB",
+      cellValue: "name-0",
+    });
+    expect(wrapper.emitted("update:cellChanged")).toEqual([[true]]);
+    wrapper.unmount();
+  });
+
+  it("失焦立即写回，且不会重复发射", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows);
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("B");
+    render().props.onBlur();
+    expect(row.name).toBe("B");
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+
+    // 防抖计时器已被清除：不会再写回/再发射
+    await wait(400);
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("改回原值：不发射 cell-edit-change，脏态最终归净", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows);
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("tmp");
+    render().props["onUpdate:modelValue"]("name-0");
+    await wait(400);
+    expect(row.name).toBe("name-0");
+    expect(wrapper.emitted("cell-edit-change")).toBeUndefined();
+
+    // recordset 无差异 → 二次裁决后归净
+    await wait(400);
+    expect(wrapper.emitted("update:cellChanged")).toEqual([[true], [false]]);
+    wrapper.unmount();
+  });
+
+  it("多单元格互相独立，flushAlwaysEdit 可一次全部落盘", async () => {
+    const rows = makeRows(3);
+    const { wrapper } = await mountAlways(rows);
+    const a = cellOf(wrapper, "name", 0);
+    const b = cellOf(wrapper, "age", 1);
+
+    a.render().props["onUpdate:modelValue"]("N0");
+    b.render().props["onUpdate:modelValue"](9);
+    expect(rows[0].name).toBe("name-0");
+    expect(rows[1].age).toBe(1);
+
+    wrapper.vm.flushAlwaysEdit();
+    expect(rows[0].name).toBe("N0");
+    expect(rows[1].age).toBe(9);
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(2);
+    wrapper.unmount();
+  });
+
+  it("getData 读取前自动落盘", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows, { fullData: rows });
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("G");
+    expect(row.name).toBe("name-0");
+    const data = wrapper.vm.getData();
+    expect(row.name).toBe("G");
+    expect(data[0].name).toBe("G");
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("markSaved：先落盘再重置，新基线包含最后一次输入", async () => {
+    const rows = makeRows(2);
+    const { wrapper, grid } = await mountAlways(rows, { fullData: rows });
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("S");
+    await wrapper.vm.markSaved();
+    expect(row.name).toBe("S");
+    // loadData 桩记录的即 loadData(data) 的入参本身
+    const loaded = grid.mock.calls.loadData.at(-1);
+    expect(loaded[0].name).toBe("S");
+    expect(wrapper.emitted("update:cellChanged").at(-1)).toEqual([false]);
+    wrapper.unmount();
+  });
+
+  it("数据被外部替换：丢弃未写回的本地输入", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows);
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("stale");
+    await wrapper.setProps({ data: makeRows(2) });
+    await wait(400);
+    expect(row.name).toBe("name-0");
+    expect(wrapper.emitted("cell-edit-change")).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it("revertChanges：丢弃未写回输入并还原基线", async () => {
+    const rows = makeRows(2);
+    const { wrapper, grid } = await mountAlways(rows, { fullData: rows });
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("R");
+    const reverted = await wrapper.vm.revertChanges();
+    expect(reverted).toBe(true);
+    expect(row.name).toBe("name-0");
+    expect(wrapper.emitted("cell-edit-change")).toBeUndefined();
+    expect(grid.mock.calls.loadData).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it("组件卸载：未写回的输入会落盘，不丢最后一次输入", async () => {
+    const rows = makeRows(2);
+    const { wrapper } = await mountAlways(rows);
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("U");
+    wrapper.unmount();
+    expect(row.name).toBe("U");
+    expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+  });
+});
+
 function propsNotMutated(cols) {
   return cols.every((c) => {
     if (c.slots !== undefined) return false;

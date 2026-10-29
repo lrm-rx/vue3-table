@@ -501,6 +501,93 @@ const onStaticFilterConfirm = (payload) => {
   ElMessage.success(`本地过滤确认：生效过滤 ${active} 条，排序 ${sorts} 个字段`);
 };
 
+// ========== 常驻编辑器（列 alwaysEdit）示例 ==========
+// 列设置 alwaysEdit: true 后，该单元格始终渲染为输入控件（不进入点击编辑态），
+// 输入只更新组件本地值，停止输入 300ms / 失焦 / 单元格卸载时才写回 row[field]。
+// 注意：必须配合 editable 开启（本示例显式 :editable="true"），不参与 editRules 校验。
+const alwaysEditDeptOptions = [
+  { label: "研发部", value: "dev" },
+  { label: "产品部", value: "product" },
+  { label: "设计部", value: "design" },
+  { label: "运营部", value: "ops" },
+  { label: "人事部", value: "hr" },
+];
+const alwaysEditColumns = ref([
+  { type: "seq", width: 60, title: "序号" },
+  {
+    field: "username",
+    title: "姓名",
+    editRender: { name: "ElInput" },
+    alwaysEdit: true,
+  },
+  {
+    field: "department",
+    title: "部门",
+    width: 150,
+    editRender: { name: "ElSelect" },
+    alwaysEdit: true,
+  },
+  {
+    field: "age",
+    title: "年龄",
+    width: 140,
+    editRender: { name: "ElInputNumber" },
+    alwaysEdit: true,
+  },
+  {
+    field: "createTime",
+    title: "入职时间",
+    width: 180,
+    editRender: {
+      name: "ElDatePicker",
+      props: { type: "date", valueFormat: "YYYY-MM-DD", placeholder: "选择日期" },
+    },
+    alwaysEdit: true,
+  },
+]);
+const alwaysEditOptions = ref({ department: alwaysEditDeptOptions });
+const alwaysEditCellProps = ref({
+  username: { placeholder: "请输入姓名", clearable: true },
+  department: { placeholder: "请选择部门", clearable: true },
+  age: { min: 0, max: 120 },
+});
+const alwaysEditData = ref(
+  [
+    ["张1号", "dev", 26, "2024-03-01"],
+    ["李2号", "product", 31, "2023-11-20"],
+    ["王3号", "design", 24, "2025-01-06"],
+    ["赵4号", "ops", 38, "2022-07-15"],
+    ["陈5号", "hr", 29, "2024-09-12"],
+    ["刘6号", "dev", 35, "2021-05-08"],
+    ["杨7号", "product", 22, "2025-04-01"],
+    ["黄8号", "design", 41, "2020-12-18"],
+  ].map(([username, department, age, createTime], i) => ({
+    id: i + 1,
+    username,
+    department,
+    age,
+    createTime,
+  })),
+);
+const alwaysEditRef = ref();
+const alwaysEditChanged = ref(false);
+// 写回发生在停止输入 300ms 或失焦时（不是每次按键）
+const onAlwaysEditChange = ({ field, value, cellValue }) => {
+  ElMessage.success(
+    `常驻编辑器写回：${field} = ${JSON.stringify(value)}（原值=${JSON.stringify(cellValue)}）`,
+  );
+};
+// getData 内部会先 flush 未写回的防抖输入，可直接拿到最新数据
+const onAlwaysEditSave = async () => {
+  const data = alwaysEditRef.value?.getData?.() || [];
+  await alwaysEditRef.value?.markSaved?.();
+  ElMessage.success(`已保存 ${data.length} 条（首行：${data[0]?.username} / ${data[0]?.department} / ${data[0]?.age}）`);
+};
+const onAlwaysEditCancel = async () => {
+  const reverted = await alwaysEditRef.value?.revertChanges?.();
+  ElMessage[reverted ? "success" : "info"](reverted ? "已还原为变更前数据" : "当前没有可还原的变更");
+};
+
 const handleBeforePageChange = async ({ currentPage, pageSize }) => {
   try {
     await ElMessageBox.confirm(
@@ -742,6 +829,42 @@ const onRemoveSelected = () => {
       height="auto"
       style="height: 480px"
       @filter-confirm="onStaticFilterConfirm"
+    />
+
+    <el-divider content-position="left">
+      常驻编辑器（列 alwaysEdit）：单元格始终为输入控件（不进入点击编辑态），输入停止 300ms / 失焦时写回行数据
+    </el-divider>
+    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+      <el-tag :type="alwaysEditChanged ? 'warning' : 'success'">
+        cellChanged = {{ alwaysEditChanged }}
+      </el-tag>
+      <el-button
+        type="success"
+        :disabled="!alwaysEditChanged"
+        @click="onAlwaysEditSave"
+      >
+        保存（getData 落盘）
+      </el-button>
+      <el-button :disabled="!alwaysEditChanged" @click="onAlwaysEditCancel">
+        取消
+      </el-button>
+      <span style="font-size: 13px; color: #606266">
+        直接修改姓名 / 部门 / 年龄 / 入职时间，输入停顿后自动写回 row
+      </span>
+    </div>
+    <TablePro
+      ref="alwaysEditRef"
+      :columns="alwaysEditColumns"
+      :data="alwaysEditData"
+      :editable="true"
+      :edit-options="alwaysEditOptions"
+      :cell-edit-props="alwaysEditCellProps"
+      :pagination="false"
+      :show-toolbar="false"
+      height="auto"
+      style="height: 420px"
+      v-model:cellChanged="alwaysEditChanged"
+      @cell-edit-change="onAlwaysEditChange"
     />
   </div>
 </template>

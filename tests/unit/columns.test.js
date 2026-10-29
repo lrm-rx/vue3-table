@@ -498,6 +498,198 @@ describe("editRender 分流", () => {
   });
 });
 
+describe("常驻编辑器（alwaysEdit）", () => {
+  const ALWAYS_EDIT_CLASS = "table-pro__col--always-edit";
+  const scopeFor = (field, row, table = {}) => ({
+    row,
+    column: { field },
+    $rowIndex: 0,
+    $columnIndex: 0,
+    $table: table,
+  });
+
+  it("对象式 editRender：接管为 slots.default，输入只记本地值（不逐键写回 row）", () => {
+    const inputs = [];
+    const commits = [];
+    const localValues = new Map();
+    const { result } = run([
+      { field: "name", title: "姓名", editRender: { name: "ElInput" }, alwaysEdit: true },
+    ], {
+      onAlwaysEditInput: (p) => inputs.push(p),
+      onAlwaysEditCommit: (p) => commits.push(p),
+      getAlwaysEditValue: (row, field) => localValues.has(field) ? localValues.get(field) : row[field],
+    });
+    const col = result[0];
+    expect(col.editRender).toBeUndefined();
+    expect(col.editable).toBeUndefined();
+    expect(col.slots.edit).toBeUndefined();
+    expect(col.className).toBe(ALWAYS_EDIT_CLASS);
+
+    const row = { id: 1, name: "v1" };
+    const vnode = col.slots.default(scopeFor("name", row));
+    expect(vnode.type.name || vnode.type.__name).toBe("ElInput");
+    expect(vnode.props.modelValue).toBe("v1");
+    // 不再挂载即弹出面板（常驻模式不做自动聚焦/弹层），但卸载时会落盘
+    expect(vnode.props.onVnodeMounted).toBeUndefined();
+    expect(typeof vnode.props.onVnodeUnmounted).toBe("function");
+    expect(typeof vnode.props.onBlur).toBe("function");
+
+    // 每次按键：只通知组件记本地值，row 保持不变（避免触发本地排序/过滤重算）
+    vnode.props["onUpdate:modelValue"]("v2");
+    expect(row.name).toBe("v1");
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({ field: "name", value: "v2" });
+    localValues.set("name", "v2");
+    expect(col.slots.default(scopeFor("name", row)).props.modelValue).toBe("v2");
+
+    // 失焦 → 落盘（写回由 tablePro 侧统一处理）
+    vnode.props.onBlur();
+    expect(commits).toHaveLength(1);
+    expect(commits[0]).toMatchObject({ row, field: "name" });
+
+    // 单元格卸载（虚拟滚动回收）→ 落盘
+    vnode.props.onVnodeUnmounted();
+    expect(commits).toHaveLength(2);
+  });
+
+  it("ElSelect 常驻：options 正常注入，且保留 ignore-clear popperClass", () => {
+    const options = [{ label: "开发", value: "dev" }];
+    const { result } = run(
+      [{ field: "dept", editRender: { name: "ElSelect" }, alwaysEdit: true }],
+      { editOptions: { dept: options } },
+    );
+    const vnode = result[0].slots.default(scopeFor("dept", { id: 2, dept: "dev" }));
+    expect(vnode.props.popperClass).toBe("vxe-table--ignore-clear");
+    expect(vnode.children.default().length).toBe(1);
+  });
+
+  it("函数式 / 字符串式 editRender 也可常驻", () => {
+    const userEdit = (params) => h("input", { value: params.cellValue });
+    const fnCol = run([{ field: "a", editRender: userEdit, alwaysEdit: true }]).result[0];
+    expect(fnCol.editRender).toBeUndefined();
+    expect(fnCol.className).toBe(ALWAYS_EDIT_CLASS);
+    const fnVnode = fnCol.slots.default(scopeFor("a", { a: "x" }));
+    expect(fnVnode.type).toBe("input");
+    expect(fnVnode.props.value).toBe("x");
+
+    const slotFn = () => null;
+    const strCol = run([{ field: "e", editRender: "edit_e", alwaysEdit: true }], {
+      slots: { edit_e: slotFn },
+    }).result[0];
+    expect(strCol.slots.default).toBe("edit_e");
+    expect(strCol.editRender).toBeUndefined();
+  });
+
+  it("不支持场景回退普通编辑：TextareaPopoverEdit / 显式 slots.default / 字符串插槽未命中", () => {
+    const popover = run([
+      { field: "remark", editRender: { name: "TextareaPopoverEdit" }, alwaysEdit: true },
+    ]).result[0];
+    expect(popover.editRender).toEqual({ name: "TextareaPopoverEdit" });
+    expect(typeof popover.slots.edit).toBe("function");
+
+    const explicit = run([
+      {
+        field: "a",
+        editRender: { name: "ElInput" },
+        alwaysEdit: true,
+        slots: { default: () => null },
+      },
+    ]).result[0];
+    expect(typeof explicit.slots.edit).toBe("function");
+
+    const miss = run([{ field: "e", editRender: "edit_e", alwaysEdit: true }], {
+      slots: {},
+    }).result[0];
+    expect(miss.slots.default).toBeUndefined();
+    expect(miss.editRender).toBeUndefined();
+  });
+
+  it("render 与 alwaysEdit 同列：常驻编辑器优先接管 slots.default（覆盖 render）", () => {
+    const renderFn = (params) => h("span", null, String(params.cellValue));
+    const { result } = run([
+      {
+        field: "name",
+        title: "姓名",
+        render: renderFn,
+        editRender: { name: "ElInput" },
+        alwaysEdit: true,
+      },
+    ]);
+    const col = result[0];
+    expect(col.editRender).toBeUndefined();
+    expect(col.className).toBe(ALWAYS_EDIT_CLASS);
+
+    const row = { id: 1, name: "v1" };
+    const vnode = col.slots.default(scopeFor("name", row, "v1"));
+    // 不再是 render 的 span，而是 ElInput 编辑器
+    expect(vnode.type.name || vnode.type.__name).toBe("ElInput");
+    expect(vnode.props.modelValue).toBe("v1");
+  });
+
+  it("显式 slots.edit：复用为常驻渲染并移除编辑插槽（函数式 / 字符串式）", () => {
+    const userEditSlot = (scope) => h("input", { value: scope.row.a });
+    const fnCol = run([
+      {
+        field: "a",
+        editRender: { name: "ElInput" },
+        alwaysEdit: true,
+        slots: { edit: userEditSlot },
+      },
+    ]).result[0];
+    expect(fnCol.slots.edit).toBeUndefined();
+    expect(fnCol.editRender).toBeUndefined();
+    expect(fnCol.className).toBe(ALWAYS_EDIT_CLASS);
+    const scope = scopeFor("a", { a: "x" }, "x");
+    const vnode = fnCol.slots.default(scope);
+    expect(vnode.type).toBe("input");
+    expect(vnode.props.value).toBe("x");
+
+    const slotFn = () => h("input");
+    const strCol = run(
+      [
+        {
+          field: "b",
+          editRender: { name: "ElInput" },
+          alwaysEdit: true,
+          slots: { edit: "edit_b" },
+        },
+      ],
+      { slots: { edit_b: slotFn } },
+    ).result[0];
+    expect(strCol.slots.default).toBe("edit_b");
+    expect(strCol.slots.edit).toBeUndefined();
+    expect(strCol.editRender).toBeUndefined();
+  });
+
+  it("仅配置 slots.edit（无 editRender）也能启用常驻渲染", () => {
+    const userEditSlot = (scope) => h("input", { value: scope.row.d });
+    const { result } = run([
+      { field: "d", alwaysEdit: true, slots: { edit: userEditSlot } },
+    ]);
+    const col = result[0];
+    expect(col.slots.edit).toBeUndefined();
+    expect(col.editRender).toBeUndefined();
+    expect(col.className).toBe(ALWAYS_EDIT_CLASS);
+    const vnode = col.slots.default(scopeFor("d", { d: "v" }, "v"));
+    expect(vnode.type).toBe("input");
+    expect(vnode.props.value).toBe("v");
+  });
+
+  it("editable=false 时不渲染常驻编辑器（权限控制生效）", () => {
+    const { result } = run(
+      [{ field: "name", editRender: { name: "ElInput" }, alwaysEdit: true }],
+      { editable: false },
+    );
+    const col = result[0];
+    // 与普通对象式相同：editRender 保留（vxe 依赖它渲染编辑图标/激活），但组件不传 editConfig → 不可进入编辑态
+    expect(col.className).toBeUndefined();
+    expect(typeof col.slots.edit).toBe("undefined");
+    // 对象式 label 回退仍生效（仅显示，不可编辑）
+    const fallback = col.slots.default(scopeFor("name", { id: 1, name: "v1" }));
+    expect(fallback.type).toBe("span");
+  });
+});
+
 describe("hideColumn / 分组列", () => {
   it("hideColumn 叶子列被过滤", () => {
     const { result } = run([

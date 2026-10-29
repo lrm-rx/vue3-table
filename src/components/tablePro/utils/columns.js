@@ -18,6 +18,9 @@
  *       cellEditProps: props.cellEditProps,
  *       editLocalState,        // 编辑态本地值容器（reactive 对象，单元格编辑期间读写）
  *       resolveEditStateKey,   // (row, field) => 稳定 key
+ *       getAlwaysEditValue,    // (row, field) => 值 常驻编辑（alwaysEdit）取展示值（本地输入优先）
+ *       onAlwaysEditInput,     // (payload) => void 常驻编辑值变更（每次输入，仅更新本地值）
+ *       onAlwaysEditCommit,    // (payload) => void 常驻编辑落盘（失焦/卸载时写回 row）
  *       emit,                  // 组件 emit（textarea-* 三按钮事件透传）
  *     }),
  *   );
@@ -347,6 +350,9 @@ export const buildColumns = (config) => {
     cellEditProps,
     editLocalState,
     resolveEditStateKey,
+    getAlwaysEditValue,
+    onAlwaysEditInput,
+    onAlwaysEditCommit,
     emit,
   } = config || {}
 
@@ -631,6 +637,128 @@ export const buildColumns = (config) => {
     return h('span', raw == null ? '' : String(raw))
   })
 
+  // ========== 常驻编辑器（列 alwaysEdit: true）==========
+  // 语义：编辑器不由 vxe 编辑态渲染，而是直接填充单元格默认插槽 —— 始终显示输入类组件；
+  // 输入只更新组件本地值（防抖 300ms / 失焦 / 卸载时写回 row[field]），
+  // 点击单元格不再切换「显示态 / 编辑态」（因此也不设置 col.editable）。
+  // 约束：
+  //   · 仅支持对象式（EL_EDIT_MAP）/ 函数式 / 字符串式 editRender；
+  //   · TextareaPopoverEdit 依赖编辑态生命周期（clearEdit 关闭 popover），不参与常驻模式；
+  //   · 用户显式配置 slots.default 时以用户配置为准（不接管）；
+  //   · 用户显式配置 slots.edit 时复用到常驻位置（值由用户自行绑 row[field]）。
+  const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
+  const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
+
+  // 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
+  const applyAlwaysEditClass = (col) => {
+    if (typeof col.className === 'function') {
+      const userClassName = col.className
+      col.className = (params) => {
+        const cls = userClassName(params)
+        return cls ? `${cls} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
+      }
+      return
+    }
+    col.className = col.className ? `${col.className} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
+  }
+
+  // 对象配置式常驻编辑器：输入只更新本地值（组件侧防抖写回 row），不做逐键行写回
+  // 注意：er 必须在构建期传入 —— 常驻模式会删除 col.editRender，渲染期再读会丢失配置
+  const buildAlwaysEditSlotFn = (col, field, Comp, wrapName, er) => markRaw((scope) => {
+    const row = scope.row
+    const column = scope.column || col
+    const erName = er && er.name
+    const extra = {
+      modelValue: typeof getAlwaysEditValue === 'function'
+        ? getAlwaysEditValue(row, field)
+        : (field != null && row ? row[field] : undefined),
+      // 每次输入：仅记入组件本地值（防抖/失焦/卸载时才写回 row）
+      'onUpdate:modelValue': (v) => {
+        if (typeof onAlwaysEditInput === 'function') {
+          onAlwaysEditInput({ row, column, field, value: v })
+        }
+      },
+      // 透传列标题 / 表格实例，保持与编辑态插槽一致的 props
+      title: col.title,
+      table: markRaw(scope.$table),
+    }
+    const popperCls = resolvePopperClass(erName, er && er.props && er.props.popperClass)
+    if (popperCls != null) extra.popperClass = popperCls
+    const bindProps = mergeEditCompProps(
+      field,
+      er,
+      cellEditProps,
+      extra,
+      (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
+    )
+    // 失焦 / 单元格卸载（虚拟滚动回收、切页）立即写回，避免防抖窗口内丢输入；
+    // 保留用户自带的 onBlur，先落盘再透传
+    const commitAlwaysEdit = () => {
+      if (typeof onAlwaysEditCommit === 'function') {
+        onAlwaysEditCommit({ row, column, field })
+      }
+    }
+    const userOnBlur = bindProps.onBlur
+    bindProps.onBlur = (e) => {
+      commitAlwaysEdit()
+      if (typeof userOnBlur === 'function') userOnBlur(e)
+    }
+    bindProps.onVnodeUnmounted = commitAlwaysEdit
+    if (!wrapName) return h(Comp, bindProps)
+    const options = resolveEditOptions(field, er, editOptions)
+    return h(Comp, bindProps, { default: () => buildWrapOptionChildren(options, field, wrapName) })
+  })
+
+  // 常驻编辑总入口：成功接管返回 true；不支持时返回 false（回退普通点击编辑）
+  const applyAlwaysEdit = (col, field, rawCol) => {
+    // 显式 slots.default（用户自定义展示内容）优先，不接管
+    if (rawCol && rawCol.slots && rawCol.slots.default) return false
+    const userEditSlot = col.slots && col.slots.edit
+    const er = col.editRender
+    if (typeof userEditSlot === 'function') {
+      col.slots.default = markRaw((scope) => userEditSlot(scope))
+    } else if (typeof userEditSlot === 'string' && typeof externalSlots[userEditSlot] === 'function') {
+      col.slots.default = userEditSlot
+    } else if (typeof er === 'function') {
+      const userEdit = er
+      col.slots.default = markRaw((scope) => {
+        try {
+          const row = scope.row
+          const params = {
+            row,
+            column: scope.column || col,
+            field,
+            cellValue: field != null && row ? row[field] : undefined,
+            rowIndex: scope.$rowIndex,
+            columnIndex: scope.$columnIndex,
+            $table: scope.$table,
+          }
+          return userEdit(params, h)
+        } catch (e) {
+          return renderSlotError(e)
+        }
+      })
+    } else if (typeof er === 'string') {
+      if (typeof externalSlots[er] !== 'function') return false
+      col.slots.default = er
+    } else {
+      const erName = er && er.name
+      if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return false
+      col.slots.default = buildAlwaysEditSlotFn(
+        col,
+        field,
+        EL_EDIT_MAP[erName].comp,
+        EL_EDIT_MAP[erName].wrap,
+        er,
+      )
+    }
+    // 常驻模式不经过 vxe 编辑态：移除编辑插槽与编辑配置
+    delete col.slots.edit
+    delete col.editRender
+    applyAlwaysEditClass(col)
+    return true
+  }
+
   // 4c) 对象配置式 editRender → editable + slots.edit + label 回退
   const applyObjectEditRender = (col, field, editEnabled) => {
     if (editEnabled && col.editable == null) col.editable = true
@@ -660,9 +788,12 @@ export const buildColumns = (config) => {
   // 优先级：用户显式 slots.edit > editRender（详见 README）
   // editable=false 时（权限控制）：不设置 col.editable / 不构建 slots.edit，
   //   点击不进入编辑态、表头无编辑图标；对象式的 slots.default label 回退仍生效（仅显示）
-  const applyEditRenderSlot = (col, field) => {
-    if (!col.editRender) return
+  // alwaysEdit 列（常驻编辑器）：接管为 slots.default 后直接返回 —— 不参与 vxe 编辑态
+  const applyEditRenderSlot = (col, field, rawCol) => {
     const editEnabled = editable !== false
+    // alwaysEdit 先于 editRender 存在性判断：允许「仅配置 slots.edit」的列启用常驻渲染
+    if (editEnabled && col.alwaysEdit === true && applyAlwaysEdit(col, field, rawCol)) return
+    if (!col.editRender) return
     if (typeof col.editRender === 'function') {
       applyFunctionEditRender(col, field, editEnabled)
     } else if (typeof col.editRender === 'string') {
@@ -723,8 +854,8 @@ export const buildColumns = (config) => {
     applyRenderSlot(col, field)
     // 3a) headerRender → slots.header
     applyHeaderRender(col, field)
-    // 4) editRender → editable:true + slots.edit
-    applyEditRenderSlot(col, field)
+    // 4) editRender → editable:true + slots.edit（alwaysEdit 列 → 常驻编辑器）
+    applyEditRenderSlot(col, field, rawCol)
     // 5) 默认过滤值注入
     applyDefaultFilterValue(col, field)
     // 6) 操作列：params.isAction === true 注入排除省略标记类

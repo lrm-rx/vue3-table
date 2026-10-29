@@ -138,6 +138,7 @@ const onRequestError = (err) => console.error(err);
 | **`render`** | `(params, h) => VNode` \| `string` | **TablePro 扩展**：只读单元格 JSX 渲染，或字符串引用外部具名插槽 |
 | **`headerRender`** | `(params, h) => VNode` \| `string` | **TablePro 扩展**：表头 JSX 渲染，或字符串引用外部具名插槽 |
 | **`editRender`** | `object` \| `function` \| `string` | **TablePro 扩展**：可编辑单元格配置（详见下文） |
+| **`alwaysEdit`** | boolean | **TablePro 扩展**：常驻编辑器开关（配合 `editRender`），为 `true` 时该列始终显示输入类组件（详见下文） |
 | **`params.isAction`** | `true` | **TablePro 扩展**：标记为操作列，该列排除「插槽/JSX 内容超宽省略」裁剪，按钮等操作内容完整显示 |
 | `filterRender` | object | vxe 原生过滤渲染器配置（一般由 `filterType` 自动注入，需自定义时手写） |
 | `filters` | array | vxe 原生过滤配置（一般由 `filterType` 自动注入） |
@@ -249,6 +250,26 @@ const onCellEditChange = ({ row, column, field, value, cellValue }) => {
   // value: 新值；cellValue: 旧值
 };
 ```
+
+### 常驻编辑器（列 `alwaysEdit`）
+
+默认编辑需要点击单元格进入编辑态；若希望某一列**始终显示为输入类组件**（如始终可输入、无需点击切换），在该列上配置 `alwaysEdit: true`：
+
+```js
+{
+  field: "remark",
+  editRender: { name: "ElInput" },
+  alwaysEdit: true,
+}
+```
+
+- 编辑器直接渲染在单元格内（不再经过 vxe 编辑态），输入即时回显
+- **防抖写回**：输入先只更新组件本地值，停止输入 300ms 或**失焦/单元格卸载**时才写回 `row[field]`，避免逐键改动行数据触发本地排序/过滤等全量重算；保存前如需强制写回可调用组件暴露的 `flushAlwaysEdit()`（`getData()` 内部也会先自动落盘）
+- 支持对象式 / 函数式 / 字符串式 `editRender`，也支持仅配置 `slots.edit`；`TextareaPopoverEdit` 依赖编辑态生命周期，不支持常驻（函数式/字符串式/自定义插槽由用户自行绑定值，组件不做防抖）
+- 列若额外显式配置 `slots.default`，以显式配置为准（不接管）；列若显式配置 `slots.edit`，则复用该插槽作为常驻渲染
+- 需与普通编辑一样开启 `:editable="true"`（组件默认 `false`）；`:editable="false"` 时不渲染常驻编辑器（权限控制生效）
+- 变更跟踪：对象式编辑器的输入由组件接管，输入时 `cellChanged` 即时翻为 `true`（防抖 300ms 后由 recordset 归并，改回原值自动归净），写回 `row` 时发射 `cell-edit-change`；函数式/字符串式/自定义插槽直接改 `row`，组件无法感知输入，脏态需父组件自行处理
+- 常驻列不参与 vxe 编辑态校验（`editRules` 的单元格校验仅对点击编辑生效）
 
 ### 权限控制：全局禁用编辑（`editable` prop）
 

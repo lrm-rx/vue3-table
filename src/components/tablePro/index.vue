@@ -482,6 +482,9 @@ const internalChanged = ref(false);
 const baselineRows = ref(null);
 // 最近一次 getRecordset 全表 diff 的缓存结果（仅在提交/增删/换数据时刷新，热路径不重算）
 const recordChanged = ref(false);
+// 常驻编辑器（列 alwaysEdit）输入中的临时脏态：输入当下置真，防抖后交回 recordset 裁决
+// （与 editingDirty 同理：避免每次按键都跑全表深 diff，同时保证 cellChanged 即时翻转）
+const alwaysEditDirty = ref(false);
 
 // 变更摘要：changed + vxe getRecordset 三类记录（供父组件展示/收集）
 const getChangeState = () => {
@@ -515,27 +518,136 @@ const emitChanged = (val) => {
   }
 };
 
-// 汇总裁决：recordset 脏态 || 编辑中脏态；仅在翻转沿发事件（脏→净时刷新基线）
+// 汇总裁决：recordset 脏态 || 编辑中脏态 || 常驻编辑输入中脏态；
+// 仅在翻转沿发事件（脏→净时刷新基线）
 const applyChanged = () => {
-  const changed = recordChanged.value || editingDirty.value;
+  const changed = recordChanged.value || editingDirty.value || alwaysEditDirty.value;
   if (changed === internalChanged.value) return;
   // 脏→净（如手动改回原值）：以当前干净数据重新快照基线
   if (!changed) refreshBaseline();
   emitChanged(changed);
 };
 
-// 依据 vxe getRecordset 重算脏状态（编辑提交/新增/移除后调用；全表深 diff，非热路径）
+// 依据 vxe getRecordset 重算脏状态（编辑提交/写回/新增/移除后调用；全表深 diff，非热路径）
+// 常驻编辑的临时脏态随之收敛：无未写回输入且 recordset 无差异 → 自动归净
 const recomputeChanged = () => {
   if (!gridRef.value?.getRecordset) return;
+  clearAlwaysEditRecomputeTimer();
+  // 仍有未写回的常驻输入 → 继续视为脏（写回后会再次调度裁决）
+  alwaysEditDirty.value = alwaysEditValues.size > 0;
   recordChanged.value = getChangeState().changed;
   applyChanged();
 };
+
+// ========== 常驻编辑器（列 alwaysEdit）：本地输入 + 防抖写回 ==========
+// 性能目标：输入只更新本地值，不逐键写回 row[field]
+//   · 避免每次按键都修改行数据 → 不触发「读行值」的本地过滤/排序等全量重算；
+//   · 停止输入 300ms 或失焦/卸载时再写回 row，并在写回时统一做脏标记与事件发射。
+// 本地值容器用 reactive Map：仅常驻单元格读取，保证输入即时回显且不污染行数据；
+// 单元格卸载（虚拟滚动回收/切页）会触发 commit，避免防抖窗口内丢输入。
+const ALWAYS_EDIT_WRITE_DELAY = 300;
+const ALWAYS_EDIT_RECOMPUTE_DELAY = 300;
+// key → { row, column, field, value }；key 与编辑态一致（真实 id / 自动 id + 字段）
+const alwaysEditValues = reactive(new Map());
+const alwaysEditTimers = new Map();
+let alwaysEditRecomputeTimer = null;
+
+// 单元格展示值：有未写回的本地输入用本地值，否则用行数据
+const getAlwaysEditValue = (row, field) => {
+  if (!row || field == null) return undefined;
+  const entry = alwaysEditValues.get(resolveEditStateKey(row, field));
+  return entry ? entry.value : row[field];
+};
+
+const clearAlwaysEditRecomputeTimer = () => {
+  if (alwaysEditRecomputeTimer) {
+    clearTimeout(alwaysEditRecomputeTimer);
+    alwaysEditRecomputeTimer = null;
+  }
+};
+// 写回 row 后调度一次 recordset 全表 diff（防抖：连续写回只跑最后一次）
+const scheduleAlwaysEditRecompute = () => {
+  clearAlwaysEditRecomputeTimer();
+  alwaysEditRecomputeTimer = setTimeout(() => {
+    alwaysEditRecomputeTimer = null;
+    recomputeChanged();
+  }, ALWAYS_EDIT_RECOMPUTE_DELAY);
+};
+
+// 写回单个单元格：本地值 → row[field]（值真的变化才发 cell-edit-change），
+// 随后仍置 alwaysEditDirty 并调度 diff（是否已归净由 recordset 裁决）
+const flushAlwaysEditValue = (key) => {
+  const timer = alwaysEditTimers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+    alwaysEditTimers.delete(key);
+  }
+  const entry = alwaysEditValues.get(key);
+  if (!entry) return;
+  alwaysEditValues.delete(key);
+  const { row, column, field, value } = entry;
+  if (!row || field == null) return;
+  const oldValue = row[field];
+  if (value !== oldValue) {
+    try { row[field] = value } catch (e) { /* noop */ }
+    // 行数据被原地修改：使本地 FilterCheckbox 选项提取缓存失效
+    bumpCheckboxOptionsCache();
+    emit("cell-edit-change", { row, column, field, value, cellValue: oldValue });
+  }
+  scheduleAlwaysEditRecompute();
+};
+
+// 强制写回全部未落地的输入（父组件保存前可主动调用，见 defineExpose.flushAlwaysEdit）
+const flushAlwaysEdit = () => {
+  Array.from(alwaysEditValues.keys()).forEach((key) => flushAlwaysEditValue(key));
+};
+
+// 丢弃未写回输入并停表（数据被外部替换 / 取消回滚时，行数据才是事实来源）
+const resetAlwaysEditValues = () => {
+  clearAlwaysEditRecomputeTimer();
+  alwaysEditTimers.forEach((timer) => clearTimeout(timer));
+  alwaysEditTimers.clear();
+  alwaysEditValues.clear();
+  alwaysEditDirty.value = false;
+};
+
+// 输入（每次按键）：只更新本地值 + 置脏；防抖写回 row
+const onAlwaysEditInput = ({ row, column, field, value }) => {
+  if (!row || field == null) return;
+  const key = resolveEditStateKey(row, field);
+  alwaysEditValues.set(key, { row, column, field, value });
+  if (!alwaysEditDirty.value) {
+    alwaysEditDirty.value = true;
+    applyChanged();
+  }
+  const timer = alwaysEditTimers.get(key);
+  if (timer) clearTimeout(timer);
+  alwaysEditTimers.set(
+    key,
+    setTimeout(() => flushAlwaysEditValue(key), ALWAYS_EDIT_WRITE_DELAY),
+  );
+};
+
+// 失焦 / 单元格卸载：立即写回（不等防抖）
+const onAlwaysEditCommit = ({ row, field }) => {
+  if (!row || field == null) return;
+  flushAlwaysEditValue(resolveEditStateKey(row, field));
+};
+
+onBeforeUnmount(() => {
+  // 卸载前尽量落盘，避免用户最后一次输入丢失
+  flushAlwaysEdit();
+  resetAlwaysEditValues();
+});
 
 // 保存成功后调用：以当前数据为新基线并清除变更标记
 //（loadData 重建 keepSource 源数据并清空插入/删除标记，行对象引用保持不变）
 const markSaved = async () => {
   // loadData 会销毁编辑态：同步拆除编辑会话，避免残留脏标记
   clearEditSessions();
+  // 常驻编辑：先落盘再重置，保证纳入新基线的是最新输入
+  flushAlwaysEdit();
+  resetAlwaysEditValues();
   recordChanged.value = false;
   const fullData = gridRef.value?.getTableData?.()?.fullData;
   await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
@@ -548,6 +660,8 @@ const markSaved = async () => {
 const revertChanges = async () => {
   if (!baselineRows.value || !internalChanged.value) return false;
   clearEditSessions();
+  // 取消即放弃未写回输入：直接丢弃本地值，以基线数据为准
+  resetAlwaysEditValues();
   recordChanged.value = false;
   await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
   emitChanged(false);
@@ -663,9 +777,25 @@ const mergedColumns = computed(() =>
     cellEditProps: props.cellEditProps,
     editLocalState,
     resolveEditStateKey,
+    getAlwaysEditValue,
+    onAlwaysEditInput,
+    onAlwaysEditCommit,
     emit,
   }),
 );
+
+// 常驻编辑器列（alwaysEdit）已移除 editRender，vxe 的 keepFields 只收录带
+// editRender/cellRender 的字段，若不补充，写回后 getRecordset() 无法识别修改
+//（cellChanged 会在重算时被错误置回 false）。通过 editDirtyConfig.extraFields 显式纳入。
+const alwaysEditFields = computed(() => {
+  const fields = [];
+  forEachLeafColumn(mergedColumns.value, (col) => {
+    if (col && col.alwaysEdit === true && col.field && !fields.includes(col.field)) {
+      fields.push(col.field);
+    }
+  });
+  return fields;
+});
 
 // ========== 函数式/字符串式 editRender 标记 ==========
 // 这两种形式直接绑 row[field]，onEditClosed 不能再用 editLocalState 覆盖（会回滚 + cell-edit-change 参数颠倒）
@@ -833,8 +963,10 @@ watch(
     // nextTick 等 vxe-grid 完成新数据装载后再取 fullData（否则拿到的是旧数据）
     nextTick(() => {
       if (!gridRef.value?.getRecordset) return;
-      // 数据替换会销毁所有编辑态：拆除编辑会话，由 recordset 单独裁决
+      // 数据替换会销毁所有编辑态：拆除编辑会话，丢弃常驻编辑未写回输入，
+      // 由 recordset 单独裁决（新数据才是事实来源）
       clearEditSessions();
+      resetAlwaysEditValues();
       recomputeChanged();
       refreshBaseline();
     });
@@ -1023,6 +1155,7 @@ onMounted(() => {
   nextTick(() => {
     if (!gridRef.value?.getRecordset) return;
     clearEditSessions();
+    resetAlwaysEditValues();
     recomputeChanged();
     refreshBaseline();
   });
@@ -1685,6 +1818,8 @@ const gridProps = computed(() => {
     "virtual-x-config": userVirtualXKebab,
     virtualYConfig: userVirtualYCamel,
     "virtual-y-config": userVirtualYKebab,
+    editDirtyConfig: userEditDirtyCamel,
+    "edit-dirty-config": userEditDirtyKebab,
     scrollX: userScrollXC,
     "scroll-x": userScrollXK,
     scrollY: userScrollYC,
@@ -1722,6 +1857,25 @@ const gridProps = computed(() => {
               ...props.editConfig,
             },
           }),
+      // 常驻编辑器字段补充进 dirty 对比字段（alwaysEdit 列无 editRender，vxe 默认不收录）。
+      // vxe 中 includeFields（白名单）优先于 extraFields，用户配置白名单时并入白名单。
+      editDirtyConfig: (() => {
+        const user = userEditDirtyCamel || userEditDirtyKebab || {};
+        const alwaysFields = alwaysEditFields.value;
+        if (!alwaysFields.length) return user;
+        if (Array.isArray(user.includeFields) && user.includeFields.length) {
+          return {
+            ...user,
+            includeFields: Array.from(
+              new Set([...user.includeFields, ...alwaysFields]),
+            ),
+          };
+        }
+        return {
+          ...user,
+          extraFields: Array.from(new Set([...(user.extraFields || []), ...alwaysFields])),
+        };
+      })(),
       // chronological: 多列排序按点击先后决定主次（vxe 缺省为列声明顺序），
       // 同时保证 getSortColumns() 的返回顺序即本地排序的比较优先级
       sortConfig: { trigger: "button", chronological: true, ...props.sortConfig },
@@ -1785,7 +1939,13 @@ const onPagerChange = (newPager) => {
 // ========== 暴露常用方法 ==========
 defineExpose({
   gridRef,
-  getData: () => gridRef.value?.getTableData?.()?.fullData || [],
+  // 读取数据前先落盘常驻编辑的防抖输入，保证拿到的是最新值
+  getData: () => {
+    flushAlwaysEdit();
+    return gridRef.value?.getTableData?.()?.fullData || [];
+  },
+  // 强制写回常驻编辑器（alwaysEdit）尚未落地的输入（如父组件自定义保存流程前调用）
+  flushAlwaysEdit,
   getCheckboxRecords: () => gridRef.value?.getCheckboxRecords?.() || [],
   getRadioRecord: () => gridRef.value?.getRadioRecord?.() || null,
   clearCheckboxRow: () => gridRef.value?.clearCheckboxRow?.(),
@@ -2068,7 +2228,7 @@ $table-toolbar-gap: 12px;
   // vxe 列宽测量期（data-calc-col）排除，避免 max-width:100% 干扰 width:"auto" 列的测量；
   // 操作列（params.isAction → .table-pro__col--no-ellipsis）排除，按钮等操作内容不省略。
   &:not(.is--wrap-text) {
-    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active):not(.table-pro__col--no-ellipsis) > .vxe-cell > .vxe-cell--wrapper) {
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active):not(.table-pro__col--no-ellipsis):not(.table-pro__col--always-edit) > .vxe-cell > .vxe-cell--wrapper) {
       & > * {
         min-width: 0;
         max-width: 100%;
@@ -2307,6 +2467,59 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       }
 
       // DatePicker/TimePicker 范围选择器内部 input 自适应
+      .el-range-editor {
+        .el-range-input-wrapper {
+          flex: 1 1 auto;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .el-range-input {
+          min-width: 0;
+          width: 100%;
+        }
+      }
+    }
+  }
+}
+
+// ======= 常驻编辑器（列 alwaysEdit）：编辑器始终显示，约束宽度不超出单元格 =======
+// 与上方 col--active（vxe 编辑态）同一套宽度覆盖：Element Plus 默认宽度
+// （如 InputNumber 150px、DatePicker 220px）会超出窄列单元格，统一覆盖为 100%
+.vxe-table {
+  .vxe-body--column.table-pro__col--always-edit {
+    > .vxe-cell {
+      width: 100%;
+      box-sizing: border-box;
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        width: 100%;
+        overflow: visible;
+        white-space: normal;
+      }
+
+      .el-input,
+      .el-input-number,
+      .el-input__wrapper,
+      .el-select,
+      .el-select-v2,
+      .el-date-editor,
+      .el-time-editor,
+      .el-time-picker,
+      .el-time-select {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+      }
+
+      .el-input-number {
+        .el-input__wrapper {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+      }
+
       .el-range-editor {
         .el-range-input-wrapper {
           flex: 1 1 auto;
