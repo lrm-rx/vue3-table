@@ -373,23 +373,6 @@ const renderErrorTip = (item) => {
   });
 };
 
-// —— UploadPro 按钮尺寸（buttonSize）联动 label 高度 ——
-// EP 的 el-form-item label 高度按表单 size 类写死（default=32px），而 UploadPro 的
-// 触发按钮尺寸由 itemRender.props.buttonSize 单独指定：small（24px）/ large（40px）时
-// label 中心与按钮中心错位（实测 small 差 4px）。此处按 buttonSize 给 el-form-item 加
-// 修饰类，样式中把 label 高度/行高收敛为对应组件尺寸，使 label 与按钮中心对齐。
-// 照片墙（picture-card）无按钮触发器，不参与联动。
-const UPLOAD_BTN_LABEL_CLASS = {
-  small: "form-pro__item--upload-btn-small",
-  large: "form-pro__item--upload-btn-large",
-};
-const resolveUploadBtnLabelClass = (item) => {
-  const ir = item?.itemRender;
-  if (!ir?.name || resolveItemRenderComponent(ir.name) !== UploadPro) return null;
-  if ((ir.props?.listType || "text") === "picture-card") return null;
-  return UPLOAD_BTN_LABEL_CLASS[ir.props?.buttonSize] || null;
-};
-
 const renderFieldEntry = (entry, idx) => {
   const { item, span, required } = entry;
   // 填写/选择提示 tip：位于校验错误提示同一位置（控件下方），颜色为 success 主色调。
@@ -412,8 +395,6 @@ const renderFieldEntry = (entry, idx) => {
       required,
       rules: item.rules,
       ...(item.itemProps || {}),
-      // 上传按钮尺寸联动的修饰类与 itemProps.class 合并（数组形态，后者不丢失）
-      class: [resolveUploadBtnLabelClass(item), item.itemProps?.class],
     },
     {
       label: () => buildLabel(item),
@@ -682,17 +663,7 @@ defineExpose({ entries });
   overflow: hidden;
   text-overflow: ellipsis;
 }
-// UploadPro 按钮尺寸（buttonSize）联动 label 高度（修饰类由 render 函数下发）：
-// label 高度/行高收敛为对应组件尺寸，与按钮同高、中心对齐（EP 默认按表单 size 类
-// 写死 32px，small 按钮 24px 时 label 中心偏下 4px）
-:deep(.form-pro__item--upload-btn-small > .el-form-item__label) {
-  height: var(--el-component-size-small, 24px);
-  line-height: var(--el-component-size-small, 24px);
-}
-:deep(.form-pro__item--upload-btn-large > .el-form-item__label) {
-  height: var(--el-component-size-large, 40px);
-  line-height: var(--el-component-size-large, 40px);
-}
+
 :deep(.form-pro__collapse-btn) {
   display: inline-flex;
   align-items: center;

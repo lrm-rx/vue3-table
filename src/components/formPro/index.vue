@@ -33,7 +33,6 @@ import {
   onMounted,
   onBeforeUnmount,
   useAttrs,
-  useSlots,
 } from "vue";
 import { isEqual } from "lodash-es";
 import {
@@ -515,7 +514,6 @@ const toFormData = (source = getSubmitData(), options = {}) =>
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
 const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border", "compact", "errorTipDuration"];
 const attrs = useAttrs();
-const slots = useSlots();
 const formPropsComputed = computed(() => {
   const out = { model: formData };
   for (const [k, v] of Object.entries(attrs)) {

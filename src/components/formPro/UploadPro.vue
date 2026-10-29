@@ -52,7 +52,6 @@ import {
   watch,
   nextTick,
   useAttrs,
-  useSlots,
 } from "vue";
 import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage, ElMessageBox, useFormDisabled } from "element-plus";
 import {
@@ -173,7 +172,6 @@ const emit = defineEmits([
 ]);
 
 const attrs = useAttrs();
-const slots = useSlots();
 
 const uploadRef = ref(null);
 
