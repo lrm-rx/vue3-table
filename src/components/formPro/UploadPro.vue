@@ -28,7 +28,9 @@
  *     粘贴入口互不影响；
  *  7. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）；
  *  8. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
- *     buttonSize（对应 el-button 的 size）。
+ *     buttonSize（对应 el-button 的 size）；
+ *  9. tip 提示可配：字符串单条 / 数组多条（每条一个块元素换行显示），
+ *     tipClass / tipStyle 作用于 tip 最外层根元素。
  *
  * v-model 值：文件数组（含上传中 / 失败等无 url 项，不再仅保留成功项），
  * 元素支持两种形态
@@ -126,8 +128,12 @@ const props = defineProps({
   buttonText: { type: String, default: "点击上传" },
   // 按钮类型（el-button type）
   buttonType: { type: String, default: "primary" },
-  // el-upload 下方提示（也可用 #tip 插槽）
-  tip: { type: String, default: "" },
+  // el-upload 下方提示（也可用 #tip 插槽）：
+  // 字符串 → 单条提示；数组（长度 > 1）→ 多条提示，每条一个块元素换行显示
+  tip: { type: [String, Array], default: "" },
+  // tip 最外层（根）元素的附加 class / style（与 el-upload__tip 类并存）
+  tipClass: { type: [String, Array, Object], default: "" },
+  tipStyle: { type: [String, Object, Array], default: "" },
   // 单文件大小上限（MB）：内置 beforeUpload 校验，超限拦截并提示；0/不传不限制
   maxSizeMb: { type: Number, default: 0 },
   // 成功响应中 URL 的取值路径（lodash get），默认 data.url；取不到时回退 response.url / 字符串响应
@@ -180,6 +186,14 @@ const mergedDisabled = useFormDisabled();
 const pasteLabel = computed(
   () => props.pasteText || (isCard.value ? "点击此处粘贴图片" : "点击此处粘贴文件"),
 );
+
+// tip 提示行：字符串归一为单行；数组按行拆分（过滤空行），多行时逐行块元素换行显示
+const tipLines = computed(() => {
+  const lines = Array.isArray(props.tip) ? props.tip : [props.tip];
+  return lines
+    .map((line) => (line == null ? "" : String(line)))
+    .filter((line) => line !== "");
+});
 
 // 透传给 el-upload 的 attrs：剔除已由本组件显式接管的键；
 // action 未传时默认 "#"（el-upload 的 action 为必填语义，自定义 httpRequest
@@ -719,10 +733,21 @@ defineExpose({
         </template>
       </template>
 
-      <!-- 提示：具名插槽优先，否则渲染 tip 文案 -->
+      <!-- 提示：具名插槽优先，否则渲染 tip 文案（字符串单行 / 数组多行块元素换行）；
+           tipClass / tipStyle 作用于 tip 最外层根元素 -->
       <template #tip>
         <slot name="tip">
-          <div v-if="tip" class="el-upload__tip">{{ tip }}</div>
+          <div
+            v-if="tipLines.length"
+            class="el-upload__tip"
+            :class="tipClass"
+            :style="tipStyle"
+          >
+            <template v-if="tipLines.length === 1">{{ tipLines[0] }}</template>
+            <template v-else>
+              <div v-for="(line, i) in tipLines" :key="i">{{ line }}</div>
+            </template>
+          </div>
         </slot>
       </template>
     </ElUpload>

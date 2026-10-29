@@ -145,6 +145,10 @@ const formData = ref({
   pendingFiles: [{ name: "线下材料-待补传.zip" }],
   // 延迟上传演示：autoUpload=false，选完文件后由 formRef.submit('manualFiles') 手动提交
   manualFiles: [],
+  // tip 配置演示：字符串单条提示
+  singleTipFiles: [],
+  // tip 配置演示：数组多条提示 + tipClass / tipStyle
+  multiTipFiles: [],
 });
 
 // 表单级禁用开关（演示 item disabled 与 el-form disabled 的优先级）
@@ -400,6 +404,55 @@ const items = ref([
       events: { preview: onFilePreview, download: onFileDownload },
     },
   },
+
+  {
+    group: true,
+    title: "tip 提示配置（字符串单条 / 数组多行 / tipClass / tipStyle）",
+  },
+  {
+    prop: "singleTipFiles",
+    label: "字符串单条提示",
+    span: 12,
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        multiple: true,
+        buttonSize: "small",
+        // 字符串：一条提示
+        tip: "单个文件不超过 10MB",
+        autoUpload: true,
+        httpRequest: mockHttpRequest,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
+  {
+    prop: "multiTipFiles",
+    label: "数组多条提示",
+    span: 12,
+    itemRender: {
+      name: "UploadPro",
+      props: {
+        listType: "text",
+        multiple: true,
+        limit: 5,
+        buttonSize: "small",
+        // 数组（长度 > 1）：多条提示，逐行块元素换行显示；
+        // tipStyle / tipClass 作用于 tip 最外层根元素
+        tip: [
+          "支持 pdf / doc / xlsx / zip 等常见格式",
+          "单个文件不超过 10MB，最多上传 5 个",
+          "涉密文件请先脱敏后再上传",
+        ],
+        tipStyle: { marginTop: "8px", fontSize: "13px", lineHeight: "20px" },
+        tipClass: "demo-upload-tip",
+        autoUpload: true,
+        httpRequest: mockHttpRequest,
+      },
+      events: { preview: onFilePreview, download: onFileDownload },
+    },
+  },
 ]);
 
 const formRef = ref();
@@ -606,3 +659,12 @@ const demoToFormData = (options) => {
       >{{ formDataPreview.map((row) => `${row.key} = ${row.text}`).join("\n") }}</pre>
   </div>
 </template>
+
+<style lang="scss" scoped>
+// tipClass 示例：作用于 tip 最外层根元素（与 el-upload__tip 类并存）
+:deep(.demo-upload-tip) {
+  color: #e6a23c;
+  padding-left: 8px;
+  border-left: 3px solid #e6a23c;
+}
+</style>

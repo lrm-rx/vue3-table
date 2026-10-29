@@ -512,7 +512,8 @@ watch(formData, () => {
 | `dragWidth` / `dragHeight` | Number/String | `""` | 拖拽区宽高；数字 → px，字符串原样；不传用 el-upload 默认 |
 | `dragText` | String | `将文件拖到此处，或点击上传` | 拖拽区文案（支持简单 HTML） |
 | `buttonText` / `buttonType` / `buttonSize` | String | `点击上传` / `primary` / `""` | text / picture 模式触发按钮文案 / 类型 / 尺寸（`buttonSize` 对应 el-button 的 `size`：large / default / small） |
-| `tip` | String | `""` | el-upload 下方提示（也可用 `#tip` 插槽） |
+| `tip` | String/Array | `""` | el-upload 下方提示（也可用 `#tip` 插槽）：字符串 → 单条提示；数组（长度 > 1）→ 多条提示，每条一个块元素换行显示 |
+| `tipClass` / `tipStyle` | String/Object/Array | `""` | tip 最外层根元素的附加 class / style（与 `el-upload__tip` 类并存），语法同 Vue `:class` / `:style` 绑定 |
 | `maxSizeMb` | Number | `0` | 单文件大小上限（MB），内置 beforeUpload 拦截；0 不限制 |
 | `responseKey` | String | `data.url` | 成功响应中 URL 的 lodash-get 路径；取不到回退 `response.url` / 字符串响应 |
 | `resolveResponse` | Function | - | `(response, file) => { name, url, ... } \| url`，自定义响应解析，优先级最高；返回对象时**整体透传**（`id` 等服务端字段进入 v-model，仅确保 `name`/`url` 就位） |
@@ -562,6 +563,51 @@ el-upload 暴露的 **5 个方法全部提供便捷代理**：
 | 默认插槽 | 整体自定义触发区（对应 el-upload 的 default 插槽）；不传时按模式渲染内置内容：拖拽文案 / 照片墙 `+` / 上传按钮 |
 | `tip` | 上传区下方提示内容；不传时渲染 `tip` prop 文案 |
 | `file` | 由组件内部接管（照片墙缩略图 / 列表行 + 眼睛图标 + 状态角标），不对外透出 |
+
+### tip 提示配置（字符串 / 数组多行 / tipClass / tipStyle）
+
+```js
+{
+  prop: "multiTipFiles",
+  label: "附件材料",
+  itemRender: {
+    name: "UploadPro",
+    props: {
+      listType: "text",
+      multiple: true,
+      limit: 5,
+      // 字符串：单条提示；数组（长度 > 1）：多条提示，逐行块元素换行显示
+      tip: [
+        "支持 pdf / doc / xlsx / zip 等常见格式",
+        "单个文件不超过 10MB，最多上传 5 个",
+        "涉密文件请先脱敏后再上传",
+      ],
+      // 作用于 tip 最外层根元素（与 el-upload__tip 类并存）
+      tipStyle: { marginTop: "8px", fontSize: "13px", lineHeight: "20px" },
+      tipClass: "demo-upload-tip",
+    },
+  },
+}
+```
+
+```scss
+// 页面 <style lang="scss" scoped> 中：需用 :deep() 穿透 scoped 命中 UploadPro 内部元素
+:deep(.demo-upload-tip) {
+  color: #e6a23c;
+  padding-left: 8px;
+  border-left: 3px solid #e6a23c;
+}
+```
+
+多行渲染结果（每条提示一个块元素）：
+
+```html
+<div class="el-upload__tip demo-upload-tip" style="margin-top: 8px; font-size: 13px; line-height: 20px;">
+  <div>支持 pdf / doc / xlsx / zip 等常见格式</div>
+  <div>单个文件不超过 10MB，最多上传 5 个</div>
+  <div>涉密文件请先脱敏后再上传</div>
+</div>
+```
 
 ### v-model 数据形态
 

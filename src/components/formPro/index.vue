@@ -765,6 +765,13 @@ defineExpose(ownExposed);
   width: 100%;
   max-width: 100%;
   overflow-x: clip;
+
+  // label-position="top"（el-form 或 el-form-item 上设置均可，EP 统一解析后
+  // 加 el-form-item--label-top 类）：label 与控件（输入类等组件）的垂直距离
+  // 与紧凑模式一致（8px → 4px），不受 compact 开关影响。
+  :deep(.el-form-item--label-top .el-form-item__label) {
+    margin-bottom: 4px;
+  }
 }
 
 // —— 紧凑型表单（compact 模式）——
