@@ -28,7 +28,8 @@
  *     粘贴入口互不影响；
  *  7. 拖拽上传区域宽高可自定义：dragWidth / dragHeight（数字按 px，字符串原样）；
  *  8. text / picture 触发按钮文案 / 类型 / 尺寸可配：buttonText / buttonType /
- *     buttonSize（对应 el-button 的 size）；
+ *     buttonSize（对应 el-button 的 size）；buttonSize=small / large 时
+ *     el-form-item 的 label 高度自动联动（FormBlock 侧实现），与按钮中心对齐；
  *  9. tip 提示可配：字符串单条 / 数组多条（每条一个块元素换行显示），
  *     tipClass / tipStyle 作用于 tip 最外层根元素。
  *

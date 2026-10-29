@@ -2,7 +2,7 @@
 
 基于 Element Plus `el-form` 的二次封装，用 `items` 配置驱动渲染，同时**完整保留 el-form 的全部属性、实例方法与事件**。
 
-- 文件：`index.vue`（主组件）、`FormBlock.vue`（渲染块）、`utils.js`（纯函数工具）
+- 文件：`index.vue`（主组件）、`FormBlock.vue`（渲染块）、`FormGroupToggle.vue`（「折叠全部 / 展开全部」开关按钮）、`utils.js`（纯函数工具）
 - 命名：`defineOptions({ name: "FormPro" })`
 
 ---
@@ -92,9 +92,23 @@ const items = ref([
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
 | `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示 |
 
-**分组头**：`{ group: true, title, fold, collapsible, allToggle, render, slot, titleBold, titleStyle }`。
+**分组头**：`{ group: true, title, fold, collapsible, render, slot, titleBold, titleStyle }`。
 - `titleBold`：标题是否加粗（`true` → 700，`false` → 400，未设置 → 默认 600）；
 - `titleStyle`：标题自定义内联样式（颜色/字号等，如 `{ color: '#409eff', fontSize: 15 }`），与 `titleBold` 叠加，`fontWeight` 显式指定时优先于 `titleBold`。
+
+> 「折叠全部 / 展开全部」操作不提供分组头内按钮（表单出现垂直滚动条后按钮随内容滚走不可见），
+> 请使用配套的 `FormGroupToggle` 组件——可放置在任意固定位置（fixed 悬浮条 / 顶部工具栏），
+> 仅绑定 FormPro 实例即可，父级零 JS 样板代码：
+>
+> ```vue
+> <FormGroupToggle :form="formRef" />
+> <FormPro ref="formRef" v-model="formData" :items="items" />
+> ```
+>
+> 文案由 FormPro 暴露的响应式状态 `allGroupsCollapsed` 自动驱动（全部折叠 → 「展开全部」，
+> 否则 → 「折叠全部」），点击调用实例方法 `toggleAllGroups()`；
+> `expandText` / `collapseText` 可定制文案，`el-tag` 属性（`type` / `size` / `effect` 等）经 `$attrs` 透传，
+> 默认插槽（作用域参数 `{ allCollapsed, toggle }`）可完全自定义内容。
 
 **插入项**：无 `prop`，用 `slot` 或 `render` 在表单项之间插入任意内容（`span: 24` 占整行）。
 
@@ -135,7 +149,7 @@ formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
 **FormPro 自身方法**：
 - `getSubmitData()` —— 返回已按 `removeHiddenValues` 过滤的提交数据（见 §6）
 - `toFormData(source?, options?)` —— 对象 → `FormData`（multipart 提交）。不传 `source` 时取 `getSubmitData()`；`File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }`）始终以二进制 append，不会变成 `"[object File]"` 或 `{}`；嵌套对象展开为 `a[b]`，对象数组为 `a[0][b]`；标量/文件数组默认重复同名键（`arrayFormat: 'bracket'` 时用 `a[]`）；`Date` → ISO，布尔 → `'true'/'false'`，`null` / `undefined` 跳过
-- 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`
+- 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`；响应式只读状态 `allGroupsCollapsed`（所有可折叠分组是否均已折叠，供外部按钮驱动文案，如 FormGroupToggle）
 - 运行时动态配置：`addItems(entries, position?)` / `removeItems(target)` / `updateItems(target, patch)` —— 增删改 items（联动禁用/显隐、异步 options，详见 §13）
 - `formData` —— 内部完整数据（含隐藏字段值）
 
@@ -511,7 +525,7 @@ watch(formData, () => {
 | `pasteText` | String | 按模式回退 | 粘贴入口文案；未设置时照片墙为「点击此处粘贴图片」，text / picture 为「点击此处粘贴文件」 |
 | `dragWidth` / `dragHeight` | Number/String | `""` | 拖拽区宽高；数字 → px，字符串原样；不传用 el-upload 默认 |
 | `dragText` | String | `将文件拖到此处，或点击上传` | 拖拽区文案（支持简单 HTML） |
-| `buttonText` / `buttonType` / `buttonSize` | String | `点击上传` / `primary` / `""` | text / picture 模式触发按钮文案 / 类型 / 尺寸（`buttonSize` 对应 el-button 的 `size`：large / default / small） |
+| `buttonText` / `buttonType` / `buttonSize` | String | `点击上传` / `primary` / `""` | text / picture 模式触发按钮文案 / 类型 / 尺寸（`buttonSize` 对应 el-button 的 `size`：large / default / small）；设为 small / large 时 el-form-item 的 label 高度自动联动收敛为对应尺寸（24 / 40px），与按钮垂直中心对齐 |
 | `tip` | String/Array | `""` | el-upload 下方提示（也可用 `#tip` 插槽）：字符串 → 单条提示；数组（长度 > 1）→ 多条提示，每条一个块元素换行显示 |
 | `tipClass` / `tipStyle` | String/Object/Array | `""` | tip 最外层根元素的附加 class / style（与 `el-upload__tip` 类并存），语法同 Vue `:class` / `:style` 绑定 |
 | `maxSizeMb` | Number | `0` | 单文件大小上限（MB），内置 beforeUpload 拦截；0 不限制 |

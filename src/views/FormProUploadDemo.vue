@@ -167,7 +167,6 @@ const items = ref([
   {
     group: true,
     title: "图片上传（照片墙 / 粘贴 / 内置预览）",
-    allToggle: false,
   },
   {
     prop: "photos",

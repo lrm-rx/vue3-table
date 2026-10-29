@@ -13,6 +13,7 @@ import {
 } from "element-plus";
 import { InfoFilled, QuestionFilled } from "@element-plus/icons-vue";
 import FormPro from "@/components/formPro/index.vue";
+import FormGroupToggle from "@/components/formPro/FormGroupToggle.vue";
 
 // 表格示例数据（插入到表单项之间）
 const tableData = ref([
@@ -198,12 +199,11 @@ const DYNAMIC_PROPS = ["emergency", "favColor", "notify"];
 
 // 表单配置：覆盖分组 / span / 条件显隐 / 插入项 / JSX / itemRender
 const items = ref([
-  // —— 分组 1：基本信息（默认展开，allToggle 显示「折叠全部 / 展开全部」按钮）——
+  // —— 分组 1：基本信息（默认展开）——
   // 标题与按钮之间的扩展区用 render（JSX）渲染一个提示图标
   {
     group: true,
     title: "基本信息",
-    allToggle: true,
     render: () => (
       <>
         <ElTooltip
@@ -745,6 +745,15 @@ const toggleEmailRequired = () => {
         </div>
       </template>
     </FormPro>
+
+    <!-- FormGroupToggle：与 FormPro 解耦的「折叠全部 / 展开全部」一键开关，
+         仅绑定 form 实例（:form="formRef"）即可，父级零 JS 样板代码；
+         fixed 固定于右下角，页面滚动时始终可见（替代原分组头内 allToggle 按钮） -->
+    <FormGroupToggle
+      :form="formRef"
+      effect="plain"
+      style="position: fixed; right: 24px; bottom: 24px; z-index: 10"
+    />
 
     <el-divider>实时数据</el-divider>
     <pre style="background: #f5f7fa; padding: 12px; border-radius: 4px">{{

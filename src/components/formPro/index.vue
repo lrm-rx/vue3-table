@@ -670,6 +670,12 @@ const ownExposed = {
   collapseAllGroups,
   expandAllGroups,
   toggleAllGroups,
+  // 所有「可折叠」分组是否均已折叠（响应式只读状态，getter 实时求值）：
+  // 供外部「展开全部 / 折叠全部」按钮（如 FormGroupToggle 组件）驱动文案，
+  // 外部在 render 中读取时会被 Vue 追踪依赖，分组状态变化自动重渲染
+  get allGroupsCollapsed() {
+    return allGroupsCollapsed.value;
+  },
   // 包装 el-form 的 resetFields / clearValidate：这两个方法清除校验状态时「不触发」validate 事件，
   // 需同步清除内部 fieldErrors，否则 item.tip 填写提示会因残留错误状态而无法恢复显示。
   // 同步收敛紧凑模式的错误 tooltip（含未触发的自动隐藏定时器）。
@@ -736,11 +742,9 @@ defineExpose(ownExposed);
       :error-tip-visible="errorTipVisible"
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
-      :all-collapsed="allGroupsCollapsed"
       :form-item-refs="formItemRefs"
       :upload-refs="uploadRefs"
       @toggle-group="block.group && isGroupCollapsible(block.group) && toggleGroup(block.group)"
-      @toggle-all="toggleAllGroups"
     >
       <!-- 透传所有插槽给 FormBlock（字段插槽 #field、插入项插槽、分组标题插槽 group-xxx）-->
       <template v-for="(_, name) in $slots" #[name]="scope">

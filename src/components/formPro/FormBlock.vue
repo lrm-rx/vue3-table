@@ -19,7 +19,6 @@ import {
   ElFormItem,
   ElIcon,
   ElTooltip,
-  ElTag,
 } from "element-plus";
 import { ArrowRight, ArrowDown, ArrowUp } from "@element-plus/icons-vue";
 import {
@@ -55,8 +54,6 @@ const props = defineProps({
   collapsed: { type: Boolean, default: false },
   // 分组是否可折叠（显示折叠/展开按钮）；不可折叠时分组恒展开且标题不可点击
   collapsible: { type: Boolean, default: true },
-  // 所有「可折叠」分组是否都已折叠（驱动「展开全部 / 折叠全部」按钮文案）
-  allCollapsed: { type: Boolean, default: false },
   // 表单级：标题是否带冒号（item.titleColon 可单独覆盖）
   titleColon: { type: Boolean, default: false },
   // 表单级：label 是否统一加粗（item.titleBold 可单独覆盖，项级优先级更高）
@@ -81,7 +78,7 @@ const props = defineProps({
   unitSlotWidth: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["toggle-group", "toggle-all"]);
+const emit = defineEmits(["toggle-group"]);
 const slots = useSlots();
 
 // item 级折叠（vxe-form folding）：默认收起，collapseNode 按钮切换
@@ -376,6 +373,23 @@ const renderErrorTip = (item) => {
   });
 };
 
+// —— UploadPro 按钮尺寸（buttonSize）联动 label 高度 ——
+// EP 的 el-form-item label 高度按表单 size 类写死（default=32px），而 UploadPro 的
+// 触发按钮尺寸由 itemRender.props.buttonSize 单独指定：small（24px）/ large（40px）时
+// label 中心与按钮中心错位（实测 small 差 4px）。此处按 buttonSize 给 el-form-item 加
+// 修饰类，样式中把 label 高度/行高收敛为对应组件尺寸，使 label 与按钮中心对齐。
+// 照片墙（picture-card）无按钮触发器，不参与联动。
+const UPLOAD_BTN_LABEL_CLASS = {
+  small: "form-pro__item--upload-btn-small",
+  large: "form-pro__item--upload-btn-large",
+};
+const resolveUploadBtnLabelClass = (item) => {
+  const ir = item?.itemRender;
+  if (!ir?.name || resolveItemRenderComponent(ir.name) !== UploadPro) return null;
+  if ((ir.props?.listType || "text") === "picture-card") return null;
+  return UPLOAD_BTN_LABEL_CLASS[ir.props?.buttonSize] || null;
+};
+
 const renderFieldEntry = (entry, idx) => {
   const { item, span, required } = entry;
   // 填写/选择提示 tip：位于校验错误提示同一位置（控件下方），颜色为 success 主色调。
@@ -398,6 +412,8 @@ const renderFieldEntry = (entry, idx) => {
       required,
       rules: item.rules,
       ...(item.itemProps || {}),
+      // 上传按钮尺寸联动的修饰类与 itemProps.class 合并（数组形态，后者不丢失）
+      class: [resolveUploadBtnLabelClass(item), item.itemProps?.class],
     },
     {
       label: () => buildLabel(item),
@@ -544,18 +560,8 @@ const render = () => {
         {groupExtra ? (
           <span class="form-pro__group-header-extra">{groupExtra}</span>
         ) : null}
-        {/* 右侧仅保留「展开全部 / 折叠全部」按钮（allToggle）；单组折叠已由标题区点击承载，
-            不再渲染多余的「展开/收起」按钮。allToggle 按钮复用 form-pro__group-toggle 的靠右样式。 */}
-        {canCollapse && group.allToggle ? (
-          <span
-            class="form-pro__group-toggle form-pro__group-toggle-all"
-            onClick={() => emit("toggle-all")}
-          >
-            <ElTag type="primary" effect="plain" size="small">
-              {props.allCollapsed ? "展开全部" : "折叠全部"}
-            </ElTag>
-          </span>
-        ) : null}
+        {/* 右侧不再提供「展开全部 / 折叠全部」按钮：表单出现垂直滚动条后按钮随内容
+            滚走不可见，统一由外部 FormGroupToggle 组件承载（可放于 fixed 固定位置） */}
       </div>
       <div
         class={{
@@ -676,6 +682,17 @@ defineExpose({ entries });
   overflow: hidden;
   text-overflow: ellipsis;
 }
+// UploadPro 按钮尺寸（buttonSize）联动 label 高度（修饰类由 render 函数下发）：
+// label 高度/行高收敛为对应组件尺寸，与按钮同高、中心对齐（EP 默认按表单 size 类
+// 写死 32px，small 按钮 24px 时 label 中心偏下 4px）
+:deep(.form-pro__item--upload-btn-small > .el-form-item__label) {
+  height: var(--el-component-size-small, 24px);
+  line-height: var(--el-component-size-small, 24px);
+}
+:deep(.form-pro__item--upload-btn-large > .el-form-item__label) {
+  height: var(--el-component-size-large, 40px);
+  line-height: var(--el-component-size-large, 40px);
+}
 :deep(.form-pro__collapse-btn) {
   display: inline-flex;
   align-items: center;
@@ -740,18 +757,6 @@ defineExpose({ entries });
 :deep(.form-pro__group-header-extra) {
   display: inline-flex;
   align-items: center;
-}
-// 折叠/展开按钮（el-tag）：靠右显示；自身作为 flex 容器让内部 el-tag 垂直居中
-// （el-tag 为 inline-flex，默认按行内基线对齐会在 block 容器内偏下，需显式 align-items）
-:deep(.form-pro__group-toggle) {
-  margin-left: auto;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-}
-// 「展开全部 / 折叠全部」按钮
-:deep(.form-pro__group-toggle-all) {
-  margin-left: 6px;
 }
 :deep(.form-pro__group-body) {
   // 展开/折叠高度动画：用 grid-template-rows 0fr → 1fr 实现
