@@ -330,6 +330,38 @@ const clearEditSessions = () => {
   refreshEditingDirtySilent();
 };
 
+// ========== 单元格校验 trigger 主动触发（change / blur）==========
+// 背景：对象式 editRender 的 v-model 绑 editLocalState（编辑期间 row[field] 不更新），
+// 插槽式编辑器也不经过 vxe 的 updateStatus —— vxe 原生 trigger 链路
+//（updateStatus→'change' / 关单元格→checkValidate('blur') 读 row 旧值）拿不到编辑中的
+// 当前值，导致 editRules 里定义的 trigger 不生效（如：非必填但值必须为数字的自定义校验）。
+// 修复：在「编辑值变化」与「编辑关闭」两个时机，用当前值主动调用 vxe 校验内部方法，
+// 语义与 vxe 内置编辑器一致（hasCellRules 负责匹配 trigger，无 trigger 的规则均触发）。
+// 取 vxe-table 内部实例（grid 未代理 hasCellRules/validCellRules/showValidTooltip 等校验内部方法）
+const getVxTable = () => gridRef.value?.getRefMaps?.().refTable?.value || null;
+const triggerCellRuleValidate = (type, row, column, value) => {
+  const $table = getVxTable();
+  if (!$table || !props.editRules || !row || !column || !column.field) return;
+  if (
+    typeof $table.hasCellRules !== "function" ||
+    typeof $table.validCellRules !== "function"
+  )
+    return;
+  // 该字段无匹配此 trigger 的规则时直接跳过（避免无谓校验开销）
+  if (!$table.hasCellRules(type, row, column)) return;
+  $table
+    .validCellRules(type, row, column, value)
+    .then(() => {
+      $table.clearValidate?.(row, column);
+    })
+    .catch(({ rule } = {}) => {
+      if (!rule || typeof $table.showValidTooltip !== "function") return;
+      const cell = $table.getCellElement?.(row, column);
+      // 单元格已卸载（切页/虚拟滚动回收）时无法定位，跳过提示
+      if (cell) $table.showValidTooltip({ rule, row, column, cell });
+    });
+};
+
 // 进入编辑态：用 row[field] 初始化本地值 + 注册即时脏态 watcher
 // 自动弹出由 utils/columns.js 中 buildObjectEditSlotFn 的 onVnodeMounted 钩子处理（更可靠）
 // 同时开启弹出面板保护：编辑期间点击 Element Plus popper（含插槽式编辑器内部的弹层）
@@ -363,6 +395,9 @@ const onEditActivated = (params) => {
         // applyChanged 定义在下方变更跟踪区（运行期调用，无 TDZ 问题）
         applyChanged()
       }
+      // 编辑值变化即触发 trigger=change 的规则校验（用编辑中的当前值；
+      // 对象式编辑器此刻 row[field] 尚未写回，vxe 原生链路读不到该值）
+      triggerCellRuleValidate("change", row, params.column, cur)
     },
     { flush: "sync", deep: isCustomEdit },
   )
@@ -422,6 +457,9 @@ const onEditClosed = (params) => {
       })
     }
   }
+  // 编辑关闭即触发 trigger=blur 的规则校验（用已写回的新值；
+  // 同时纠正 vxe 原生 checkValidate('blur') 在写回前读 row 旧值造成的误报）
+  triggerCellRuleValidate("blur", row, col, newValue);
   recomputeChanged();
 }
 
@@ -626,12 +664,17 @@ const onAlwaysEditInput = ({ row, column, field, value }) => {
     key,
     setTimeout(() => flushAlwaysEditValue(key), ALWAYS_EDIT_WRITE_DELAY),
   );
+  // 常驻编辑器不参与 vxe 编辑态（无 actived），vxe 原生 trigger 链路完全不会触发，
+  // 这里用输入中的当前值主动触发 trigger=change 的规则校验
+  triggerCellRuleValidate("change", row, column, value);
 };
 
 // 失焦 / 单元格卸载：立即写回（不等防抖）
-const onAlwaysEditCommit = ({ row, field }) => {
+const onAlwaysEditCommit = ({ row, column, field }) => {
   if (!row || field == null) return;
   flushAlwaysEditValue(resolveEditStateKey(row, field));
+  // 失焦写回后触发 trigger=blur 的规则校验（常驻编辑器无 vxe 编辑态，需主动触发）
+  triggerCellRuleValidate("blur", row, column, row[field]);
 };
 
 onBeforeUnmount(() => {
@@ -1820,6 +1863,8 @@ const gridProps = computed(() => {
     "virtual-y-config": userVirtualYKebab,
     editDirtyConfig: userEditDirtyCamel,
     "edit-dirty-config": userEditDirtyKebab,
+    validConfig: userValidConfigCamel,
+    "valid-config": userValidConfigKebab,
     scrollX: userScrollXC,
     "scroll-x": userScrollXK,
     scrollY: userScrollYC,
@@ -1889,6 +1934,15 @@ const gridProps = computed(() => {
       data: renderData.value,
       // 校验规则透传到 vxe-grid，配合暴露的 validate / fullValidate 方法
       editRules: props.editRules,
+      // 校验提示配置合成：vxe 全局默认 message='inline'，在「无固定高度 + 单行数据 +
+      // max-height 限制」场景内联错误提示渲染在最后一行单元格下方，会被表体 overflow
+      // 裁剪而不可见；用户未显式设置 message 时补 'default' 智能模式 —— 有固定高度或
+      // 多行时仍走内联（与 inline 表现一致），无高度 + 单行时自动改用 teleport 到 body
+      // 的浮层提示（配合下方 showFallbackValidTip 兜底弹出，不受容器裁剪）。
+      validConfig: (() => {
+        const user = userValidConfigCamel || userValidConfigKebab || {};
+        return { ...user, message: user.message || "default" };
+      })(),
       toolbarConfig: toolbarConfig.value,
       customConfig: customConfig.value,
       // 面板列拖拽：isPeerDrag 允许同级拖动（含分组子列），需配合 customConfig.immediate
@@ -1934,6 +1988,57 @@ const onPagerChange = (newPager) => {
     emit("update:pagerConfig", newPager);
   }
   emit("page-change", newPager);
+};
+
+// ========== 校验失败提示兜底（height 为空 + 单行数据 + validConfig.autoPos=false 场景）==========
+// gridProps 已将 validConfig.message 缺省补为 'default'（智能模式）：该场景下 vxe 内联
+// 错误提示不渲染（body.js 要求 height 存在或数据 >1 行），原生应改走 tooltip 浮层提示，
+// 但 validConfig.autoPos=false 会跳过该浮层 —— 校验失败的提示完全不可见。
+// 此处兜底：命中上述场景时手动弹出首个错误的校验浮层
+//（vxe 校验浮层挂载后即 teleport 到 body 定位，不受表格容器高度/overflow 裁剪影响）。
+const showFallbackValidTip = (errMap) => {
+  if (!errMap || typeof errMap !== "object") return;
+  const fields = Object.keys(errMap);
+  if (!fields.length) return;
+  const $table = getVxTable();
+  if (!$table || typeof $table.showValidTooltip !== "function") return;
+  const validOpts = $table.getComputeMaps?.().computeValidOpts?.value || {};
+  // autoPos 未关闭（vxe 原生已弹浮层）或用户明确关闭错误提示时，不兜底
+  if (validOpts.autoPos !== false || validOpts.showErrorMessage === false)
+    return;
+  const msgMode = validOpts.message || "default";
+  // inline 模式始终内联渲染，无需兜底
+  if (msgMode === "inline") return;
+  // default 模式下「有固定高度或数据 >1 行」内联渲染正常，无需兜底
+  if (msgMode === "default") {
+    const rowCount = $table.getTableData?.().tableData?.length ?? 0;
+    if (props.height || rowCount > 1) return;
+  }
+  const firstErr = errMap[fields[0]]?.[0];
+  if (!firstErr || !firstErr.row || !firstErr.column || !firstErr.rule) return;
+  const cell = $table.getCellElement?.(firstErr.row, firstErr.column);
+  if (!cell) return;
+  $table.showValidTooltip({
+    rule: firstErr.rule,
+    row: firstErr.row,
+    column: firstErr.column,
+    cell,
+  });
+  // 注：浮层 zIndex 无需在此处理 —— plugins/vxe-ui.js 已将 vxe 全局 zIndex
+  // 基数提升至 3000（element-plus 弹层为 2000+），校验浮层在 el-dialog 内
+  // 也不会被遮罩遮挡
+};
+
+// 统一校验入口：先关闭可能进行中的编辑态（对象式编辑器在 edit-closed 时才写回 row，
+// 保证校验读到最新值），并让位一个宏任务 —— vxe 全局 mousedown 对「表外点击」会
+// setTimeout 关闭编辑且在其结束后清空校验状态（autoClear），若点击的正是提交按钮，
+// 该清空可能晚于校验结果落地导致错误提示被抹掉；让位后校验必然发生在清空之后
+const runValidate = async (method, args) => {
+  await gridRef.value?.clearEdit?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const errMap = await gridRef.value?.[method]?.(...args);
+  showFallbackValidTip(errMap);
+  return errMap;
 };
 
 // ========== 暴露常用方法 ==========
@@ -1999,8 +2104,10 @@ defineExpose({
   // validate: 仅校验已编辑的单元格；fullValidate: 校验全表所有规则
   // 配合 validConfig.autoPos=false：校验不自动激活编辑态，避免 TextareaPopoverEdit 等弹层
   //       遮住校验错误语；提交后调用 scrollToRow 手动滚动到首个错误行
-  validate: (...args) => gridRef.value?.validate?.(...args),
-  fullValidate: (...args) => gridRef.value?.fullValidate?.(...args),
+  // 校验失败后经 showFallbackValidTip 兜底：height 为空 + 单行 + autoPos=false 时
+  // vxe 内联提示不渲染，此处手动弹出校验浮层保证提示可见
+  validate: (...args) => runValidate("validate", args),
+  fullValidate: (...args) => runValidate("fullValidate", args),
   clearValidate: (...args) => gridRef.value?.clearValidate?.(...args),
   // ========== 变更跟踪（v-model:cellChanged 配套方法）==========
   // insertRow/insertRowAt/removeRows：vxe 自带 insert/insertAt/remove 的封装，

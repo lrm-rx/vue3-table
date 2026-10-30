@@ -588,6 +588,78 @@ const onAlwaysEditCancel = async () => {
   ElMessage[reverted ? "success" : "info"](reverted ? "已还原为变更前数据" : "当前没有可还原的变更");
 };
 
+// ===== 校验 trigger + 无固定高度单行提示兜底 验证 =====
+// 场景一（trigger 生效）：code 列「非必填，但有值时必须为数字」，
+//   trigger=change 输入过程即校验；失焦（trigger=blur）也会校验。
+// 场景二（提示可见）：:height="null" + max-height 固定 + 单行数据，
+//   validConfig.autoPos=false 时 vxe 内联提示不渲染，组件兜底弹出校验浮层。
+const validDemoRef = ref();
+const validDemoColumns = ref([
+  { type: "seq", width: 60, title: "序号" },
+  { field: "username", title: "姓名", width: 160, editRender: { name: "ElInput" } },
+  { field: "code", title: "编码（非必填，须为数字）", minWidth: 200, editRender: { name: "ElInput" } },
+  { field: "email", title: "邮箱（非必填，blur校验）", minWidth: 220, editRender: { name: "ElInput" } },
+]);
+const validDemoData = ref([{ id: 1, username: "张三", code: "100", email: "a@b.co" }]);
+const validDemoRules = ref({
+  username: [{ required: true, message: "请输入姓名", trigger: "change" }],
+  code: [
+    {
+      trigger: "change",
+      message: "编码必须为数字",
+      validator: ({ cellValue }) => {
+        if (cellValue != null && cellValue !== "" && !/^\d+$/.test(String(cellValue))) {
+          return new Error("编码必须为数字");
+        }
+      },
+    },
+  ],
+  // blur trigger：编辑中（change）不应触发，退出编辑态（blur）才触发
+  email: [
+    {
+      trigger: "blur",
+      message: "邮箱格式不正确",
+      validator: ({ cellValue }) => {
+        if (cellValue != null && cellValue !== "" && !/^[\w.-]+@[\w.-]+\.\w+$/.test(String(cellValue))) {
+          return new Error("邮箱格式不正确");
+        }
+      },
+    },
+  ],
+});
+// 行数切换：单行验证浮层兜底；两行验证内联提示（message='default' 多行走内联）
+const toggleValidDemoRows = () => {
+  validDemoData.value =
+    validDemoData.value.length > 1
+      ? [{ id: 1, username: "张三", code: "100", email: "a@b.co" }]
+      : [
+          { id: 1, username: "张三", code: "100", email: "a@b.co" },
+          { id: 2, username: "李四", code: "200", email: "c@d.co" },
+        ];
+};
+const onValidDemoSubmit = async () => {
+  // 组件 fullValidate 内部已统一处理：先 clearEdit 关闭编辑态写回最新值，
+  // 并让位宏任务避开 vxe 全局 mousedown 的迟到 autoClear，此处无需额外处理
+  const errMap = await validDemoRef.value?.fullValidate?.(true);
+  ElMessage[errMap ? "error" : "success"](
+    errMap ? "校验未通过（浮层应完整可见）" : "校验通过",
+  );
+};
+
+// ===== 弹窗中的表格校验提示验证 =====
+// 场景：TablePro 放进 el-dialog（遮罩层 z-index 2000+ 递增），校验失败时
+// 内联提示渲染在 td 内（无 z-index 问题）；单行兜底浮层 teleport 到 body，
+// z-index 必须高于 dialog 遮罩才不被遮挡。此处实测验证两种提示均可见。
+const dialogValidVisible = ref(false);
+const dialogValidRef = ref();
+const dialogValidData = ref([{ id: 1, username: "张三", code: "100", email: "a@b.co" }]);
+const onDialogValidSubmit = async () => {
+  const errMap = await dialogValidRef.value?.fullValidate?.(true);
+  ElMessage[errMap ? "error" : "success"](
+    errMap ? "校验未通过（弹窗内提示应可见）" : "校验通过",
+  );
+};
+
 const handleBeforePageChange = async ({ currentPage, pageSize }) => {
   try {
     await ElMessageBox.confirm(
@@ -866,5 +938,64 @@ const onRemoveSelected = () => {
       v-model:cellChanged="alwaysEditChanged"
       @cell-edit-change="onAlwaysEditChange"
     />
+
+    <el-divider content-position="left">
+      校验 trigger 生效 + 无固定高度单行提示兜底（:height="null" + max-height 固定 +
+      单行数据 + validConfig.autoPos=false，校验失败浮层应完整可见）
+    </el-divider>
+    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+      <el-button type="success" @click="onValidDemoSubmit">提交校验</el-button>
+      <el-button @click="toggleValidDemoRows">
+        {{ validDemoData.length > 1 ? "恢复单行" : "添加一行" }}
+      </el-button>
+      <span style="font-size: 13px; color: #606266">
+        编码列输入非数字即时报错（trigger=change）；邮箱列失焦才报错（trigger=blur）；
+        清空姓名后点「提交校验」：单行看浮层、两行看内联提示
+      </span>
+    </div>
+    <TablePro
+      ref="validDemoRef"
+      class="valid-demo-table"
+      :columns="validDemoColumns"
+      :data="validDemoData"
+      :editable="true"
+      :edit-rules="validDemoRules"
+      :valid-config="{ autoPos: false }"
+      :pagination="false"
+      :show-toolbar="false"
+      :height="null"
+      :max-height="140"
+    />
+
+    <el-divider content-position="left">
+      弹窗中的表格校验提示（el-dialog 遮罩 z-index 较高，内联/浮层提示均应可见不被遮挡）
+    </el-divider>
+    <el-button @click="dialogValidVisible = true">在弹窗中打开校验表格</el-button>
+    <el-dialog
+      v-model="dialogValidVisible"
+      title="弹窗中的表格"
+      width="800px"
+      append-to-body
+    >
+      <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+        <el-button type="success" @click="onDialogValidSubmit">提交校验</el-button>
+        <span style="font-size: 13px; color: #606266">
+          清空姓名后点「提交校验」：单行浮层应浮在弹窗之上
+        </span>
+      </div>
+      <TablePro
+        ref="dialogValidRef"
+        class="dialog-valid-table"
+        :columns="validDemoColumns"
+        :data="dialogValidData"
+        :editable="true"
+        :edit-rules="validDemoRules"
+        :valid-config="{ autoPos: false }"
+        :pagination="false"
+        :show-toolbar="false"
+        :height="null"
+        :max-height="140"
+      />
+    </el-dialog>
   </div>
 </template>

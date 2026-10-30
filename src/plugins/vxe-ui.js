@@ -3,6 +3,7 @@
 
 // vxe-pc-ui：按需引入工具栏与列个性化面板所需的 UI 组件（不全量引入）
 import {
+  VxeUI,
   VxeButton,
   VxeButtonGroup,
   VxeTooltip,
@@ -38,6 +39,12 @@ import {
 import 'vxe-table/lib/style.css'
 
 export function setupVxeUI(app) {
+  // 全局 zIndex 基数：vxe 浮层（校验提示/下拉/弹窗等）zIndex 取自 dom-zindex
+  // 计数器（默认基数 999，tooltip ~1012），低于 element-plus 弹层（初始 2000+
+  // 递增）—— 与 el-dialog 混用时 vxe 校验浮层会被遮罩遮挡；基数提升至 3000
+  // 保证 vxe 浮层始终浮在 element-plus 弹层之上
+  VxeUI.setConfig({ zIndex: 3000 })
+
   // 注册 vxe-pc-ui 所需组件（按需）
   app.use(VxeButton)
   app.use(VxeButtonGroup)
