@@ -8,7 +8,7 @@ import {
   isItemRequired,
   isItemVisible,
   isHiddenByVisibility,
-  collectHiddenValueProps,
+  collectHiddenValueOverrides,
   resolveSpan,
   splitIntoGroups,
   resolveVisibleEntries,
@@ -235,7 +235,7 @@ describe("formPro utils", () => {
     });
   });
 
-  describe("隐藏字段值移除（isHiddenByVisibility / collectHiddenValueProps）", () => {
+  describe("隐藏字段值改写（isHiddenByVisibility / collectHiddenValueOverrides）", () => {
     it("isHiddenByVisibility：仅 visible/visibleMethod 隐藏判定，不涉及 onlyRequired", () => {
       // 约定：visibleMethod 返回 false 表示隐藏
       expect(isHiddenByVisibility({ prop: "a", visible: false }, {})).toBe(true);
@@ -257,34 +257,53 @@ describe("formPro utils", () => {
       expect(isHiddenByVisibility({ group: true, title: "G" }, {})).toBe(false);
     });
 
-    it("collectHiddenValueProps：表单级开关关闭时不移除任何值", () => {
+    it("collectHiddenValueOverrides：表单级未设置（undefined）时不改写任何值", () => {
       const items = [
         { prop: "a", visible: false },
         { prop: "b", visibleMethod: () => false },
       ];
-      expect(collectHiddenValueProps(items, {}, false).size).toBe(0);
+      expect(collectHiddenValueOverrides(items, {}, undefined).size).toBe(0);
+      expect(collectHiddenValueOverrides(items, {}).size).toBe(0);
     });
 
-    it("collectHiddenValueProps：开关开启时收集 visible/visibleMethod 隐藏字段", () => {
+    it("collectHiddenValueOverrides：设置表单级值时收集 visible/visibleMethod 隐藏字段", () => {
       const items = [
         { prop: "a", visible: false },
         { prop: "b", visibleMethod: (d) => d.show === true }, // show=false → 返回 false → 隐藏
         { prop: "c" }, // 可见
       ];
-      const set = collectHiddenValueProps(items, { show: false }, true);
-      expect([...set].sort()).toEqual(["a", "b"]);
+      const map = collectHiddenValueOverrides(items, { show: false }, "");
+      expect([...map.keys()].sort()).toEqual(["a", "b"]);
+      expect(map.get("a")).toBe("");
+      expect(map.get("b")).toBe("");
     });
 
-    it("collectHiddenValueProps：item.removeValueOnHidden 可单独覆盖表单级开关", () => {
+    it("collectHiddenValueOverrides：item.hiddenValue 可单独覆盖表单级值（项级优先）", () => {
       const items = [
-        { prop: "a", visible: false, removeValueOnHidden: false }, // 表单级开，但显式保留
+        { prop: "a", visible: false, hiddenValue: null }, // 项级 null 覆盖表单级 ""
         { prop: "b", visible: false }, // 跟随表单级
-        { prop: "c", visible: false, removeValueOnHidden: true }, // 表单级关，但显式移除
+        { prop: "c", visible: false, hiddenValue: "x" }, // 表单级未设置，但项级指定
       ];
-      const on = collectHiddenValueProps(items, {}, true);
-      expect([...on].sort()).toEqual(["b", "c"]); // a 被 item 级保留，b/c 移除
-      const off = collectHiddenValueProps(items, {}, false);
-      expect([...off].sort()).toEqual(["c"]); // 仅 c 被 item 级强制移除
+      const on = collectHiddenValueOverrides(items, {}, "");
+      expect(on.get("a")).toBe(null); // 项级 null 优先（null 是有效改写值）
+      expect(on.get("b")).toBe(""); // 跟随表单级
+      expect(on.get("c")).toBe("x"); // 项级指定
+      const off = collectHiddenValueOverrides(items, {}, undefined);
+      expect(off.size).toBe(2); // 表单级未设置时仅收集项级显式指定的字段（null 也是有效值）
+      expect(off.get("a")).toBe(null);
+      expect(off.get("c")).toBe("x");
+    });
+
+    it("collectHiddenValueOverrides：假值改写值（\"\" / null / 0）均有效，仅 undefined 表示不改写", () => {
+      const items = [{ prop: "a", visible: false }];
+      expect(collectHiddenValueOverrides(items, {}, "").get("a")).toBe("");
+      expect(collectHiddenValueOverrides(items, {}, null).get("a")).toBe(null);
+      expect(collectHiddenValueOverrides(items, {}, 0).get("a")).toBe(0); // 0 是有效改写值，不被误判为「未设置」
+      expect(collectHiddenValueOverrides(items, {}, false).get("a")).toBe(false);
+      expect(collectHiddenValueOverrides(items, {}, undefined).size).toBe(0);
+      // 项级 0 覆盖表单级 ""
+      const withItem = [{ prop: "a", visible: false, hiddenValue: 0 }];
+      expect(collectHiddenValueOverrides(withItem, {}, "").get("a")).toBe(0);
     });
   });
 
@@ -541,8 +560,8 @@ describe("formPro utils", () => {
           .filter((e) => e.kind === "field")
           .map((e) => e.item.prop);
       updateItems(items, ["a", "c"], { visible: false });
-      const hiddenProps = collectHiddenValueProps(items, {}, true);
-      expect([...hiddenProps].sort()).toEqual(["a", "c"]);
+      const hiddenProps = collectHiddenValueOverrides(items, {}, "");
+      expect([...hiddenProps.keys()].sort()).toEqual(["a", "c"]);
       expect(fieldProps()).toEqual(["b"]);
       updateItems(items, ["a", "c"], { visible: true });
       expect(fieldProps()).toEqual(["a", "b", "c"]);

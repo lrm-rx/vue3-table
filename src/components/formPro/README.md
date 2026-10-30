@@ -58,7 +58,7 @@ const items = ref([
 | `titleColon` | Boolean | `false` | 标题是否带冒号（`item.titleColon` 可覆盖） |
 | `titleBold` | Boolean | `false` | label 是否统一加粗（`item.titleBold` 可覆盖，项级优先级更高） |
 | `groupCollapsible` | Boolean | `true` | 分组默认是否可折叠（`group.collapsible` 可覆盖） |
-| `removeHiddenValues` | Boolean | `false` | 移除因 `visible`/`visibleMethod` 隐藏的字段值（见 §6） |
+| `hiddenValue` | 任意 | `undefined` | 隐藏字段（`visible`/`visibleMethod`）提交时改写为该值（如 `""`/`null`），`undefined` 表示不改写（见 §6） |
 | `autoFillDefaults` | Boolean | `true` | 按 items 自动补全缺失字段的默认值（见 §5） |
 | `border` | Boolean | `false` | 边框表格样式：外框 + 单元格网格线 + label 表头底色（见 §11） |
 | `compact` | Boolean | `false` | 紧凑型表单：间隔收紧、label 距离减半、校验错误 tooltip 化（见 §16） |
@@ -79,14 +79,14 @@ const items = ref([
 | `rules` | 单字段校验规则 |
 | `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
-| `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/.../UploadPro）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染）。内置 `UploadPro` 上传控件见 §12 |
+| `itemRender` | `{ name, props, options, events }` 渲染内置控件（ElInput/ElSelect/.../UploadPro）。`options` 支持三种形态：①静态数组 `[{label,value}]`；②函数 `(ctx)=>Option[]`（ctx.data 为当前表单数据，用于**级联联动**）；③响应式 ref（用于**后端异步返回**，数据到位自动重渲染）。`events` 键为组件 **emits 事件名**（如 ElInput 的 `blur`/`focus`/`input`/`change`，ElSelect 的 `change`/`visible-change`），回调接收组件 emit 的**原始参数**（如 blur 为原生 FocusEvent、change 为选中值）；仅组件声明 emits 的事件可监听（ElInput 不 emit `click` 之类）。内置 `UploadPro` 上传控件见 §12 |
 | `render(ctx, h)` | JSX 自定义渲染控件，`ctx = { value, prop, data }`（ctx 在前；h 仅在需要手写 VNode 时使用，JSX 中可省略） |
 | `slot` | 引用外部具名插槽渲染（字段控件 / 插入项 / 分组标题扩展区） |
 | `prefix` / `suffix` | 控件**前后缀**（在控件前/后渲染文本或元素，非 label 区域）。支持两种形态：①字符串 → 纯文本（如 `"￥"`、`"个"`）；②函数 `(ctx, h) => VNode`，`ctx = { value, prop, data }`，可读取当前值实现动态文本（见 §10） |
 | `visible` / `visibleMethod(data)` | 条件显隐（`visibleMethod` 返回 `false` 表示隐藏） |
 | `disabledWhen(ctx)` / `readonlyWhen(ctx)` | 动态禁用 / 只读：依据当前表单数据求值（`ctx = { value, prop, data }`），render 期自动追踪依赖、随依赖字段变化实时切换；与静态 `itemRender.props.disabled / readonly` 为「或」关系（静态 `true` 恒生效）。只读仅对支持 `readonly` 的控件有效（如 ElInput），选择类控件请用禁用（见 §14） |
 | `optionsSource` | 声明式异步选项：`{ deps, fetch, when?, clearValue?, debounce? }`——「输入/选择/切换 → 请求接口 → 刷新本字段 options」，内置 loading、防竞态、依赖变化自动清空本字段值（见 §14）。与 `itemRender.options` 互斥（配置后由 optionsSource 接管 options） |
-| `removeValueOnHidden` | 项级：隐藏时是否移除值（覆盖表单级 `removeHiddenValues`） |
+| `hiddenValue` | 项级：隐藏时提交值改写为该值（优先级高于表单级 `hiddenValue`） |
 | `modelModifiers` | v-model 修饰符（配置式渲染无法写模板 `v-model.trim`，在此声明）：`{ trim?: true, number?: true }`——`trim` 回写时去除首尾空白；`number` 尽力转数字（可解析则转、否则保留原字符串，同 Vue `looseToNumber` 语义）；组合时先 trim 再转数字。仅作用于字符串值，非字符串原样透传。`lazy` 不支持（组件场景请改用 `itemRender.events.change` 自行监听） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
@@ -147,7 +147,7 @@ formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
 ```
 
 **FormPro 自身方法**：
-- `getSubmitData()` —— 返回已按 `removeHiddenValues` 过滤的提交数据（见 §6）
+- `getSubmitData()` —— 返回已按 `hiddenValue` 规则改写隐藏字段值的提交数据（见 §6）
 - `toFormData(source?, options?)` —— 对象 → `FormData`（multipart 提交）。不传 `source` 时取 `getSubmitData()`；`File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }`）始终以二进制 append，不会变成 `"[object File]"` 或 `{}`；嵌套对象展开为 `a[b]`，对象数组为 `a[0][b]`；标量/文件数组默认重复同名键（`arrayFormat: 'bracket'` 时用 `a[]`）；`Date` → ISO，布尔 → `'true'/'false'`，`null` / `undefined` 跳过
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`；响应式只读状态 `allGroupsCollapsed`（所有可折叠分组是否均已折叠，供外部按钮驱动文案，如 FormGroupToggle）
 - 运行时动态配置：`addItems(entries, position?)` / `removeItems(target)` / `updateItems(target, patch)` —— 增删改 items（联动禁用/显隐、异步 options，详见 §13）
@@ -191,23 +191,26 @@ const formData = ref({ name: "张三", age: 28, enabled: true, hobbies: ["read"]
 
 ---
 
-## 6. 提交时移除隐藏字段值（removeHiddenValues）
+## 6. 隐藏字段提交值改写（hiddenValue）
 
-应用场景：保存/提交时不传被 `visibleMethod` 隐藏的字段值。
+应用场景：保存/提交时，让被 `visible` / `visibleMethod` 隐藏的字段以指定值（如 `""`、`null`）提交——
+仅移除键不传时，后端通常保留旧值不清空；显式提交空值才能清空对应字段。
 
 ```vue
-<FormPro :remove-hidden-values="true" ... />
+<FormPro hidden-value="" ... />
 ```
 
 ```js
-const submitData = formRef.value.getSubmitData(); // 已过滤隐藏字段值
+const submitData = formRef.value.getSubmitData(); // 隐藏字段值已改写为 ""
 ```
 
 **关键约束**：
-- 仅移除因 `visible:false` 或 `visibleMethod` 返回 `false` 而隐藏的字段。
+- 仅改写因 `visible:false` 或 `visibleMethod` 返回 `false` 而隐藏的字段。
 - **`onlyRequired` 导致的隐藏不受影响**，其值保留。
-- 项级 `item.removeValueOnHidden` 可单独覆盖表单级开关。
-- 内部 `formData` 始终保留完整值（字段重新可见时值仍在），仅对外回抛 / `getSubmitData()` 时过滤。
+- 项级 `item.hiddenValue` 可单独覆盖表单级 `hiddenValue`（项级优先级更高）；
+  最终值为 `undefined` 表示不改写（隐藏字段按原值提交）。
+- 内部 `formData` 始终保留用户原始输入（字段重新可见时值仍在并原样回抛），仅对外回抛 / `getSubmitData()` 时改写。
+- `toFormData()` 默认基于 `getSubmitData()` 转换；注意 `null` / `undefined` 在 FormData 中会被跳过（不产生该键），需要显式清空时请用 `""`。
 
 ---
 
@@ -719,7 +722,7 @@ formRef.value.updateItems(
 | 层级 | 用例 | 断言要点 |
 |---|---|---|
 | 单元 | 批量 + 点路径禁用 | `updateItems(["a","c"], {"itemRender.props.disabled":true})` 后仅 a/c 的 props 增加 `disabled:true`；b 完全不变；a/c 各自原有的 `placeholder` 等兄弟 props 保留；返回值仅含 a/c |
-| 单元 | 批量隐藏与恢复 | `updateItems(["a","c"], {visible:false})` 后，走真实渲染链路 `splitIntoGroups → resolveVisibleEntries` 只剩 b；`collectHiddenValueProps` 正确收集到 a/c；再批量 `visible:true` 后顺序还原为 a、b、c |
+| 单元 | 批量隐藏与恢复 | `updateItems(["a","c"], {visible:false})` 后，走真实渲染链路 `splitIntoGroups → resolveVisibleEntries` 只剩 b；`collectHiddenValueOverrides` 正确收集到 a/c；再批量 `visible:true` 后顺序还原为 a、b、c |
 | 集成 | 批量点路径禁用 | 3 个真实 ElInput，批量禁用其中 2 个后 DOM 中带 `disabled` 属性的 input 数量 0→2，第 3 个可正常输入；批量恢复后 2→0 |
 | 集成 | 批量 visible 隐藏 | `["name","enabled"]` 一次隐藏后 ElFormItem 只剩「年龄」（中间项移除后后续项自动回流）；批量恢复后渲染顺序仍为 姓名、年龄、启用 |
 

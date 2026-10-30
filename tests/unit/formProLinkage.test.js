@@ -266,10 +266,10 @@ describe("mergeModelValue（v-model 三方合并）", () => {
     expect(merged.a).toBe(1);
   });
 
-  it("子级有 incoming 缺失的键：保留（removeHiddenValues 隐藏字段不丢值）", () => {
+  it("子级有 incoming 缺失的键：保留（父级快照缺失的隐藏字段不丢值）", () => {
     const merged = mergeModelValue({
       current: { shown: "a", hidden: "keep" },
-      incoming: { shown: "a" }, // 父级快照剔除了隐藏字段
+      incoming: { shown: "a" }, // 父级快照缺少隐藏字段
       base: { shown: "a", hidden: "keep" },
     });
     expect(merged).toEqual({ shown: "a", hidden: "keep" });

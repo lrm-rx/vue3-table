@@ -2,7 +2,7 @@
 /**
  * FormPro 配置式表单演示：覆盖分组 / 列数 / 条件显隐 / 插入项 / JSX / itemRender / 插槽 等特性。
  */
-import { ref, onMounted, markRaw } from "vue";
+import { ref, computed, onMounted, markRaw } from "vue";
 import {
   ElMessage,
   ElButton,
@@ -44,8 +44,25 @@ const formData = ref({
 const columns = ref(3);
 // 「只显示必填」开关
 const onlyRequired = ref(false);
-// 「提交时移除隐藏字段值」开关（removeHiddenValues）
-const removeHiddenValues = ref(false);
+// 「隐藏字段提交值」选择（hiddenValue）：隐藏字段提交时改写为指定值，便于后端清空字段
+// keep → 不改写（按原值提交）；empty → 空字符串；null → null；zero → 数字 0
+const hiddenValueType = ref("keep");
+const hiddenValue = computed(() =>
+  hiddenValueType.value === "empty"
+    ? ""
+    : hiddenValueType.value === "null"
+      ? null
+      : hiddenValueType.value === "zero"
+        ? 0
+        : undefined,
+);
+
+// 原生事件演示：记录最近一次 itemRender.events 触发的原生事件（focus/blur），在工具栏展示
+const lastNativeEvent = ref("");
+const logNativeEvent = (eventName, label) => {
+  const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  lastNativeEvent.value = `${eventName}（${label}） ${time}`;
+};
 
 // 校验规则（el-form 统一 rules，也可在 item.rules 单独配置）
 // 覆盖多种控件类型，用于充分测试 tip 与校验错误提示的切换。
@@ -338,12 +355,38 @@ const items = ref([
     },
   },
   // 条件显隐：仅 type==='company' 时显示，隐藏时后续「邮箱」自动前移回流
+  // 未配置项级 hiddenValue → 隐藏时跟随「表单级 hiddenValue」（工具栏可切换 ""/null/0）
   {
     prop: "company",
     label: "公司名称",
     tip: "需与营业执照上的名称完全一致",
     visibleMethod: (data) => data.type === "company",
-    itemRender: { name: "ElInput", props: { placeholder: "请输入公司名称" } },
+    itemRender: {
+      name: "ElInput",
+      props: { placeholder: "请输入公司名称" },
+      // 原生事件演示：focus/blur 为 ElInput emits 事件，回调接收 emit 原始参数
+      events: {
+        focus: () => logNativeEvent("focus", "公司名称"),
+        blur: () => logNativeEvent("blur", "公司名称"),
+      },
+    },
+  },
+  // 项级 hiddenValue 示例：项级（null）优先级高于表单级——无论工具栏选什么，
+  // 该字段隐藏时恒提交 null；重新显示时内部保留的原始输入会原样恢复
+  {
+    prop: "creditCode",
+    label: "信用代码",
+    tip: "项级 hiddenValue=null：隐藏时恒提交 null（不随表单级切换）",
+    visibleMethod: (data) => data.type === "company",
+    hiddenValue: null,
+    itemRender: {
+      name: "ElInput",
+      props: { placeholder: "请输入统一社会信用代码" },
+      events: {
+        focus: () => logNativeEvent("focus", "信用代码"),
+        blur: () => logNativeEvent("blur", "信用代码"),
+      },
+    },
   },
   {
     prop: "email",
@@ -568,7 +611,7 @@ const formRef = ref();
 const onSubmit = async () => {
   try {
     await formRef.value?.validate();
-    // 提交时取 getSubmitData()：已按 removeHiddenValues 规则移除隐藏字段值
+    // 提交时取 getSubmitData()：已按 hiddenValue 规则改写隐藏字段值
     const submitData = formRef.value?.getSubmitData?.() ?? formData.value;
     ElMessage.success("校验通过，提交数据：" + JSON.stringify(submitData));
   } catch (err) {
@@ -668,9 +711,16 @@ const toggleEmailRequired = () => {
       <span style="font-size: 13px; color: #606266">
         仅显示必填项（onlyRequired）：当前 <b>{{ onlyRequired }}</b>
       </span>
-      <el-switch v-model="removeHiddenValues" />
+      <span style="font-size: 13px; color: #606266">隐藏字段提交值（hiddenValue）：</span>
+      <el-radio-group v-model="hiddenValueType" size="small">
+        <el-radio-button value="keep">不改写</el-radio-button>
+        <el-radio-button value="empty">空字符串</el-radio-button>
+        <el-radio-button value="null">null</el-radio-button>
+        <el-radio-button value="zero">数字 0</el-radio-button>
+      </el-radio-group>
       <span style="font-size: 13px; color: #606266">
-        提交移除隐藏字段值（removeHiddenValues）：当前 <b>{{ removeHiddenValues }}</b>
+        原生事件（type 选「企业」后聚焦/失焦输入框）：
+        <b>{{ lastNativeEvent || "（暂无）" }}</b>
       </span>
       <el-button type="primary" @click="onSubmit">提交校验</el-button>
       <el-button @click="onReset">重置</el-button>
@@ -707,7 +757,7 @@ const toggleEmailRequired = () => {
       :title-colon="true"
       :title-bold="true"
       :only-required="onlyRequired"
-      :remove-hidden-values="removeHiddenValues"
+      :hidden-value="hiddenValue"
       :rules="rules"
       label-width="100px"
       @validate="(prop, valid) => console.log('[validate]', prop, valid)"

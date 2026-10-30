@@ -38,7 +38,7 @@ import { isEqual } from "lodash-es";
 import {
   splitIntoGroups,
   GRID_COLS,
-  collectHiddenValueProps,
+  collectHiddenValueOverrides,
   buildInitialData,
   deriveDefaultValue,
   isFieldItem,
@@ -75,9 +75,11 @@ const props = defineProps({
   titleBold: { type: Boolean, default: false },
   // 表单级：分组是否显示折叠/展开按钮（group.collapsible 可单独覆盖）；默认 true
   groupCollapsible: { type: Boolean, default: true },
-  // 提交时是否移除「因 visible / visibleMethod 隐藏」的字段值（默认 false 不移除）。
-  // 注意：onlyRequired 导致的隐藏不受影响（其值保留）；每项可用 item.removeValueOnHidden 单独覆盖。
-  removeHiddenValues: { type: Boolean, default: false },
+  // 提交时「因 visible / visibleMethod 隐藏」的字段统一改写为该值（如 "" 或 null），
+  // 用于让后端清空对应字段（仅移除键不传时，后端通常保留旧值不清空）。
+  // 默认 undefined：不改写，隐藏字段按原值提交。
+  // 注意：onlyRequired 导致的隐藏不受影响（其值保留）；每项可用 item.hiddenValue 单独覆盖（项级优先）。
+  hiddenValue: { default: undefined },
   // 自动补全初始值：根据 items 配置为未声明的字段填充合理默认值（Switch→false，CheckboxGroup→[]，其余→""），
   // 免去逐个声明 ""。item.defaultValue 可指定固定默认值；用户在 modelValue 中已提供的值始终优先。默认 true。
   autoFillDefaults: { type: Boolean, default: true },
@@ -401,13 +403,55 @@ const fillMissingDefaults = () => {
 // 与「父级直接写入 formData」（如 change 事件里清空另一字段）两股修改。
 // 通过对比 lastSyncedData 可判定每个键是「父级改了 / 子级改了 / 都改了 / 都没改」，
 // 避免任一侧修改被另一侧静默覆盖（父级写入丢失、必须 nextTick 才能生效的 bug 即源于此）。
+// 注意：记录的是「内部原始值视图」而非提交视图；父级快照中隐藏字段的改写值
+// 由 syncFromParent 在合并前经 lastPushedData 识别并还原（见下），不会被误判为「父级修改」。
 let lastSyncedData = { ...formData };
 
+// 最近一次通过 pushModelValue 回抛给父级的快照（提交视图，隐藏字段为改写值）。
+// 用于识别「父级快照里的值其实是子级上次回抛的陈旧值」：父级 v-model 在子级
+// 改写回抛后、尚未被新快照收敛前，其中的隐藏字段改写值（如 ""/null）并非父级
+// 真实写入，合并时不应覆盖内部保留的用户输入。
+let lastPushedData = null;
+
+// 当前需改写值的隐藏字段「prop → 改写值」映射（随 items / formData / hiddenValue 响应式变化）
+const hiddenValueOverrides = computed(() =>
+  collectHiddenValueOverrides(props.items, formData, props.hiddenValue),
+);
+
+/**
+ * 构造「提交用」数据：基于给定数据对象，把「因 visible / visibleMethod 隐藏」的
+ * 字段值改写为 hiddenValue / item.hiddenValue 指定的值。
+ * 不修改入参，返回新对象。无任何改写配置时原样返回浅拷贝。
+ */
+const buildSubmitData = (source) => {
+  const base = { ...(source || {}) };
+  const overrides = hiddenValueOverrides.value;
+  if (overrides.size === 0) return base;
+  for (const [prop, value] of overrides) base[prop] = value;
+  return base;
+};
+
 const syncFromParent = (val) => {
+  // 陈旧回抛还原：父级快照中「与 base 不一致、但与子级上次回抛值一致」的键，
+  // 是子级回抛后父级尚未收敛的陈旧值（典型：隐藏字段被改写为 ""/null 的提交视图值），
+  // 而非父级真实写入——还原为 base 值（视为父级未修改，合并时保留内部原始输入）。
+  // 与 lastPushedData 不一致的差异才判定为父级真实写入（父级优先）。
+  let incoming = val;
+  if (lastPushedData && val) {
+    incoming = { ...val };
+    for (const k of Object.keys(incoming)) {
+      if (
+        !isEqual(incoming[k], lastSyncedData[k]) &&
+        isEqual(incoming[k], lastPushedData[k])
+      ) {
+        incoming[k] = lastSyncedData[k];
+      }
+    }
+  }
   // 三方合并：以 lastSyncedData 为基准逐键判定父/子侧修改（规则见 utils.mergeModelValue）
   const merged = mergeModelValue({
     current: formData,
-    incoming: val,
+    incoming,
     base: lastSyncedData,
     items: props.items,
     autoFillDefaults: props.autoFillDefaults,
@@ -432,6 +476,8 @@ watch(
 //   故父级改用 :model-value + mutable-model，由组件直接原地写回；
 //   原地写入会触发上方 props.modelValue 深 watch → syncFromParent，与 emit 路径同样收敛。
 const pushModelValue = (snapshot) => {
+  // 记录最近回抛快照（含提前 return：父级已持有该值），供 syncFromParent 识别陈旧回抛
+  lastPushedData = { ...snapshot };
   if (isEqual(snapshot, props.modelValue)) return;
   if (props.mutableModel) {
     const target = props.modelValue;
@@ -444,8 +490,8 @@ const pushModelValue = (snapshot) => {
 };
 
 // 内部 formData 变化 → 向父级回抛（值未变则跳过，避免回环）
-// 当 removeHiddenValues 开启时，回抛数据会排除「因 visible / visibleMethod 隐藏」的字段值
-// （onlyRequired 隐藏的字段不受影响，值保留）。
+// 回抛数据为「提交视图」：配置了 hiddenValue / item.hiddenValue 时，
+// 「因 visible / visibleMethod 隐藏」的字段值被改写为指定值（onlyRequired 隐藏的不受影响，值保留）。
 // suppressEmit 为 true 时（fillMissingDefaults 静默补默认值）跳过本次回抛并复位。
 // 回抛前先 syncFromParent 拉取父级「同 tick 直接写入」的修改（三方合并），
 // 否则本 watcher 基于子级旧状态生成的 snapshot 会覆盖父级尚未同步进来的写入，
@@ -460,27 +506,11 @@ watch(
   { deep: true },
 );
 
-// 当前需移除值的隐藏字段 prop 集合（随 items / formData / removeHiddenValues 响应式变化）
-const hiddenValueProps = computed(() =>
-  collectHiddenValueProps(props.items, formData, props.removeHiddenValues),
-);
-
-/**
- * 构造「提交用」数据：基于给定数据对象，移除被隐藏字段的值。
- * 不修改入参，返回新对象。removeHiddenValues 关闭时原样返回浅拷贝。
- */
-const buildSubmitData = (source) => {
-  const base = { ...(source || {}) };
-  const removeSet = hiddenValueProps.value;
-  if (removeSet.size === 0) return base;
-  for (const prop of removeSet) delete base[prop];
-  return base;
-};
-
-// 隐藏字段集合变化（含初始化）时，主动向父级回抛一次过滤后的数据，
-// 保证父级 v-model 数据实时不含隐藏字段值（保存/提交即不传）。
+// 隐藏字段改写映射变化（含初始化）时，主动向父级回抛一次改写后的数据，
+// 保证父级 v-model 数据实时携带隐藏字段的改写值（保存/提交即生效）。
+// 内部 formData 始终保留用户原始输入，字段重新可见时会原值回抛恢复。
 watch(
-  hiddenValueProps,
+  hiddenValueOverrides,
   () => {
     if (suppressEmit) return;
     pushModelValue(buildSubmitData(formData));
@@ -489,14 +519,15 @@ watch(
 );
 
 /**
- * 对外暴露：获取当前提交数据（已按 removeHiddenValues 规则移除隐藏字段值）。
- * 应用场景：保存/提交时调用，避免把 visibleMethod 隐藏项的值传给后端。
+ * 对外暴露：获取当前提交数据（已按 hiddenValue / item.hiddenValue 规则改写隐藏字段值）。
+ * 应用场景：保存/提交时调用，让被 visible / visibleMethod 隐藏项以指定值（如 ""/null）提交，
+ * 便于后端清空对应字段。
  */
 const getSubmitData = () => buildSubmitData(formData);
 
 /**
  * 对外暴露：对象 → FormData（multipart/form-data 提交）。
- * 不传 source 时默认取 getSubmitData()（已按 removeHiddenValues 过滤）。
+ * 不传 source 时默认取 getSubmitData()（已按 hiddenValue 规则改写隐藏字段值）。
  * 文件（File / Blob，含 UploadPro 绑定值里的 { raw: File } 文件项）以二进制 append，
  * 不会被字符串化；嵌套对象 / 数组的键格式见 objectToFormData。
  *
@@ -512,7 +543,7 @@ const toFormData = (source = getSubmitData(), options = {}) =>
   objectToFormData(source, options);
 
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
-const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "removeHiddenValues", "autoFillDefaults", "border", "compact", "errorTipDuration"];
+const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "hiddenValue", "autoFillDefaults", "border", "compact", "errorTipDuration"];
 const attrs = useAttrs();
 const formPropsComputed = computed(() => {
   const out = { model: formData };
@@ -634,7 +665,7 @@ const ownExposed = {
   getRawFiles: (prop) => uploadRefs[prop]?.getRawFiles?.() ?? [],
   getRemovedFiles: (prop, field, valuesOnly) =>
     uploadRefs[prop]?.getRemovedFiles?.(field, valuesOnly) ?? [],
-  // 获取提交数据：按 removeHiddenValues 规则移除隐藏字段值（保存/提交时使用）
+  // 获取提交数据：按 hiddenValue / item.hiddenValue 规则改写隐藏字段值（保存/提交时使用）
   getSubmitData,
   // 对象 → FormData（默认取提交数据；File/Blob 以二进制追加，用于 multipart 上传）
   toFormData,

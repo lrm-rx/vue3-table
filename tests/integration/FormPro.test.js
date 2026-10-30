@@ -383,11 +383,11 @@ describe("FormPro 配置式表单", () => {
       expect(wrapper.vm.formData.age).toBeUndefined();
     });
 
-    it("removeHiddenValues 场景下补默认值同样不回抛", async () => {
+    it("hiddenValue 场景下补默认值同样不回抛", async () => {
       const wrapper = mountFormPro({
         modelValue: { name: "张三" },
         items: baseItems,
-        removeHiddenValues: true,
+        hiddenValue: "",
       });
       await flushPromises();
       const before = (wrapper.emitted("update:modelValue") || []).length;
@@ -398,14 +398,14 @@ describe("FormPro 配置式表单", () => {
     });
   });
 
-  // 回归：removeHiddenValues + 字段显隐切换时，隐藏字段已输入的值不应丢失
-  it("removeHiddenValues 开启时隐藏字段值不被重置（保留用户输入）", async () => {
+  // 回归：hiddenValue + 字段显隐切换时，隐藏字段已输入的值不应丢失
+  it("hiddenValue 设置时隐藏字段内部值不被重置（保留用户输入）", async () => {
     const formData = ref({ type: "company", company: "ACME" });
     const wrapper = mount(
       {
         components: { FormPro },
         setup: () => ({ formData }),
-        template: `<FormPro v-model="formData" :remove-hidden-values="true" :items="items" />`,
+        template: `<FormPro v-model="formData" hidden-value="" :items="items" />`,
         data() {
           return {
             items: [
@@ -439,8 +439,8 @@ describe("FormPro 配置式表单", () => {
     formData.value.type = "personal";
     await flushPromises();
     expect(fp.vm.formData.company).toBe("ACME"); // 内部值保留，未被重置为 ""
-    expect(formData.value.company).toBeUndefined(); // 父级 v-model 不含隐藏值
-    // 切回 company → 值应仍在
+    expect(formData.value.company).toBe(""); // 父级 v-model 中隐藏字段被改写为 ""
+    // 切回 company → 值应仍在（内部原值恢复回抛）
     formData.value.type = "company";
     await flushPromises();
     expect(fp.vm.formData.company).toBe("ACME");
@@ -879,13 +879,13 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(1);
   });
 
-  it("removeHiddenValues：v-model 回抛排除 visible/visibleMethod 隐藏字段的值", async () => {
+  it("hiddenValue：v-model 回抛将 visible/visibleMethod 隐藏字段值改写为指定值", async () => {
     const formData = ref({ a: "1", b: "2", c: "3" });
     const wrapper = mount(
       {
         components: { FormPro },
         setup: () => ({ formData }),
-        template: `<FormPro v-model="formData" :remove-hidden-values="true" :items="[
+        template: `<FormPro v-model="formData" hidden-value="" :items="[
           { prop: 'a', label: 'A', itemRender: { name: 'ElInput' } },
           { prop: 'b', label: 'B', visible: false },
           { prop: 'c', label: 'C', visibleMethod: (d) => d.a === 'show' }
@@ -894,19 +894,19 @@ describe("FormPro 配置式表单", () => {
       { global: globalConfig },
     );
     await flushPromises();
-    // b（visible:false）与 c（a≠show → 隐藏）的值应被移除
-    expect(formData.value).not.toHaveProperty("b");
-    expect(formData.value).not.toHaveProperty("c");
+    // b（visible:false）与 c（a≠show → 隐藏）的值应被改写为 ""
+    expect(formData.value.b).toBe("");
+    expect(formData.value.c).toBe("");
     expect(formData.value.a).toBe("1");
   });
 
-  it("removeHiddenValues：onlyRequired 隐藏的字段值不受影响（保留）", async () => {
+  it("hiddenValue：onlyRequired 隐藏的字段值不受影响（保留）", async () => {
     const formData = ref({ a: "1", b: "2" });
     const wrapper = mount(
       {
         components: { FormPro },
         setup: () => ({ formData }),
-        template: `<FormPro v-model="formData" :remove-hidden-values="true" :only-required="true" :items="[
+        template: `<FormPro v-model="formData" hidden-value="" :only-required="true" :items="[
           { prop: 'a', label: 'A', required: true },
           { prop: 'b', label: 'B' }
         ]" />`,
@@ -914,25 +914,68 @@ describe("FormPro 配置式表单", () => {
       { global: globalConfig },
     );
     await flushPromises();
-    // b 因 onlyRequired 被隐藏，但其值应保留（removeHiddenValues 不涉及 onlyRequired）
+    // b 因 onlyRequired 被隐藏，但其值应保留（hiddenValue 不涉及 onlyRequired）
     expect(formData.value.b).toBe("2");
     expect(formData.value.a).toBe("1");
   });
 
-  it("mutableModel + removeHiddenValues：隐藏字段值从父级 reactive 对象原地移除", async () => {
+  it("hiddenValue：item.hiddenValue 项级覆盖表单级（优先级更高）", async () => {
+    const formData = ref({ a: "1", b: "2", c: "3", d: "4" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" hidden-value="" :items="[
+          { prop: 'a', label: 'A', itemRender: { name: 'ElInput' } },
+          { prop: 'b', label: 'B', visible: false },
+          { prop: 'c', label: 'C', visible: false, hiddenValue: null },
+          { prop: 'd', label: 'D', visible: false, hiddenValue: 0 }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    await flushPromises();
+    // b 跟随表单级改写为 ""；c 按项级改写为 null；d 按项级改写为 0
+    expect(formData.value.b).toBe("");
+    expect(formData.value.c).toBe(null);
+    expect(formData.value.d).toBe(0);
+    expect(formData.value.a).toBe("1");
+  });
+
+  it("hiddenValue：表单级为 0 时隐藏字段提交值改写为 0（假值不误判为未设置）", async () => {
+    const formData = ref({ a: "1", b: "2" });
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData }),
+        template: `<FormPro v-model="formData" :hidden-value="0" :items="[
+          { prop: 'a', label: 'A', itemRender: { name: 'ElInput' } },
+          { prop: 'b', label: 'B', visible: false }
+        ]" />`,
+      },
+      { global: globalConfig },
+    );
+    await flushPromises();
+    expect(formData.value.b).toBe(0); // v-model 提交视图
+    const fp = wrapper.findComponent({ name: "FormPro" });
+    expect(fp.vm.getSubmitData()).toEqual({ a: "1", b: 0 }); // getSubmitData 提交数据
+    expect(fp.vm.formData.b).toBe("2"); // 内部保留原始输入
+  });
+
+  it("mutableModel + hiddenValue：隐藏字段值在父级 reactive 对象中原地改写", async () => {
     const formData = reactive({ a: "1", b: "2" });
     const wrapper = mountFormPro({
       modelValue: formData,
       mutableModel: true,
-      removeHiddenValues: true,
+      hiddenValue: "",
       items: [
         { prop: "a", label: "A", itemRender: { name: "ElInput" } },
         { prop: "b", label: "B", visible: false },
       ],
     });
     await flushPromises();
-    // hiddenValueProps 初始化回抛走 pushModelValue 原地路径：b 被删除、a 保留
-    expect(formData).not.toHaveProperty("b");
+    // hiddenValueOverrides 初始化回抛走 pushModelValue 原地路径：b 被改写为 ""、a 保留
+    expect(formData.b).toBe("");
     expect(formData.a).toBe("1");
     expect(wrapper.emitted("update:modelValue")).toBeFalsy();
   });
@@ -1018,10 +1061,10 @@ describe("FormPro modelModifiers（v-model 修饰符）", () => {
 });
 
 describe("FormPro 配置式表单", () => {
-  it("getSubmitData：暴露方法返回已移除隐藏值的提交数据", async () => {
+  it("getSubmitData：暴露方法返回已改写隐藏值的提交数据", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "1", b: "2" },
-      removeHiddenValues: true,
+      hiddenValue: "",
       items: [
         { prop: "a", label: "A" },
         { prop: "b", label: "B", visible: false },
@@ -1031,16 +1074,14 @@ describe("FormPro 配置式表单", () => {
     const vm = wrapper.vm;
     expect(typeof vm.getSubmitData).toBe("function");
     const submit = vm.getSubmitData();
-    expect(submit).toEqual({ a: "1" });
-    expect(submit).not.toHaveProperty("b");
-    // 内部 formData 仍保留 b（渲染层数据完整，仅提交时过滤）
+    expect(submit).toEqual({ a: "1", b: "" });
+    // 内部 formData 仍保留 b 原值（渲染层数据完整，仅提交视图改写）
     expect(vm.formData.b).toBe("2");
   });
 
-  it("removeHiddenValues 关闭时：getSubmitData 与 v-model 均保留隐藏字段值", async () => {
+  it("hiddenValue 未设置时：getSubmitData 与 v-model 均保留隐藏字段原值", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "1", b: "2" },
-      removeHiddenValues: false,
       items: [
         { prop: "a", label: "A" },
         { prop: "b", label: "B", visible: false },
@@ -1054,7 +1095,7 @@ describe("FormPro 配置式表单", () => {
     const file = new File(["x"], "a.txt", { type: "text/plain" });
     const wrapper = mountFormPro({
       modelValue: { name: "张三", hidden: "x", attachments: [] },
-      removeHiddenValues: true,
+      hiddenValue: "",
       items: [
         { prop: "name", label: "名称" },
         { prop: "hidden", label: "隐藏", visible: false },
@@ -1077,8 +1118,8 @@ describe("FormPro 配置式表单", () => {
     const fd = vm.toFormData();
     expect(fd).toBeInstanceOf(FormData);
     expect(fd.get("name")).toBe("张三");
-    // removeHiddenValues 生效：隐藏字段不进入 FormData
-    expect(fd.has("hidden")).toBe(false);
+    // hiddenValue 生效：隐藏字段以改写值 "" 进入 FormData
+    expect(fd.get("hidden")).toBe("");
     const got = fd.get("attachments");
     expect(got).toBeInstanceOf(File);
     expect(got.name).toBe("a.txt");
@@ -1526,6 +1567,89 @@ describe("FormPro 配置式表单", () => {
       const opts = wrapper.findAllComponents({ name: "ElOption" });
       expect(opts).toHaveLength(2);
       expect(opts[0].props("label")).toBe("广州");
+    });
+  });
+
+  // ===================== itemRender.events 事件绑定 =====================
+  describe("itemRender.events 事件绑定", () => {
+    it("ElInput：blur / focus / input / change 均触发，回调接收组件 emit 原始参数", async () => {
+      const onBlur = vi.fn();
+      const onFocus = vi.fn();
+      const onInput = vi.fn();
+      const onChange = vi.fn();
+      const formData = ref({ name: "" });
+      const items = [
+        {
+          prop: "name",
+          label: "姓名",
+          itemRender: {
+            name: "ElInput",
+            events: { blur: onBlur, focus: onFocus, input: onInput, change: onChange },
+          },
+        },
+      ];
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const input = wrapper.find("input");
+      await input.trigger("focus");
+      await input.setValue("abc");
+      await input.trigger("blur");
+      await flushPromises();
+      expect(onFocus).toHaveBeenCalled();
+      expect(onInput).toHaveBeenCalled();
+      expect(onChange.mock.calls[0][0]).toBe("abc"); // emit 原始参数（值）
+      expect(onBlur).toHaveBeenCalled();
+      expect(onBlur.mock.calls[0][0]).toBeInstanceOf(FocusEvent); // blur 参数为原生 FocusEvent
+    });
+
+    it("ElSelect：focus / blur 触发；分组内字段事件同样生效", async () => {
+      const onBlur = vi.fn();
+      const onFocus = vi.fn();
+      const onGroupBlur = vi.fn();
+      const formData = ref({ city: "", name: "" });
+      const items = [
+        {
+          prop: "city",
+          label: "城市",
+          itemRender: {
+            name: "ElSelect",
+            options: [{ label: "广州", value: "gz" }],
+            events: { blur: onBlur, focus: onFocus },
+          },
+        },
+        { group: true, title: "分组" },
+        {
+          prop: "name",
+          label: "姓名",
+          itemRender: { name: "ElInput", events: { blur: onGroupBlur } },
+        },
+      ];
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items }),
+          template: `<FormPro v-model="formData" :items="items" />`,
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      const select = wrapper.findComponent({ name: "ElSelect" });
+      select.vm.$emit("focus");
+      select.vm.$emit("blur");
+      const input = wrapper.findComponent({ name: "ElInput" }).find("input");
+      await input.trigger("focus");
+      await input.trigger("blur");
+      await flushPromises();
+      expect(onFocus).toHaveBeenCalled();
+      expect(onBlur).toHaveBeenCalled();
+      expect(onGroupBlur).toHaveBeenCalled();
     });
   });
 

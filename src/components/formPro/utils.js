@@ -33,7 +33,7 @@ import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqu
  *                              //   一旦校验失败则隐藏、让位给错误提示。传空串等同不配置。
  *     visible: true,          // 静态显隐
  *     visibleMethod: (data) => boolean,  // 动态显隐（data 为当前表单数据）
- *     removeValueOnHidden: true, // 隐藏时是否移除其值（提交时不传）；覆盖表单级 removeHiddenValues
+ *     hiddenValue: '',           // 隐藏时以此值提交（如 '' / null，用于让后端清空字段）；覆盖表单级 hiddenValue
  *     // 控件渲染三选一（优先级 render > slot > itemRender）：
  *     render: (ctx, h) => h(...),  // JSX 渲染函数；ctx = { value, prop, data, form }
  *     slot: 'username',             // 引用外部具名插槽 #username，props { value, prop, data, form }
@@ -139,34 +139,32 @@ export const isHiddenByVisibility = (item, data = {}) => {
 };
 
 /**
- * 收集所有「因可见性隐藏且需要在提交时移除值」的字段 prop 集合。
+ * 收集所有「因可见性隐藏且需要在提交时改写值」的字段及其改写值。
  *
- * @param {Array}  items                 表单配置数组
- * @param {Object} data                  当前表单数据（用于 visibleMethod 判定）
- * @param {Boolean} removeHiddenValues   表单级默认开关（item.removeValueOnHidden 可单独覆盖）
- * @returns {Set<string>} 需要移除值的字段 prop 集合
+ * @param {Array}  items        表单配置数组
+ * @param {Object} data         当前表单数据（用于 visibleMethod 判定）
+ * @param {*}      hiddenValue  表单级改写值（item.hiddenValue 可单独覆盖）
+ * @returns {Map<string, *>} 「需改写值的字段 prop → 改写值」映射
  *
  * 规则：
  *  - 仅统计 isHiddenByVisibility 为 true 的字段（visible / visibleMethod 隐藏）；
- *  - onlyRequired 导致的隐藏不计入（其值需保留）；
- *  - 每项是否移除：item.removeValueOnHidden 显式指定时优先，否则跟随表单级 removeHiddenValues。
+ *  - onlyRequired 导致的隐藏不计入（其值保留）；
+ *  - 每项改写值：item.hiddenValue 显式指定（!== undefined）时优先，否则跟随表单级 hiddenValue；
+ *  - 最终改写值为 undefined 表示「不改写」（隐藏字段按原值提交），不进入映射。
  */
-export const collectHiddenValueProps = (
+export const collectHiddenValueOverrides = (
   items = [],
   data = {},
-  removeHiddenValues = false,
+  hiddenValue = undefined,
 ) => {
-  const set = new Set();
+  const map = new Map();
   for (const item of items) {
     if (isGroupItem(item)) continue;
     if (!isHiddenByVisibility(item, data)) continue;
-    const shouldRemove =
-      item.removeValueOnHidden != null
-        ? !!item.removeValueOnHidden
-        : !!removeHiddenValues;
-    if (shouldRemove) set.add(item.prop);
+    const value = item.hiddenValue !== undefined ? item.hiddenValue : hiddenValue;
+    if (value !== undefined) map.set(item.prop, value);
   }
-  return set;
+  return map;
 };
 
 /**
@@ -471,8 +469,7 @@ export const resolveDynamicControlState = (item, ctx = {}) => ({
  *     - 父级没改且子级本就没有该键：跳过——写入 undefined 键会把 base
  *       污染为「键存在但值为 undefined」，后续无法识别真实的父级新增。
  *  ② 子级有而 incoming 缺失的键：保留子级值。
- *     父级值可能因 removeHiddenValues 剔除了隐藏字段的键——不应把内部已有的
- *     隐藏字段值重置为默认值（会丢失用户输入）。
+ *     不应因父级快照缺少该键就把内部已有的字段值重置为默认值（会丢失用户输入）。
  *  ③ autoFillDefaults：items 声明但两侧都缺失的字段补 deriveDefaultValue。
  *
  * 纯函数：不修改任何入参，返回新对象；base 的更新与写回 reactive 数据由调用方负责。
