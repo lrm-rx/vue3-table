@@ -1193,15 +1193,8 @@ onMounted(() => {
     tableHook.updatedTotalParam();
     tableHook.getTableList();
   }
-  // 变更跟踪：静态数据模式数据在挂载时即就位（renderData 不再变化、watch 不会触发），
-  // 挂载后初始化一次基线快照与脏状态
-  nextTick(() => {
-    if (!gridRef.value?.getRecordset) return;
-    clearEditSessions();
-    resetAlwaysEditValues();
-    recomputeChanged();
-    refreshBaseline();
-  });
+  // 注：变更跟踪的基线初始化由 watch(renderData, { immediate: true }) 的首次回调
+  // 覆盖（其 nextTick 在挂载完成后执行、gridRef 已就绪），此处无需重复
 });
 
 // requestApi 变化时（外部动态切换数据源）重新拉取数据
