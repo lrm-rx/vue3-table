@@ -339,7 +339,7 @@ const columns = ref([
 
 const editRules = ref({
   remark: [{ required: true, message: "请输入备注", trigger: "change" }],
-  username: [{ required: true, message: "请输入姓名", trigger: "change" }],
+  username: [{ required: true, message: "必填", trigger: "change" }],
   account: [{ required: true, message: "请输入账号", trigger: "change" }],
   email: [{ required: true, message: "请输入邮箱", trigger: "change" }],
   phone: [{ required: true, message: "请输入手机号", trigger: "change" }],

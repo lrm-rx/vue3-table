@@ -1184,6 +1184,8 @@ const isApplyingDefaults = ref(false);
 // 挂载后自动发起首次请求（仅远程模式且 requestAuto=true）
 onMounted(() => {
   applyInitParam();
+  // 包装 $table.showValidTooltip：统一接管「编辑态即时校验 + 提交兜底」两条浮层路径的左缘对齐
+  patchShowValidTooltip();
   // 本地过滤排序开关开启：挂载完成后收集一次过滤/排序状态（覆盖 initParam 默认值与
   // sortConfig.defaultSort 等 vxe 挂载期应用的状态）
   if (props.localFilterSort) bumpLocalFilterSort();
@@ -1990,6 +1992,8 @@ const onPagerChange = (newPager) => {
 // 此处兜底：命中上述场景时手动弹出首个错误的校验浮层
 //（vxe 校验浮层挂载后即 teleport 到 body 定位，不受表格容器高度/overflow 裁剪影响）。
 const showFallbackValidTip = (errMap) => {
+  // 兜底确保 showValidTooltip 已被包装（onMounted 时机失败时在此重试，幂等）
+  patchShowValidTooltip();
   if (!errMap || typeof errMap !== "object") return;
   const fields = Object.keys(errMap);
   if (!fields.length) return;
@@ -2011,15 +2015,124 @@ const showFallbackValidTip = (errMap) => {
   if (!firstErr || !firstErr.row || !firstErr.column || !firstErr.rule) return;
   const cell = $table.getCellElement?.(firstErr.row, firstErr.column);
   if (!cell) return;
+  // 先让单元格进入可视区（后续 focus 浏览器也会自动滚动，这里先就位）
+  cell.scrollIntoView({ block: "nearest" });
+  // 激活首个未通过单元格的编辑态并聚焦输入框，方便用户直接修改：
+  // - alwaysEdit 常驻编辑：单元格已是编辑器，直接聚焦输入框
+  // - 常规模式：setEditCell 激活编辑态，渲染完成后聚焦（vxe 若有 autofocus，重复聚焦同元素无害）
+  if (props.editable) {
+    if (props.editConfig?.alwaysEdit) {
+      cell.querySelector("input, textarea")?.focus();
+    } else {
+      Promise.resolve($table.setEditCell(firstErr.row, firstErr.column)).then(
+        () => cell.querySelector("input, textarea")?.focus(),
+        () => {},
+      );
+    }
+  }
   $table.showValidTooltip({
     rule: firstErr.rule,
     row: firstErr.row,
     column: firstErr.column,
     cell,
   });
+  // 浮层定位二次校正：居中 → 左缘对齐。注意 showValidTooltip 返回的 promise
+  // resolve 时面板可能尚未懒挂载到 DOM（实测），一次性校正不可靠 ——
+  // alignValidTipToCellLeft 内部用 MutationObserver 等面板可见后再校正。
+  alignValidTipToCellLeft(cell);
   // 注：浮层 zIndex 无需在此处理 —— plugins/vxe-ui.js 已将 vxe 全局 zIndex
   // 基数提升至 3000（element-plus 弹层为 2000+），校验浮层在 el-dialog 内
   // 也不会被遮罩遮挡
+};
+
+// 将校验浮层从「水平居中于单元格」校正为「左缘对齐单元格左缘」。
+// vxe tooltip 定位写死居中（updatePanelPlacement: left = 单元格中心x − 浮层宽/2），
+// 校验提示的惯例是与单元格左缘对齐（同 element-plus 表单校验提示、vxe 内联校验提示），
+// 居中在宽列短文案时视觉上悬浮在格子中间、与左侧文本脱节。
+// 时序说明（实测）：vxe 校验浮层为懒渲染 + teleport 挂载，showValidTooltip 返回的
+// promise resolve 时面板可能尚未出现在 DOM（offsetWidth=0），且面板可见后 vxe 还会
+// 二次 updateTipStyle 覆盖定位。因此这里不用一次性校正，而是 MutationObserver 监听
+// 2 秒：面板出现/被覆盖时都会重新校正（幂等），直到定位稳定。不用 rAF —— 标签页
+// 不可见时 rAF 不触发，校正会静默丢失。
+const alignValidTipToCellLeft = (cell) => {
+  if (!cell) return;
+  // 页面上可能同时存在多个表格的校验浮层，取当前可见的那个（隐藏的 offsetWidth 为 0）
+  const doAlign = () => {
+    const panels = document.querySelectorAll(
+      ".vxe-tooltip--wrapper.vxe-table--valid-error",
+    );
+    let panel = null;
+    for (const p of panels) {
+      if (p.offsetWidth) {
+        panel = p;
+        break;
+      }
+    }
+    if (!panel) return false;
+    const panelRect = panel.getBoundingClientRect();
+    const cellRect = cell.getBoundingClientRect();
+    let targetLeft = cellRect.left;
+    // 两侧不溢出视口（与 vxe 原生 marginSize=18 一致）
+    const margin = 18;
+    const visibleWidth = document.body.clientWidth;
+    if (targetLeft + panelRect.width + margin > visibleWidth) {
+      targetLeft = Math.max(margin, visibleWidth - panelRect.width - margin);
+    }
+    targetLeft = Math.max(margin, targetLeft);
+    // style.left 是文档坐标：按「面板当前视口位置 → 目标视口位置」差值平移（兼容滚动/缩放）
+    const curLeft = parseFloat(panel.style.left);
+    if (Number.isFinite(curLeft)) {
+      // 幂等：位置已正确时不写，避免自触发的 mutation 回调空转
+      const newLeft = Math.round(curLeft + (targetLeft - panelRect.left));
+      if (panel.style.left !== `${newLeft}px`) {
+        panel.style.left = `${newLeft}px`;
+      }
+    }
+    return true;
+  };
+  doAlign();
+  // 面板尚未渲染成功时由观察器接管；即使已校正，也继续观察一小段时间，
+  // 以便纠正 vxe 随后的二次定位覆盖（2s 后断开，校验浮层存活期很短）
+  const mo = new MutationObserver(() => {
+    doAlign();
+  });
+  mo.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style"],
+  });
+  setTimeout(() => mo.disconnect(), 2000);
+};
+
+// 统一接管校验浮层定位：vxe 有两条弹出路径——
+// ① 编辑态即时校验（trigger: change/blur，vxe 校验 hook 内部直接 showValidTooltip）；
+// ② fullValidate 提交兜底（showFallbackValidTip）。
+// 左缘对齐校正只挂在②上时，①的浮层仍是 vxe 原生居中 —— 包装实例方法，两条路径统一校正。
+let validTooltipPatched = false;
+const patchShowValidTooltip = () => {
+  if (validTooltipPatched) return true;
+  const $table = getVxTable();
+  if (!$table || typeof $table.showValidTooltip !== "function") return false;
+  const raw = $table.showValidTooltip.bind($table);
+  const wrapped = (params) => {
+    const ret = raw(params);
+    // rest 里可能不带 cell（编辑态路径只传 row/column/rule），按行列补取
+    const cell =
+      params?.cell || $table.getCellElement?.(params?.row, params?.column);
+    alignValidTipToCellLeft(cell);
+    return ret;
+  };
+  $table.showValidTooltip = wrapped;
+  // 组件 public instance 的 proxy 对 setupState 可写；写入失败（只读代理）时保持未标记
+  if ($table.showValidTooltip !== wrapped) {
+    console.warn(
+      "[TablePro] showValidTooltip 包装失败，编辑态校验浮层将保持 vxe 原生居中定位",
+    );
+    return false;
+  }
+  validTooltipPatched = true;
+  return true;
 };
 
 // 统一校验入口：先关闭可能进行中的编辑态（对象式编辑器在 edit-closed 时才写回 row，
@@ -2543,6 +2656,9 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       box-sizing: border-box;
 
       // 所有 Element Plus 输入类组件本体宽度统一 100%
+      // font-size: inherit —— 修复点击激活编辑时内容"上移"：
+      // 显示态文本字号随表格尺寸（如 size=small 为 12px），el 控件默认 14px，
+      // 激活瞬间字号跳变会加重"内容上移"的观感，这里让控件字号跟随单元格
       .el-input,
       .el-input-number,
       .el-input__wrapper,
@@ -2556,6 +2672,7 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
         max-width: 100% !important;
         min-width: 0 !important;
         box-sizing: border-box;
+        font-size: inherit;
       }
 
       // InputNumber 内部输入框自适应
@@ -2580,6 +2697,24 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       }
     }
   }
+}
+
+// ======= 编辑态：修复点击激活编辑时单元格内容"上移" =======
+// 显示态文本是 22px 行盒在单元格内垂直居中；Element Plus 控件默认 32px 高，
+// 比单元格内容盒（行高 - 上下 padding）高，激活后盒体向上溢出（如 size=small：
+// 内容盒 28px，输入框 32px，盒顶比文本行盒高 5px），观感即"内容上移"。
+// 把控件尺寸锚定为内容盒高度（行高 - 2×padding），控件与显示态文本保持同一垂直中心。
+.vxe-table--render-default .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 32px; // 默认：行高 48 - padding 8*2（与 el 默认一致，行为不变）
+}
+.vxe-table--render-default.size--medium .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 30px; // 行高 44 - padding 7*2
+}
+.vxe-table--render-default.size--small .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 28px; // 行高 40 - padding 6*2
+}
+.vxe-table--render-default.size--mini .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 26px; // 行高 36 - padding 5*2
 }
 
 // ======= 常驻编辑器（列 alwaysEdit）：编辑器始终显示，约束宽度不超出单元格 =======
@@ -2648,44 +2783,33 @@ body {
   overflow-x: hidden;
 }
 
-// ======= 校验提示样式兜底（与 vxe 原生样式保持一致）=======
-// 背景：复制组件到未完整引入 vxe-table 样式（或样式被全局 reset 覆盖）的项目时，
-// .vxe-cell--valid-error-wrapper 的 display:inline-block 丢失会导致内联提示气泡
-// 宽度撑满整个单元格而非按内容自适应。此处按 vxe 原生定义（table.scss）补齐关键
-// 样式，CSS 变量提供与 vxe 默认值一致的 fallback，确保任何项目里提示外观一致。
-.vxe-table--render-default .vxe-body--column {
-  .vxe-cell--valid-error-tip {
-    width: 100%;
-    position: absolute;
-    left: 50%;
-    transform: translate(-50%, -2px);
-    text-align: left;
-    z-index: 4;
-    padding: 0 var(--vxe-ui-table-cell-padding-default, 8px);
-    line-height: 1em;
-    font-size: var(--vxe-ui-table-validate-error-font-size, var(--vxe-ui-table-current-font-size, 14px));
-    pointer-events: none;
-    box-sizing: border-box;
+// ======= 校验失败浮层样式修复（对齐 vxe 内联校验提示 .vxe-cell--valid-error-tip）=======
+// 配色：vxe-table 4.20 将校验浮层迁移到 vxe-pc-ui 的 VxeTooltip，浮层 class 变为
+// .vxe-tooltip--wrapper.vxe-table--valid-error，但 vxe-table 样式表仍只针对旧 class
+// div.vxe-table--tooltip-wrapper 编写校验配色 → 新浮层匹配不到红底样式，只剩
+// theme--dark 的深灰底（#303133），与多行/固定高度表格里的内联红底提示不一致。
+// 此处按 vxe 自身变量补回红底白字（含箭头），与内联校验提示视觉统一。
+// 宽度：旧版 vxe-pc-ui 的 tooltip 定位（updatePanelPlacement 默认 isMinWidth=true）
+// 会给浮层内联写入 min-width = 目标单元格宽度，短文案时浮层被撑成与单元格同宽；
+// 本项目 vxe-pc-ui@4.17 已显式传 isMinWidth:false 不会写入，min-width 覆盖为防御性，
+// 保证组件复制到旧版本项目后表现一致。内联样式优先级高于普通规则，必须 !important。
+.vxe-tooltip--wrapper.vxe-table--valid-error {
+  min-width: 0 !important;
+
+  .vxe-tooltip--body {
+    background-color: var(--vxe-ui-table-validate-error-color, #f56c6c) !important;
+    color: #fff !important;
   }
-  .vxe-cell--valid-error-wrapper {
-    position: relative;
-    display: inline-block;
-    border-radius: var(--vxe-ui-border-radius, 4px);
-    pointer-events: auto;
+
+  // 高度收紧：tooltip 通用内容 padding（8px 12px）对单行校验提示偏大，
+  // 对齐 vxe 内联校验提示的紧凑观感
+  .vxe-tooltip--content {
+    padding: 4px 8px !important;
   }
-  .vxe-cell--valid-error-theme-beautify {
-    padding: var(--vxe-ui-table-validate-error-padding, 0.2em 0.6em);
-    color: #fff;
-    background-color: var(--vxe-ui-table-validate-error-color, #f56c6c);
+
+  // 隐藏三角箭头：对齐内联校验提示 .vxe-cell--valid-error-tip 的样式（内联提示无箭头）
+  .vxe-tooltip--arrow {
+    display: none !important;
   }
-  .vxe-cell--valid-error-theme-normal {
-    color: var(--vxe-ui-table-validate-error-color, #f56c6c);
-    background-color: var(--vxe-ui-table-validate-error-theme-normal-background-color, #fff);
-  }
-}
-// 单条消息模式（msgMode:'single'）下最后一行的提示翻转到单元格上方（原生行为）
-.vxe-table--render-default.valid-msg--single .vxe-body--row:last-child .vxe-cell--valid-error-tip {
-  bottom: calc(100%);
-  transform: translate(-50%, 0);
 }
 </style>
