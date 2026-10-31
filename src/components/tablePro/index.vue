@@ -2654,4 +2654,45 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
 body {
   overflow-x: hidden;
 }
+
+// ======= 校验提示样式兜底（与 vxe 原生样式保持一致）=======
+// 背景：复制组件到未完整引入 vxe-table 样式（或样式被全局 reset 覆盖）的项目时，
+// .vxe-cell--valid-error-wrapper 的 display:inline-block 丢失会导致内联提示气泡
+// 宽度撑满整个单元格而非按内容自适应。此处按 vxe 原生定义（table.scss）补齐关键
+// 样式，CSS 变量提供与 vxe 默认值一致的 fallback，确保任何项目里提示外观一致。
+.vxe-table--render-default .vxe-body--column {
+  .vxe-cell--valid-error-tip {
+    width: 100%;
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -2px);
+    text-align: left;
+    z-index: 4;
+    padding: 0 var(--vxe-ui-table-cell-padding-default, 8px);
+    line-height: 1em;
+    font-size: var(--vxe-ui-table-validate-error-font-size, var(--vxe-ui-table-current-font-size, 14px));
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  .vxe-cell--valid-error-wrapper {
+    position: relative;
+    display: inline-block;
+    border-radius: var(--vxe-ui-border-radius, 4px);
+    pointer-events: auto;
+  }
+  .vxe-cell--valid-error-theme-beautify {
+    padding: var(--vxe-ui-table-validate-error-padding, 0.2em 0.6em);
+    color: #fff;
+    background-color: var(--vxe-ui-table-validate-error-color, #f56c6c);
+  }
+  .vxe-cell--valid-error-theme-normal {
+    color: var(--vxe-ui-table-validate-error-color, #f56c6c);
+    background-color: var(--vxe-ui-table-validate-error-theme-normal-background-color, #fff);
+  }
+}
+// 单条消息模式（msgMode:'single'）下最后一行的提示翻转到单元格上方（原生行为）
+.vxe-table--render-default.valid-msg--single .vxe-body--row:last-child .vxe-cell--valid-error-tip {
+  bottom: calc(100%);
+  transform: translate(-50%, 0);
+}
 </style>
