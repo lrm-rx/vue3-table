@@ -84,7 +84,26 @@ const columns = ref([
     title: "姓名",
     sortable: true,
     filterType: "FilterInput",
-    editRender: { name: "ElInput" },
+    // 对象式 editRender：事件监听直接写进 props（onXxx 会原样透传到编辑组件上）。
+    // · onKeydown 等 ElInput 未声明 emits 的事件 → 经 $attrs 透传到内部原生 <input>，收原生 KeyboardEvent；
+    // · onFocus/onBlur/onInput/onChange 是 ElInput 已声明的 emits → 组件事件（参数为 emit 值，非原生 Event）。
+    // 回调是列级共享的、无行上下文：同一时刻只有一个编辑单元格，
+    // 当前行/列由 @edit-activated 记录的 editingCell 提供（见下方 script）。
+    editRender: {
+      name: "ElInput",
+      props: {
+        onKeydown: (e) => {
+          const { row, column } = editingCell.value || {};
+          console.log("[username keydown]", e.key, "行:", row, "列:", column?.title);
+        },
+        onFocus: () => {
+          const { row, column } = editingCell.value || {};
+          ElMessage.info(
+            `编辑姓名（行：${row?.username || row?.account || "-"}，列：${column?.title || "-"}）`,
+          );
+        },
+      },
+    },
   },
   {
     field: "account",
@@ -132,6 +151,8 @@ const columns = ref([
     sortable: true,
     filterType: "FilterInput",
     headerRender: "header_phone",
+    // 函数式 editRender：params 自带 { row, column, field, cellValue, rowIndex, columnIndex, $table }，
+    // 事件闭包直接使用，无需借助外部状态
     editRender: (params, h) => {
       const { row, field } = params;
       return (
@@ -142,6 +163,16 @@ const columns = ref([
           }}
           placeholder="请输入手机号"
           clearable
+          onKeydown={(e) => {
+            console.log(
+              "[phone keydown]",
+              e.key,
+              "行:",
+              params.row,
+              "列:",
+              params.column?.title,
+            );
+          }}
         />
       );
     },
@@ -684,6 +715,20 @@ const onCellEditChange = (params) => {
     `单元格编辑完成：${column?.title || field} = ${JSON.stringify(value)}（原值=${JSON.stringify(cellValue)}，行：${row?.username || row?.account}）`,
   );
 };
+// 当前编辑单元格 { row, column, ... }：由 tablePro 透传的 vxe edit-activated / edit-closed 事件维护，
+// 供「对象式 editRender props 里的列级共享事件回调」读取当前行/列（编辑态唯一，事件必来自该单元格）。
+// 注：vxe-grid 未代理 getEditCell/getEditRecord（且 getEditRecord 已废弃），页面侧推荐用事件记录。
+const editingCell = ref(null);
+const onEditActivated = (params) => {
+  editingCell.value = params || null;
+};
+const onEditClosed = () => {
+  editingCell.value = null;
+};
+// 插槽式编辑（editRender: 'edit_email'）事件演示：插槽作用域自带 row / column，直接作为参数传入
+const onEmailBlur = (row, column) => {
+  console.log("[email blur] 行:", row, "列:", column?.title, "值:", row?.email);
+};
 const onTextareaClear = () => ElMessage.info("已清空备注");
 const onTextareaCancel = (params) => {
   const { row, field, value } = params || {};
@@ -790,6 +835,8 @@ const onRemoveSelected = () => {
       @textarea-clear="onTextareaClear"
       @textarea-cancel="onTextareaCancel"
       @textarea-confirm="onTextareaConfirm"
+      @edit-activated="onEditActivated"
+      @edit-closed="onEditClosed"
     >
       <template #toolbarButtons>
         <el-button type="primary" @click="onInsertRow">新增行</el-button>
@@ -836,13 +883,15 @@ const onRemoveSelected = () => {
         </el-select>
       </template>
 
-      <template #edit_email="{ row }">
+      <!-- 插槽式编辑：作用域参数自带 row / column / $table，事件直接读取 -->
+      <template #edit_email="{ row, column }">
         <el-input
           :model-value="row.email"
           @update:model-value="(v) => (row.email = v)"
           type="email"
           placeholder="请输入邮箱"
           clearable
+          @blur="onEmailBlur(row, column)"
         />
       </template>
 
