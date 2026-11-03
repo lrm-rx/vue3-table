@@ -236,30 +236,44 @@ onMounted(() => {
   syncErrorTitles();
   measureUnitSlot();
   errorTitleObserver = new MutationObserver((records) => {
-    syncErrorTitles();
-    // 只有「涉及单位后缀的结构变化」才重测，避免表单内嵌表格/富内容频繁更新时
-    // 每次都做一次全表单查询 + 强制布局读取：
-    //   - 节点增删：新增/移除的子树中包含单位后缀（分组展开收起、items 增删、显隐切换）；
-    //   - 文本变化：变化节点位于单位后缀内部（updateItems 修改静态 suffix 文本）。
-    // 动态函数后缀逐键更新（不在 --unit 内）不触发测量。
-    const needMeasure = records.some((r) => {
+    // 门控（单趟扫描，两个标志独立判定）：
+    // 1) needSyncTitles：仅当变更涉及错误提示元素（.el-form-item__error 子树增删，
+    //    或其内部文本变化）才重做全表单 title 同步——表单内嵌表格/富内容/
+    //    动态函数后缀的逐键更新不再触发全表单 querySelectorAll；
+    // 2) needMeasure：仅「涉及单位后缀的结构变化」才重测，避免频繁更新时
+    //    每次都做一次全表单查询 + 强制布局读取：
+    //    - 节点增删：新增/移除的子树中包含单位后缀（分组展开收起、items 增删、显隐切换）；
+    //    - 文本变化：变化节点位于单位后缀内部（updateItems 修改静态 suffix 文本）。
+    //    动态函数后缀逐键更新（不在 --unit 内）不触发测量。
+    let needSyncTitles = false;
+    let needMeasure = false;
+    for (const r of records) {
       if (r.type === "characterData") {
-        return !!r.target.parentElement?.closest?.(
-          ".form-pro__field-suffix--unit",
-        );
-      }
-      if (r.type !== "childList") return false;
-      for (const node of [...r.addedNodes, ...r.removedNodes]) {
-        if (node.nodeType !== 1) continue;
-        if (
-          node.matches(".form-pro__field-suffix--unit") ||
-          node.querySelector(".form-pro__field-suffix--unit")
-        ) {
-          return true;
+        const parent = r.target.parentElement;
+        if (parent?.closest?.(".el-form-item__error")) needSyncTitles = true;
+        if (parent?.closest?.(".form-pro__field-suffix--unit")) {
+          needMeasure = true;
+        }
+      } else if (r.type === "childList") {
+        for (const node of [...r.addedNodes, ...r.removedNodes]) {
+          if (node.nodeType !== 1) continue;
+          if (
+            node.matches(".el-form-item__error") ||
+            node.querySelector(".el-form-item__error")
+          ) {
+            needSyncTitles = true;
+          }
+          if (
+            node.matches(".form-pro__field-suffix--unit") ||
+            node.querySelector(".form-pro__field-suffix--unit")
+          ) {
+            needMeasure = true;
+          }
         }
       }
-      return false;
-    });
+      if (needSyncTitles && needMeasure) break;
+    }
+    if (needSyncTitles) syncErrorTitles();
     if (needMeasure) scheduleMeasureUnitSlot();
   });
   errorTitleObserver.observe(root, {
@@ -431,6 +445,24 @@ const buildSubmitData = (source) => {
   return base;
 };
 
+// 表单数据等价判定（语义与 lodash isEqual 一致，针对「平铺字段 + 少量对象值」优化）：
+// 先比 key 数量，逐键 === 快路径跳过；仅对引用不同的值回退 isEqual 深比较，
+// 并在首个真实差异键处提前退出——避免每次按键都对全表单跑两轮完整深比较。
+const isFormDataEqual = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) {
+    if (!(k in b)) return false;
+    const va = a[k];
+    const vb = b[k];
+    if (va === vb) continue;
+    if (!isEqual(va, vb)) return false;
+  }
+  return true;
+};
+
 const syncFromParent = (val) => {
   // 陈旧回抛还原：父级快照中「与 base 不一致、但与子级上次回抛值一致」的键，
   // 是子级回抛后父级尚未收敛的陈旧值（典型：隐藏字段被改写为 ""/null 的提交视图值），
@@ -440,10 +472,10 @@ const syncFromParent = (val) => {
   if (lastPushedData && val) {
     incoming = { ...val };
     for (const k of Object.keys(incoming)) {
-      if (
-        !isEqual(incoming[k], lastSyncedData[k]) &&
-        isEqual(incoming[k], lastPushedData[k])
-      ) {
+      const v = incoming[k];
+      // === 必为深等：直接跳过，避免每键两次 isEqual 调用
+      if (v === lastSyncedData[k]) continue;
+      if (!isEqual(v, lastSyncedData[k]) && isEqual(v, lastPushedData[k])) {
         incoming[k] = lastSyncedData[k];
       }
     }
@@ -458,7 +490,7 @@ const syncFromParent = (val) => {
   });
   // merged 即同步后两侧将达成的一致状态（merged 与父级值不一致时，子级随后会 emit 收敛父级）
   lastSyncedData = { ...merged };
-  if (isEqual(merged, formData)) return;
+  if (isFormDataEqual(merged, formData)) return;
   for (const k of Object.keys(formData)) delete formData[k];
   Object.assign(formData, merged);
 };
@@ -478,7 +510,7 @@ watch(
 const pushModelValue = (snapshot) => {
   // 记录最近回抛快照（含提前 return：父级已持有该值），供 syncFromParent 识别陈旧回抛
   lastPushedData = { ...snapshot };
-  if (isEqual(snapshot, props.modelValue)) return;
+  if (isFormDataEqual(snapshot, props.modelValue)) return;
   if (props.mutableModel) {
     const target = props.modelValue;
     if (!target || typeof target !== "object") return;
