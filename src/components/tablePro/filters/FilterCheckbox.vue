@@ -140,6 +140,9 @@ const selected = computed({
     props.option.data.values = v
   },
 })
+// 选中值集合（缓存）：全选/半选判定逐选项成员查询以 O(1) Set.has 替代 O(m) 数组 includes，
+// 选项与选中量较大时避免 O(n×m) 比较（Set.has 与 includes 同为 SameValueZero，语义一致）
+const selectedSet = computed(() => new Set(selected.value))
 
 // 可见选项：
 //   - 分页远程模式：后端按关键字联想返回，前端不再本地过滤（否则只能搜到已加载页）
@@ -163,7 +166,7 @@ const noMatch = computed(
 const allChecked = computed({
   get: () =>
     filteredOptions.value.length > 0 &&
-    filteredOptions.value.every((o) => selected.value.includes(o.value)),
+    filteredOptions.value.every((o) => selectedSet.value.has(o.value)),
   set: (v) => {
     const cur = new Set(selected.value)
     if (v) {
@@ -176,8 +179,8 @@ const allChecked = computed({
 })
 
 const indeterminate = computed(() => {
-  const sel = selected.value
-  const some = filteredOptions.value.some((o) => sel.includes(o.value))
+  const sel = selectedSet.value
+  const some = filteredOptions.value.some((o) => sel.has(o.value))
   return some && !allChecked.value
 })
 
