@@ -16,179 +16,207 @@
 import { computed, nextTick } from "vue";
 import { useEventListener } from "@vueuse/core";
 
-export const useFilterPanelPosition = (gridRef) => {
-  // 箭头本身 8px + 与表头/面板之间 2px 安全间隙
-  const ARROW_SIZE = 8;
-  const ARROW_GAP = 2;
-  const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
+// 箭头本身 8px + 与表头/面板之间 2px 安全间隙
+const ARROW_SIZE = 8;
+const ARROW_GAP = 2;
+const ARROW_EXTRA = ARROW_SIZE + ARROW_GAP;
+const PANEL_MARGIN = 16;
 
+const getDocScrollLeft = () =>
+  document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+const getDocScrollTop = () =>
+  document.documentElement.scrollTop || document.body.scrollTop || 0;
+
+const getActivePanel = () =>
+  document.querySelector(".vxe-table--filter-wrapper.is--active");
+
+// 获取当前 grid 内触发列的「可见」表头单元格
+// 冻结列会同时存在两份表头：
+//   - 主表里的 fixed--hidden 副本（visibility:hidden，位置随横向滚动一起位移）
+//   - fixed-left / fixed-right 浮层里的 fixed--visible 副本（用户实际点击的那个，位置固定）
+// document.querySelector 按 DOM 顺序会先命中主表副本，横向滚动后它已被滚走，
+// 用它算 triggerCenterX 会让箭头指向错误位置 → 必须排除 fixed--hidden。
+const getFilterColumnEl = (gridRef, column) => {
+  if (!column || !column.id) return null;
+  const root = gridRef.value?.$el || document;
+  const id =
+    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(column.id) : column.id;
+  const colEls = root.querySelectorAll(`.vxe-header--column.${id}`);
+  for (const el of colEls) {
+    if (!el.classList.contains("fixed--hidden")) return el;
+  }
+  return colEls[0] || null;
+};
+
+// 获取触发元素中心 X（document 坐标系），优先 .vxe-filter--btn，回退列中心
+const getFilterTriggerCenterX = (gridRef, column, fallbackX) => {
+  if (!column || !column.id) return fallbackX;
+  const colEl = getFilterColumnEl(gridRef, column);
+  if (!colEl) return fallbackX;
+  const filterBtnEl = colEl.querySelector(".vxe-filter--btn");
+  const targetEl = filterBtnEl || colEl;
+  const targetRect = targetEl.getBoundingClientRect();
+  return getDocScrollLeft() + targetRect.left + targetRect.width / 2;
+};
+
+// 水平边界 clamp：保证弹窗整体在视口内（宽度溢出时设 maxWidth）
+const clampFilterPanelHorizontal = (panel, left, vw, pw, margin) => {
+  const minLeft = getDocScrollLeft() + margin;
+  const maxLeft = getDocScrollLeft() + vw - pw - margin;
+  if (pw < vw - margin * 2) {
+    if (left < minLeft) left = minLeft;
+    else if (left > maxLeft) left = maxLeft;
+  } else {
+    left = minLeft;
+    panel.style.maxWidth = `${vw - margin * 2}px`;
+  }
+  return left;
+};
+
+// 垂直边界 clamp（含箭头空间）
+// arrowExtra：箭头空间已通过 transform: translateY(arrowExtra) 施加到面板，
+// 视觉顶部 = top + arrowExtra，因此边界需同步减去 arrowExtra，保证面板整体（含箭头）在视口内。
+const clampFilterPanelVertical = (top, vh, ph, margin, arrowExtra = 0) => {
+  const minTop = getDocScrollTop() + margin - arrowExtra;
+  const maxTop = getDocScrollTop() + vh - ph - margin - arrowExtra;
+  if (ph < vh - margin * 2) {
+    if (top < minTop) top = minTop;
+    else if (top > maxTop) top = maxTop;
+  }
+  return top;
+};
+
+// 计算箭头水平偏移（相对 panel 左上角），clamp 留 12px 防止露出圆角外
+const setFilterArrowOffset = (panel, triggerCenterX, left, pw, arrowSize) => {
+  const arrowHalf = arrowSize; // 三角形底边一半
+  let arrowLeft = triggerCenterX - left;
+  const arrowMin = 12 + arrowHalf;
+  const arrowMax = pw - 12 - arrowHalf;
+  if (arrowLeft < arrowMin) arrowLeft = arrowMin;
+  else if (arrowLeft > arrowMax) arrowLeft = arrowMax;
+  // 通过 CSS 变量传给 ::before / ::after 伪元素
+  panel.style.setProperty("--vxe-filter-arrow-left", `${arrowLeft}px`);
+};
+
+// 基准快照：面板 clamp 完成时的 left/top 与页面滚动坐标（滚动 reposition 用 delta 增量更新）
+const createRepositionBaseline = (panel) => ({
+  left: parseFloat(panel.style.left) || 0,
+  top: parseFloat(panel.style.top) || 0,
+  docScrollLeft: getDocScrollLeft(),
+  docScrollTop: getDocScrollTop(),
+});
+
+// 滚动重定位：基于触发元素当前 viewport 位置重算 top/left（document 坐标系），
+// 确保面板始终紧跟触发元素，不会因外层滚动容器滚动而偏移
+const reclampFromTrigger = (gridRef, panel, column, vw, vh, pw, ph, margin) => {
+  const colEl = getFilterColumnEl(gridRef, column);
+  const filterBtnEl = colEl?.querySelector(".vxe-filter--btn");
+  const triggerEl = filterBtnEl || colEl;
+  if (!triggerEl) return false;
+  const rect = triggerEl.getBoundingClientRect();
+  // 面板顶部 = 触发元素底部（document 坐标）
+  // 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失
+  let top = getDocScrollTop() + rect.bottom;
+  // 面板左对齐触发元素中心
+  const triggerCenterX = getDocScrollLeft() + rect.left + rect.width / 2;
+  let left = triggerCenterX - pw / 2;
+  left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
+  // 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
+  top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
+  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+  return true;
+};
+
+// 初次打开 clamp：基于 vxe 已设置的 top/left 进行边界修正
+const clampFromCurrentPosition = (gridRef, panel, column, vw, vh, pw, ph, margin) => {
+  let left = parseFloat(panel.style.left) || 0;
+  let top = parseFloat(panel.style.top) || 0;
+  // 1. 获取触发元素中心 X
+  const triggerCenterX = getFilterTriggerCenterX(gridRef, column, left + pw / 2);
+  // 2. 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失，
+  //    避免重置时 vxe 重新定位 top 后我们再补偏移造成的一帧闪烁。
+  // 3. 水平边界
+  left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
+  // 4. 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
+  top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
+  // 5. 箭头水平偏移
+  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+};
+
+// 同步执行面板定位的核心逻辑（供初次打开 clamp 与滚动重定位复用）
+// recalcFromTrigger=true 时基于触发元素当前位置重新计算 top（滚动场景），
+// false 时仅基于面板已有 top 进行 clamp（初次打开场景，vxe 已定位过）。
+// 返回最新基准快照（面板不存在时返回 null）
+const doClampFilterPanel = (gridRef, column, recalcFromTrigger = false) => {
+  const panel = getActivePanel();
+  if (!panel) return null;
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
+  const pw = panel.offsetWidth;
+  const ph = panel.offsetHeight;
+  if (
+    !recalcFromTrigger ||
+    !reclampFromTrigger(gridRef, panel, column, vw, vh, pw, ph, PANEL_MARGIN)
+  ) {
+    // 触发元素找不到时回退到 clamp 逻辑
+    clampFromCurrentPosition(gridRef, panel, column, vw, vh, pw, ph, PANEL_MARGIN);
+  }
+  return createRepositionBaseline(panel);
+};
+
+// 「基准快照 + delta 增量」滚动平移：只在对应方向有滚动时才更新该方向坐标，
+// 避免引入不必要的偏移；transform 偏移已在初次 clamp 时设置，滚动仅改 top/left
+const applyBaselineReposition = (panel, baseline) => {
+  const dLeft = getDocScrollLeft() - baseline.docScrollLeft;
+  const dTop = getDocScrollTop() - baseline.docScrollTop;
+  if (dLeft === 0 && dTop === 0) return;
+  const vw = document.documentElement.clientWidth || window.innerWidth;
+  const vh = document.documentElement.clientHeight || window.innerHeight;
+  const pw = panel.offsetWidth;
+  const ph = panel.offsetHeight;
+  let left = baseline.left;
+  let top = baseline.top;
+  if (dLeft !== 0) {
+    left = clampFilterPanelHorizontal(panel, baseline.left + dLeft, vw, pw, PANEL_MARGIN);
+  }
+  if (dTop !== 0) {
+    top = clampFilterPanelVertical(baseline.top + dTop, vh, ph, PANEL_MARGIN, ARROW_EXTRA);
+  }
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+};
+
+// 内部 scroll 判定：scroll 事件目标在当前激活的 filter panel 内部
+// （例如 FilterCheckbox 选项列表滚动）时，面板本身不需要移动
+const isFilterPanelInnerScroll = (evt) => {
+  if (!evt || !(evt.target instanceof Node)) return false;
+  const panelEl = getActivePanel();
+  return !!(panelEl && panelEl.contains(evt.target));
+};
+
+export const useFilterPanelPosition = (gridRef) => {
   // ========== 当前追踪的过滤列（滚动重定位目标）==========
   let activeFilterColumn = null;
   let repositionRafId = null;
   // 基准快照：记录面板首次 clamp 完成 / 重算整量 时的 left/top 与页面滚动坐标
   let filterReposBaseline = null;
-  const takeRepositionBaseline = (panel) => {
-    if (!panel) return;
-    filterReposBaseline = {
-      left: parseFloat(panel.style.left) || 0,
-      top: parseFloat(panel.style.top) || 0,
-      docScrollLeft:
-        document.documentElement.scrollLeft || document.body.scrollLeft || 0,
-      docScrollTop:
-        document.documentElement.scrollTop || document.body.scrollTop || 0,
-    };
-  };
 
-  // 1. 获取当前 grid 内触发列的「可见」表头单元格
-  //    冻结列会同时存在两份表头：
-  //      - 主表里的 fixed--hidden 副本（visibility:hidden，位置随横向滚动一起位移）
-  //      - fixed-left / fixed-right 浮层里的 fixed--visible 副本（用户实际点击的那个，位置固定）
-  //    document.querySelector 按 DOM 顺序会先命中主表副本，横向滚动后它已被滚走，
-  //    用它算 triggerCenterX 会让箭头指向错误位置 → 必须排除 fixed--hidden。
-  const getFilterColumnEl = (column) => {
-    if (!column || !column.id) return null;
-    const root = gridRef.value?.$el || document;
-    const id =
-      typeof CSS !== "undefined" && CSS.escape
-        ? CSS.escape(column.id)
-        : column.id;
-    const colEls = root.querySelectorAll(`.vxe-header--column.${id}`);
-    for (const el of colEls) {
-      if (!el.classList.contains("fixed--hidden")) return el;
-    }
-    return colEls[0] || null;
-  };
-
-  // 2. 获取触发元素中心 X（document 坐标系），优先 .vxe-filter--btn，回退列中心
-  const getFilterTriggerCenterX = (column, fallbackX) => {
-    if (!column || !column.id) return fallbackX;
-    const colEl = getFilterColumnEl(column);
-    if (!colEl) return fallbackX;
-    const docScrollLeft =
-      document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-    const filterBtnEl = colEl.querySelector(".vxe-filter--btn");
-    const targetEl = filterBtnEl || colEl;
-    const targetRect = targetEl.getBoundingClientRect();
-    return docScrollLeft + targetRect.left + targetRect.width / 2;
-  };
-
-  // 3. 水平边界 clamp：保证弹窗整体在视口内（宽度溢出时设 maxWidth）
-  const clampFilterPanelHorizontal = (panel, left, vw, pw, margin) => {
-    const docScrollLeft =
-      document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-    const minLeft = docScrollLeft + margin;
-    const maxLeft = docScrollLeft + vw - pw - margin;
-    if (pw < vw - margin * 2) {
-      if (left < minLeft) left = minLeft;
-      else if (left > maxLeft) left = maxLeft;
-    } else {
-      left = minLeft;
-      panel.style.maxWidth = `${vw - margin * 2}px`;
-    }
-    return left;
-  };
-
-  // 4. 垂直边界 clamp（含箭头空间）
-  // arrowExtra：箭头空间已通过 transform: translateY(arrowExtra) 施加到面板，
-  // 视觉顶部 = top + arrowExtra，因此边界需同步减去 arrowExtra，保证面板整体（含箭头）在视口内。
-  const clampFilterPanelVertical = (top, vh, ph, margin, arrowExtra = 0) => {
-    const docScrollTop =
-      document.documentElement.scrollTop || document.body.scrollTop || 0;
-    const minTop = docScrollTop + margin - arrowExtra;
-    const maxTop = docScrollTop + vh - ph - margin - arrowExtra;
-    if (ph < vh - margin * 2) {
-      if (top < minTop) top = minTop;
-      else if (top > maxTop) top = maxTop;
-    }
-    return top;
-  };
-
-  // 5. 计算箭头水平偏移（相对 panel 左上角），clamp 留 12px 防止露出圆角外
-  const setFilterArrowOffset = (panel, triggerCenterX, left, pw, arrowSize) => {
-    const arrowHalf = arrowSize; // 三角形底边一半
-    let arrowLeft = triggerCenterX - left;
-    const arrowMin = 12 + arrowHalf;
-    const arrowMax = pw - 12 - arrowHalf;
-    if (arrowLeft < arrowMin) arrowLeft = arrowMin;
-    else if (arrowLeft > arrowMax) arrowLeft = arrowMax;
-    // 通过 CSS 变量传给 ::before / ::after 伪元素
-    panel.style.setProperty("--vxe-filter-arrow-left", `${arrowLeft}px`);
-  };
-
-  // 同步执行面板定位的核心逻辑（供初次打开 clamp 与滚动重定位复用）
-  // recalcFromTrigger=true 时基于触发元素当前位置重新计算 top（滚动场景），
-  // false 时仅基于面板已有 top 进行 clamp（初次打开场景，vxe 已定位过）
-  const doClampFilterPanel = (column, recalcFromTrigger = false) => {
-    const panel = document.querySelector(
-      ".vxe-table--filter-wrapper.is--active",
-    );
-    if (!panel) return;
-    const margin = 16;
-
-    const vw = document.documentElement.clientWidth || window.innerWidth;
-    const vh = document.documentElement.clientHeight || window.innerHeight;
-    const pw = panel.offsetWidth;
-    const ph = panel.offsetHeight;
-    let left = parseFloat(panel.style.left) || 0;
-    let top = parseFloat(panel.style.top) || 0;
-
-    if (recalcFromTrigger) {
-      // 滚动重定位：基于触发元素当前 viewport 位置重新计算 top（document 坐标系）
-      // 确保面板始终紧跟触发元素，不会因外层滚动容器滚动而偏移
-      const colEl = getFilterColumnEl(column);
-      const filterBtnEl = colEl?.querySelector(".vxe-filter--btn");
-      const triggerEl = filterBtnEl || colEl;
-      if (triggerEl) {
-        const rect = triggerEl.getBoundingClientRect();
-        const docScrollTop =
-          document.documentElement.scrollTop || document.body.scrollTop || 0;
-        const docScrollLeft =
-          document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-        // 面板顶部 = 触发元素底部（document 坐标）
-        // 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失
-        top = docScrollTop + rect.bottom;
-        // 面板左对齐触发元素中心
-        const triggerCenterX = docScrollLeft + rect.left + rect.width / 2;
-        left = triggerCenterX - pw / 2;
-        // 水平边界
-        left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-        // 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
-        top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
-        // 箭头水平偏移
-        setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
-        // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
-        takeRepositionBaseline(panel);
-        return;
-      }
-      // 触发元素找不到则回退到 clamp 逻辑
-    }
-
-    // 初次打开 clamp 逻辑：基于 vxe 已设置的 top/left 进行边界修正
-    // 1. 获取触发元素中心 X
-    const triggerCenterX = getFilterTriggerCenterX(column, left + pw / 2);
-    // 2. 箭头空间（ARROW_EXTRA）通过 transform: translateY 施加，vxe 改写 top 时不会丢失，
-    //    避免重置时 vxe 重新定位 top 后我们再补偏移造成的一帧闪烁。
-    // 3. 水平边界
-    left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
-    // 4. 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
-    top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
-    panel.style.left = `${left}px`;
-    panel.style.top = `${top}px`;
-    panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
-    // 5. 箭头水平偏移
-    setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
-    // 记录最新基准快照，后续滚动 reposition 用 delta 增量更新
-    takeRepositionBaseline(panel);
+  const clampPanelAndSnapshot = (column, recalcFromTrigger) => {
+    const baseline = doClampFilterPanel(gridRef, column, recalcFromTrigger);
+    if (baseline) filterReposBaseline = baseline;
   };
 
   // clampFilterPanelToViewport 总入口：nextTick + setTimeout 内按步骤执行
   const clampFilterPanelToViewport = async (column) => {
     await nextTick();
     // setTimeout 让 vxe 内部完成 filterStore.style 写入后再覆盖
-    setTimeout(() => doClampFilterPanel(column, false), 0);
+    setTimeout(() => clampPanelAndSnapshot(column, false), 0);
   };
 
   // ========== 滚动时重新定位过滤面板（不关闭面板）==========
@@ -196,62 +224,17 @@ export const useFilterPanelPosition = (gridRef) => {
   const repositionActiveFilterPanel = (evt) => {
     if (!activeFilterColumn) return;
     if (repositionRafId != null) return;
-    // 若 scroll 事件目标在当前激活的 filter panel 内部（例如 FilterCheckbox 选项列表滚动），
-    // 则跳过重定位：面板本身不需要移动。
-    if (evt && evt.target instanceof Node) {
-      const panelEl = document.querySelector(
-        ".vxe-table--filter-wrapper.is--active",
-      );
-      if (panelEl && panelEl.contains(evt.target)) return;
-    }
+    if (isFilterPanelInnerScroll(evt)) return;
     repositionRafId = requestAnimationFrame(() => {
       repositionRafId = null;
-      const panel = document.querySelector(
-        ".vxe-table--filter-wrapper.is--active",
-      );
+      const panel = getActivePanel();
       if (!panel) return;
-      // 优先走「基准快照 + delta 增量」，只改需要改的方向，避免引入不必要的偏移
+      // 优先走「基准快照 + delta 增量」；无基准快照（极少出现）时回退到按触发元素整量重算
       if (filterReposBaseline) {
-        const scrollLeftNow =
-          document.documentElement.scrollLeft || document.body.scrollLeft || 0;
-        const scrollTopNow =
-          document.documentElement.scrollTop || document.body.scrollTop || 0;
-        const dLeft = scrollLeftNow - filterReposBaseline.docScrollLeft;
-        const dTop = scrollTopNow - filterReposBaseline.docScrollTop;
-        if (dLeft === 0 && dTop === 0) return;
-        const margin = 16;
-        const vw = document.documentElement.clientWidth || window.innerWidth;
-        const vh = document.documentElement.clientHeight || window.innerHeight;
-        const pw = panel.offsetWidth;
-        const ph = panel.offsetHeight;
-        // 只在对应方向有滚动时，才更新该方向坐标
-        let left = filterReposBaseline.left;
-        let top = filterReposBaseline.top;
-        if (dLeft !== 0) {
-          left = clampFilterPanelHorizontal(
-            panel,
-            filterReposBaseline.left + dLeft,
-            vw,
-            pw,
-            margin,
-          );
-        }
-        if (dTop !== 0) {
-          top = clampFilterPanelVertical(
-            filterReposBaseline.top + dTop,
-            vh,
-            ph,
-            margin,
-            ARROW_EXTRA,
-          );
-        }
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        // transform 偏移已在初次 clamp 时设置，滚动仅改 top/left，无需重复设置
-        return;
+        applyBaselineReposition(panel, filterReposBaseline);
+      } else {
+        clampPanelAndSnapshot(activeFilterColumn, true);
       }
-      // 无基准快照（极少出现）时回退到按触发元素整量重算
-      doClampFilterPanel(activeFilterColumn, true);
     });
   };
 

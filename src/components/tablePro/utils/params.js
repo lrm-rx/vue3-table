@@ -15,6 +15,61 @@
 
 const capitalize = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "");
 
+const applyInputParam = (params, paramKeys, key, d) => {
+  const v = String(d.value ?? "").trim();
+  if (v) {
+    params[key] = v;
+    paramKeys.add(key);
+  }
+};
+
+const applyCheckboxParam = (params, paramKeys, key, d) => {
+  const vals = Array.isArray(d.values)
+    ? d.values.filter((v) => v != null && v !== "")
+    : [];
+  // 多个值始终用数组传递
+  if (vals.length) {
+    params[key] = vals;
+    paramKeys.add(key);
+  }
+};
+
+// 区间类（日期/数字）：补齐 2 元素保证位置语义稳定，按 paramMode 输出
+const applyRangeParam = (params, paramKeys, f, key, d) => {
+  const raw = Array.isArray(d.values) ? [...d.values] : [null, null];
+  while (raw.length < 2) raw.push(null);
+  const ev =
+    f.props && f.props.emptyValue !== undefined ? f.props.emptyValue : null;
+  const normalized = raw.map((v) => (v == null || v === "" ? ev : v));
+  const mode =
+    f.props && ["array", "split", "both"].includes(f.props.paramMode)
+      ? f.props.paramMode
+      : "array";
+  // split 两端的 key 命名规则
+  const isDate = f.type === "FilterDateRange";
+  const key0 = isDate ? `start${capitalize(key)}` : `${key}Min`;
+  const key1 = isDate ? `end${capitalize(key)}` : `${key}Max`;
+
+  if (mode === "array" || mode === "both") {
+    // 数组格式：两端至少一端有值才发送
+    if (normalized.some((v) => v != null && v !== "")) {
+      params[key] = normalized;
+      paramKeys.add(key);
+    }
+  }
+  if (mode === "split" || mode === "both") {
+    // 分开格式：按端独立判断
+    if (normalized[0] != null && normalized[0] !== "") {
+      params[key0] = normalized[0];
+      paramKeys.add(key0);
+    }
+    if (normalized[1] != null && normalized[1] !== "") {
+      params[key1] = normalized[1];
+      paramKeys.add(key1);
+    }
+  }
+};
+
 /**
  * 列过滤状态数组 → 扁平请求参数对象 + 涉及的 key 集合
  * @param {Array} filters 过滤状态数组（含 active / data / type / paramKey）
@@ -27,67 +82,12 @@ export const filterStateToParams = (filters) => {
     if (!f || !f.active) return;
     const d = f.data || {};
     const key = f.paramKey || f.field;
-    switch (f.type) {
-      case "FilterInput": {
-        const v = String(d.value ?? "").trim();
-        if (v) {
-          params[key] = v;
-          paramKeys.add(key);
-        }
-        break;
-      }
-      case "FilterCheckbox": {
-        const vals = Array.isArray(d.values)
-          ? d.values.filter((v) => v != null && v !== "")
-          : [];
-        if (vals.length) {
-          // 多个值始终用数组传递
-          params[key] = vals;
-          paramKeys.add(key);
-        }
-        break;
-      }
-      case "FilterDateRange":
-      case "FilterNumberRange": {
-        const raw = Array.isArray(d.values) ? [...d.values] : [null, null];
-        // 补齐为 2 元素数组，保证位置语义稳定
-        while (raw.length < 2) raw.push(null);
-        const ev =
-          f.props && f.props.emptyValue !== undefined
-            ? f.props.emptyValue
-            : null;
-        const normalized = raw.map((v) =>
-          v == null || v === "" ? ev : v,
-        );
-        const mode =
-          f.props && ["array", "split", "both"].includes(f.props.paramMode)
-            ? f.props.paramMode
-            : "array";
-        // split 两端的 key 命名规则
-        const isDate = f.type === "FilterDateRange";
-        const key0 = isDate ? `start${capitalize(key)}` : `${key}Min`;
-        const key1 = isDate ? `end${capitalize(key)}` : `${key}Max`;
-
-        if (mode === "array" || mode === "both") {
-          // 数组格式：两端至少一端有值才发送
-          if (normalized.some((v) => v != null && v !== "")) {
-            params[key] = normalized;
-            paramKeys.add(key);
-          }
-        }
-        if (mode === "split" || mode === "both") {
-          // 分开格式：按端独立判断
-          if (normalized[0] != null && normalized[0] !== "") {
-            params[key0] = normalized[0];
-            paramKeys.add(key0);
-          }
-          if (normalized[1] != null && normalized[1] !== "") {
-            params[key1] = normalized[1];
-            paramKeys.add(key1);
-          }
-        }
-        break;
-      }
+    if (f.type === "FilterInput") {
+      applyInputParam(params, paramKeys, key, d);
+    } else if (f.type === "FilterCheckbox") {
+      applyCheckboxParam(params, paramKeys, key, d);
+    } else if (f.type === "FilterDateRange" || f.type === "FilterNumberRange") {
+      applyRangeParam(params, paramKeys, f, key, d);
     }
   });
   return { params, paramKeys };

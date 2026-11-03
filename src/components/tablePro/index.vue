@@ -1845,6 +1845,37 @@ const gridEventHandlers = {
 // ========== vxe-grid 属性 ==========
 // 展开 attrs 实现 vxe-grid 原生属性透传（class/style 排除，绑定到根元素 .table-pro）
 // 合并 gridListeners（事件透传），显式声明的 props 写在后面优先级更高
+//
+// 常驻编辑器字段补充进 dirty 对比字段（alwaysEdit 列无 editRender，vxe 默认不收录）。
+// vxe 中 includeFields（白名单）优先于 extraFields，用户配置白名单时并入白名单。
+const resolveEditDirtyConfig = (user) => {
+  const cfg = user || {};
+  const alwaysFields = alwaysEditFields.value;
+  if (!alwaysFields.length) return cfg;
+  if (Array.isArray(cfg.includeFields) && cfg.includeFields.length) {
+    return {
+      ...cfg,
+      includeFields: Array.from(
+        new Set([...cfg.includeFields, ...alwaysFields]),
+      ),
+    };
+  }
+  return {
+    ...cfg,
+    extraFields: Array.from(new Set([...(cfg.extraFields || []), ...alwaysFields])),
+  };
+};
+
+// 校验提示配置合成：vxe 全局默认 message='inline'，在「无固定高度 + 单行数据 +
+// max-height 限制」场景内联错误提示渲染在最后一行单元格下方，会被表体 overflow
+// 裁剪而不可见；用户未显式设置 message 时补 'default' 智能模式 —— 有固定高度或
+// 多行时仍走内联（与 inline 表现一致），无高度 + 单行时自动改用 teleport 到 body
+// 的浮层提示（配合下方 showFallbackValidTip 兜底弹出，不受容器裁剪）。
+const resolveValidConfig = (user) => {
+  const cfg = user || {};
+  return { ...cfg, message: cfg.message || "default" };
+};
+
 const gridProps = computed(() => {
   // 剥离 class/style（绑定到根元素 .table-pro）
   // 剥离 virtualXConfig/virtualYConfig（camelCase + kebab-case）及已废弃的 scrollX/scrollY，
@@ -1897,25 +1928,10 @@ const gridProps = computed(() => {
               ...props.editConfig,
             },
           }),
-      // 常驻编辑器字段补充进 dirty 对比字段（alwaysEdit 列无 editRender，vxe 默认不收录）。
-      // vxe 中 includeFields（白名单）优先于 extraFields，用户配置白名单时并入白名单。
-      editDirtyConfig: (() => {
-        const user = userEditDirtyCamel || userEditDirtyKebab || {};
-        const alwaysFields = alwaysEditFields.value;
-        if (!alwaysFields.length) return user;
-        if (Array.isArray(user.includeFields) && user.includeFields.length) {
-          return {
-            ...user,
-            includeFields: Array.from(
-              new Set([...user.includeFields, ...alwaysFields]),
-            ),
-          };
-        }
-        return {
-          ...user,
-          extraFields: Array.from(new Set([...(user.extraFields || []), ...alwaysFields])),
-        };
-      })(),
+      // 常驻编辑器字段补充进 dirty 对比字段（alwaysEdit 列无 editRender，vxe 默认不收录）
+      editDirtyConfig: resolveEditDirtyConfig(
+        userEditDirtyCamel || userEditDirtyKebab,
+      ),
       // chronological: 多列排序按点击先后决定主次（vxe 缺省为列声明顺序），
       // 同时保证 getSortColumns() 的返回顺序即本地排序的比较优先级
       sortConfig: { trigger: "button", chronological: true, ...props.sortConfig },
@@ -1929,15 +1945,8 @@ const gridProps = computed(() => {
       data: renderData.value,
       // 校验规则透传到 vxe-grid，配合暴露的 validate / fullValidate 方法
       editRules: props.editRules,
-      // 校验提示配置合成：vxe 全局默认 message='inline'，在「无固定高度 + 单行数据 +
-      // max-height 限制」场景内联错误提示渲染在最后一行单元格下方，会被表体 overflow
-      // 裁剪而不可见；用户未显式设置 message 时补 'default' 智能模式 —— 有固定高度或
-      // 多行时仍走内联（与 inline 表现一致），无高度 + 单行时自动改用 teleport 到 body
-      // 的浮层提示（配合下方 showFallbackValidTip 兜底弹出，不受容器裁剪）。
-      validConfig: (() => {
-        const user = userValidConfigCamel || userValidConfigKebab || {};
-        return { ...user, message: user.message || "default" };
-      })(),
+      // 校验提示配置合成（用户未显式设置 message 时补 'default' 智能模式）
+      validConfig: resolveValidConfig(userValidConfigCamel || userValidConfigKebab),
       toolbarConfig: toolbarConfig.value,
       customConfig: customConfig.value,
       // 面板列拖拽：isPeerDrag 允许同级拖动（含分组子列），需配合 customConfig.immediate
@@ -1991,6 +2000,38 @@ const onPagerChange = (newPager) => {
 // 但 validConfig.autoPos=false 会跳过该浮层 —— 校验失败的提示完全不可见。
 // 此处兜底：命中上述场景时手动弹出首个错误的校验浮层
 //（vxe 校验浮层挂载后即 teleport 到 body 定位，不受表格容器高度/overflow 裁剪影响）。
+
+// 判定当前场景是否需要兜底弹浮层
+const shouldShowFallbackTip = ($table, validOpts) => {
+  // autoPos 未关闭（vxe 原生已弹浮层）或用户明确关闭错误提示时，不兜底
+  if (validOpts.autoPos !== false || validOpts.showErrorMessage === false)
+    return false;
+  const msgMode = validOpts.message || "default";
+  // inline 模式始终内联渲染，无需兜底
+  if (msgMode === "inline") return false;
+  // default 模式下「有固定高度或数据 >1 行」内联渲染正常，无需兜底
+  if (msgMode === "default") {
+    const rowCount = $table.getTableData?.().tableData?.length ?? 0;
+    if (props.height || rowCount > 1) return false;
+  }
+  return true;
+};
+
+// 激活首个未通过单元格的编辑态并聚焦输入框，方便用户直接修改：
+// - alwaysEdit 常驻编辑：单元格已是编辑器，直接聚焦输入框
+// - 常规模式：setEditCell 激活编辑态，渲染完成后聚焦（vxe 若有 autofocus，重复聚焦同元素无害）
+const focusFirstErrorCell = ($table, cell, firstErr) => {
+  if (!props.editable) return;
+  if (props.editConfig?.alwaysEdit) {
+    cell.querySelector("input, textarea")?.focus();
+    return;
+  }
+  Promise.resolve($table.setEditCell(firstErr.row, firstErr.column)).then(
+    () => cell.querySelector("input, textarea")?.focus(),
+    () => {},
+  );
+};
+
 const showFallbackValidTip = (errMap) => {
   // 兜底确保 showValidTooltip 已被包装（onMounted 时机失败时在此重试，幂等）
   patchShowValidTooltip();
@@ -2000,36 +2041,14 @@ const showFallbackValidTip = (errMap) => {
   const $table = getVxTable();
   if (!$table || typeof $table.showValidTooltip !== "function") return;
   const validOpts = $table.getComputeMaps?.().computeValidOpts?.value || {};
-  // autoPos 未关闭（vxe 原生已弹浮层）或用户明确关闭错误提示时，不兜底
-  if (validOpts.autoPos !== false || validOpts.showErrorMessage === false)
-    return;
-  const msgMode = validOpts.message || "default";
-  // inline 模式始终内联渲染，无需兜底
-  if (msgMode === "inline") return;
-  // default 模式下「有固定高度或数据 >1 行」内联渲染正常，无需兜底
-  if (msgMode === "default") {
-    const rowCount = $table.getTableData?.().tableData?.length ?? 0;
-    if (props.height || rowCount > 1) return;
-  }
+  if (!shouldShowFallbackTip($table, validOpts)) return;
   const firstErr = errMap[fields[0]]?.[0];
   if (!firstErr || !firstErr.row || !firstErr.column || !firstErr.rule) return;
   const cell = $table.getCellElement?.(firstErr.row, firstErr.column);
   if (!cell) return;
   // 先让单元格进入可视区（后续 focus 浏览器也会自动滚动，这里先就位）
   cell.scrollIntoView({ block: "nearest" });
-  // 激活首个未通过单元格的编辑态并聚焦输入框，方便用户直接修改：
-  // - alwaysEdit 常驻编辑：单元格已是编辑器，直接聚焦输入框
-  // - 常规模式：setEditCell 激活编辑态，渲染完成后聚焦（vxe 若有 autofocus，重复聚焦同元素无害）
-  if (props.editable) {
-    if (props.editConfig?.alwaysEdit) {
-      cell.querySelector("input, textarea")?.focus();
-    } else {
-      Promise.resolve($table.setEditCell(firstErr.row, firstErr.column)).then(
-        () => cell.querySelector("input, textarea")?.focus(),
-        () => {},
-      );
-    }
-  }
+  focusFirstErrorCell($table, cell, firstErr);
   $table.showValidTooltip({
     rule: firstErr.rule,
     row: firstErr.row,

@@ -265,23 +265,20 @@ const autoOpenOnMounted = (erName) => {
 }
 
 // 插槽式编辑（函数式/字符串式 editRender、slots.edit 字符串）的自动弹出：
-// 用户插槽渲染的组件 tablePro 未知，按能力探测（点击单元格进入编辑后立刻弹出面板）——
-//   · 组件暴露 handleOpen()/show()（ElDatePicker/ElTimePicker/ElCascader/ElColorPicker 等）→ 直接调用
-//   · ElSelect：部分版本未暴露 handleOpen，点击 .el-select__wrapper 触发内部 toggleMenu
-//   · 通用 .el-input__wrapper：mousedown + focus + click（ElDatePicker 系监听 wrapper 而非 input）
+// 用户插槽渲染的组件 tablePro 未知，按能力探测（点击单元格进入编辑后立刻弹出面板）。
 // 普通输入类无需处理：vxe 依据 editRender.autofocus 自动聚焦 cell 内第一个 input/textarea
-const autoOpenSlotVnode = (vnode) => {
-  const comp = vnode && vnode.component
-  const api = (comp && (comp.exposed || comp.proxy)) || undefined
-  const proxy = comp && comp.proxy
-  const rawEl = (proxy && proxy.$el) || (vnode && vnode.el)
-  // Fragment 组件的 vnode.el 可能是 Text/Comment 节点，向上找最近的 Element
-  const el = rawEl && rawEl.nodeType === 1 ? rawEl : (rawEl && rawEl.parentElement)
-  // 1) 组件实例能力：expose() 的方法挂在 component.exposed 上，instance.proxy 拿不到
-  if (api && typeof api.handleOpen === 'function') { api.handleOpen(); return }
-  if (api && typeof api.show === 'function') { api.show(); return }
-  // 2) DOM 兜底
-  if (!el || !el.querySelector) return
+
+// 1) 组件实例能力：expose() 的方法挂在 component.exposed 上，instance.proxy 拿不到
+//    （ElDatePicker/ElTimePicker/ElCascader/ElColorPicker 等暴露 handleOpen()/show()）
+const tryOpenSlotByApi = (api) => {
+  if (api && typeof api.handleOpen === 'function') { api.handleOpen(); return true }
+  if (api && typeof api.show === 'function') { api.show(); return true }
+  return false
+}
+
+// 2) DOM 兜底：ElSelect 点击 .el-select__wrapper 触发内部 toggleMenu（部分版本未暴露 handleOpen）；
+//    通用 .el-input__wrapper：mousedown + focus + click（ElDatePicker 系监听 wrapper 而非 input）
+const openSlotByDomFallback = (el) => {
   const selectWrapper = el.querySelector('.el-select__wrapper')
   if (selectWrapper) {
     selectWrapper.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -296,6 +293,18 @@ const autoOpenSlotVnode = (vnode) => {
     inputEl.dispatchEvent(new FocusEvent('focus', { bubbles: true }))
   }
   inputWrapper.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+}
+
+const autoOpenSlotVnode = (vnode) => {
+  const comp = vnode && vnode.component
+  const api = (comp && (comp.exposed || comp.proxy)) || undefined
+  if (tryOpenSlotByApi(api)) return
+  const proxy = comp && comp.proxy
+  const rawEl = (proxy && proxy.$el) || (vnode && vnode.el)
+  // Fragment 组件的 vnode.el 可能是 Text/Comment 节点，向上找最近的 Element
+  const el = rawEl && rawEl.nodeType === 1 ? rawEl : (rawEl && rawEl.parentElement)
+  if (!el || !el.querySelector) return
+  openSlotByDomFallback(el)
 }
 
 // 给插槽式编辑渲染结果附加 onVnodeMounted（挂载后下一拍自动弹出，与对象式 autoOpenOnMounted 对齐）。
@@ -334,554 +343,550 @@ const resolvePopperClass = (erName, existing) => {
   return parts.join(' ')
 }
 
+// 应用 headerRender → slots.header（叶子列与父分组列共用）
+// 优先级：用户显式 slots.header > col.headerRender。支持函数式 JSX 或字符串引用具名插槽
+const applyHeaderRender = (ctx, col, field) => {
+  if (col.slots.header) return
+  if (typeof col.headerRender === 'function') {
+    const userHeader = col.headerRender
+    col.slots.header = markRaw((scope) => {
+      try {
+        const params = {
+          column: col,
+          field,
+          title: col.title,
+          $table: scope.$table,
+          rowIndex: scope.$rowIndex,
+          columnIndex: scope.$columnIndex,
+        }
+        return userHeader(params, h)
+      } catch (e) {
+        return renderSlotError(e)
+      }
+    })
+  } else if (typeof col.headerRender === 'string') {
+    const slotName = col.headerRender
+    if (typeof ctx.externalSlots[slotName] === 'function') {
+      col.slots.header = slotName
+    }
+  }
+}
+
+// ---------- 叶子列处理：步骤拆分辅助函数（共享上下文 ctx 由 buildColumns 注入）----------
+// 1) 公共列属性合并（仅对非特殊列生效，避免 checkbox/seq 的居中、showOverflow 干扰）
+const applyCommonColumnProps = (ctx, col, rawCol, isSpecialCol) => {
+  if (!isSpecialCol && Object.keys(ctx.defColumnCommon).length) {
+    const merged = { ...ctx.defColumnCommon, ...col }
+    // 列 slots 在展开 defColumnCommon 时可能被覆盖，重新恢复
+    merged.slots = rawCol.slots ? { ...rawCol.slots } : {}
+    return merged
+  }
+  return col
+}
+
+// 1a) 对齐默认值与一致性：列显式配置 > defaultColumnConfig > 组件默认 'left'
+const applyColumnAlign = (col, colType) => {
+  if (colType === 'checkbox' || colType === 'seq') {
+    if (col.align == null) col.align = 'center'
+    if (col.headerAlign == null) col.headerAlign = 'center'
+  } else if (col.headerAlign != null && col.align == null) {
+    col.align = col.headerAlign
+  } else if (col.align == null && col.headerAlign == null) {
+    col.align = 'left'
+    col.headerAlign = 'left'
+  }
+}
+
+// 2) 过滤配置自动注入：支持两种等价写法
+//    · filterType: 'FilterCheckbox'（简写，自动注入 filters + filterRender）
+//    · filterRender: { name: 'FilterCheckbox' }（已有 name 时可省略 filterType，
+//      按 name 自动注入 filters，filterRender 保留用户配置）
+const applyFilterTypeConfig = (ctx, col) => {
+  const typeKey = col.filterType || (col.filterRender && col.filterRender.name)
+  if (!typeKey || !ctx.filterDefaults[typeKey]) return
+  const autoCfg = ctx.filterDefaults[typeKey] || {}
+  if (col.filters == null && autoCfg.filters) {
+    // 逐列深拷贝默认 data（含 values 数组）：filterDefaults 的 data 字面量是模块级
+    // 共享的，浅拷贝会让多列引用同一数组，导致一列的默认值/重置影响其他列
+    col.filters = autoCfg.filters.map((o) => ({
+      ...o,
+      data: o.data ? cloneFilterData(o.data) : {},
+    }))
+  }
+  if (col.filterRender == null && autoCfg.filterRender) {
+    col.filterRender = { ...autoCfg.filterRender }
+  }
+}
+
+// 3) render → slots.default（支持函数式 JSX 或字符串引用外部具名插槽）
+const applyRenderSlot = (ctx, col, field) => {
+  if (col.slots.default) return
+  if (typeof col.render === 'function') {
+    const userRender = col.render
+    col.slots.default = markRaw((scope) => {
+      try {
+        const params = {
+          row: scope.row,
+          column: col,
+          field,
+          cellValue: field ? scope.row && scope.row[field] : undefined,
+          rowIndex: scope.$rowIndex,
+          columnIndex: scope.$columnIndex,
+          $table: scope.$table,
+        }
+        return wrapBareTextVNodes(userRender(params, h))
+      } catch (e) {
+        return renderSlotError(e)
+      }
+    })
+  } else if (typeof col.render === 'string') {
+    const slotName = col.render
+    if (typeof ctx.externalSlots[slotName] === 'function') {
+      col.slots.default = slotName
+    }
+  }
+}
+
+// 函数式/字符串式 editRender 的标记渲染器名：
+// vxe 仅凭 isEnableConf(column.editRender)（truthy 且 enabled!==false）判定列可编辑
+//   —— 点击激活（edit/hook.js handleEditActive）、编辑态渲染（cell.js runRenderer）、
+//      表头编辑图标（cell.js renderEditHeader）全部以此为开关；
+// 而 columnInfo 初始化对「truthy 但非对象」的 editRender 会抛 errProp 警告。
+// 因此函数/字符串既不能原样保留，也不能直接删除（删除=列不可编辑：点击无反应、无图标），
+// 统一替换为该标记对象：实际渲染完全由 col.slots.edit 接管
+// （runRenderer 优先调用 edit 插槽，不会查 renderer 表）。
+const SLOT_EDIT_RENDER_NAME = 'TableProSlotEdit'
+// autofocus: true → vxe 编辑激活后（handleFocus，默认 editConfig.autoFocus=true）
+// 自动匹配 cell 内第一个 input/textarea 并聚焦；
+// 函数式/字符串式的 slots.edit 是用户自定义控件、无注册 renderer 可提供
+// tableAutoFocus，必须显式声明 autofocus 才能点击后自动聚焦
+const buildSlotEditRender = () => ({ name: SLOT_EDIT_RENDER_NAME, autofocus: true })
+
+// 4a) 函数式 editRender → slots.edit（JSX 渲染）
+const applyFunctionEditRender = (col, field, editEnabled) => {
+  if (editEnabled) {
+    if (col.editable == null) col.editable = true
+    if (!col.slots.edit) {
+      const userEdit = col.editRender
+      col.slots.edit = markRaw((scope) => {
+        try {
+          const row = scope.row
+          const originalVal = field != null && row ? row[field] : undefined
+          const params = {
+            row,
+            column: col,
+            field,
+            cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
+            rowIndex: scope.$rowIndex,
+            columnIndex: scope.$columnIndex,
+            $table: scope.$table,
+          }
+          return attachSlotAutoOpen(userEdit(params, h))
+        } catch (e) {
+          return renderSlotError(e)
+        }
+      })
+    }
+    // 保留 vxe 合法的对象式 editRender 标记，列才可点击编辑 / 显示表头编辑图标
+    col.editRender = buildSlotEditRender()
+  } else {
+    // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
+    delete col.editRender
+  }
+}
+
+// 4b) 字符串式 editRender → 引用外部具名插槽
+const applyStringEditRender = (ctx, col, editEnabled) => {
+  if (editEnabled) {
+    if (col.editable == null) col.editable = true
+    const slotName = col.editRender
+    if (!col.slots.edit && typeof ctx.externalSlots[slotName] === 'function') {
+      // 包一层以附加自动弹出钩子（直接赋 slotName 字符串则无法注入 onVnodeMounted）；
+      // vxe 对 slots.edit 函数与字符串的处理等价（callSlot），行为不变
+      col.slots.edit = markRaw((scope) => attachSlotAutoOpen(ctx.externalSlots[slotName](scope)))
+    }
+    // 仅当插槽命中（slots.edit 已就绪）时保留可编辑标记；
+    // 插槽缺失时移除配置，避免出现「有编辑图标但点击无控件」的坏列
+    if (col.slots.edit) {
+      col.editRender = buildSlotEditRender()
+    } else {
+      delete col.editRender
+    }
+  } else {
+    // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
+    delete col.editRender
+  }
+}
+
+// 4c-1) 构建 Select/Radio/Checkbox 子项（options → VNode 数组）
+const buildWrapOptionChildren = (options, field, wrapName) => {
+  const WrapComp = WRAP_COMPONENTS[wrapName]
+  return options.map((opt, idx) => {
+    const labelText = opt.label != null ? opt.label : opt.value
+    const optValue = opt.value != null ? opt.value : opt.label
+    const key = `${field}-opt-${idx}-${String(optValue)}`
+    const wrapProps = { key }
+    if (wrapName === 'ElOption') {
+      // ElOption：value + label
+      wrapProps.label = labelText
+      wrapProps.value = optValue
+    } else {
+      // ElRadio/ElCheckbox 子项：label 是 group 的选中绑定值
+      wrapProps.label = optValue
+      wrapProps.value = optValue
+    }
+    if (opt.disabled != null) wrapProps.disabled = !!opt.disabled
+    return h(WrapComp, wrapProps, () => labelText)
+  })
+}
+
+// 4c-2) 对象配置式 editRender：构建 slots.edit 渲染函数（Input 类无子项 / Select·Radio·Checkbox 渲染 options）
+const buildObjectEditSlotFn = (ctx, col, field, Comp, wrapName) => markRaw((scope) => {
+  const row = scope.row
+  const originalVal = field != null && row ? row[field] : undefined
+  const currentVal = scope.cellValue != null ? scope.cellValue : originalVal
+  // 从全局编辑态取本地值（edit-actived 初始化），避免在 slots 函数里新建 ref/watch
+  const stateKey = ctx.resolveEditStateKey(row, field)
+  if (!(stateKey in ctx.editLocalState)) ctx.editLocalState[stateKey] = currentVal
+  const erName = col.editRender && col.editRender.name
+  const extra = {
+    modelValue: ctx.editLocalState[stateKey],
+    'onUpdate:modelValue': (v) => { ctx.editLocalState[stateKey] = v },
+    // 透传列标题，供自定义编辑组件（如 TextareaPopoverEdit）在头部显示
+    title: col.title,
+    // 透传 vxe 表格实例（scope.$table），供自定义编辑组件调用 clearActive 等方法退出编辑态
+    table: markRaw(scope.$table),
+  }
+  // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
+  const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
+  if (popperCls != null) extra.popperClass = popperCls
+  // TextareaPopoverEdit 三按钮事件透传：携带 { row, column, field, value } 抛给 tablePro
+  if (erName === 'TextareaPopoverEdit') {
+    const buildPayload = (val) => ({ row, column: scope.column, field, value: val })
+    extra.onClear = (e) => ctx.emit('textarea-clear', buildPayload(e?.value ?? ctx.editLocalState[stateKey]))
+    extra.onCancel = (e) => ctx.emit('textarea-cancel', buildPayload(e?.value ?? ctx.editLocalState[stateKey]))
+    extra.onConfirm = (e) => ctx.emit('textarea-confirm', buildPayload(e?.value ?? ctx.editLocalState[stateKey]))
+  }
+  const bindProps = mergeEditCompProps(
+    field,
+    col.editRender,
+    ctx.cellEditProps,
+    extra,
+    (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
+  )
+  // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
+
+  // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
+  const onMountedHook = autoOpenOnMounted(erName)
+  if (onMountedHook) bindProps.onVnodeMounted = onMountedHook
+
+  if (!wrapName) {
+    // Input/InputNumber/DatePicker/TimePicker/Switch/Rate：无子项
+    return h(Comp, bindProps)
+  }
+  // Select/Radio/Checkbox：渲染 options
+  const colEditRender = col.editRender || {}
+  const options = resolveEditOptions(field, colEditRender, ctx.editOptions)
+  const children = buildWrapOptionChildren(options, field, wrapName)
+  return h(Comp, bindProps, { default: () => children })
+})
+
+// 4c-3) 对象配置式 editRender 时，为非编辑态构建 label 回退（基于 editOptions 映射）
+// 注：editEnabled=false 时也生效，确保不可编辑状态下仍按 options 显示 label
+const buildEditLabelFallback = (ctx, col, field) => markRaw((scope) => {
+  const raw = field != null && scope.row ? scope.row[field] : undefined
+  const colEditRender = col.editRender || {}
+  const options = resolveEditOptions(field, colEditRender, ctx.editOptions)
+  if (options.length) {
+    const findLabel = (v) => {
+      const hit = options.find((o) => o.value === v || String(o.value) === String(v))
+      return hit ? hit.label : (v == null ? '' : String(v))
+    }
+    if (Array.isArray(raw)) {
+      return h(
+        'span',
+        raw.map((v, i) => h('span', { key: i, style: i ? 'margin-left:6px' : '' }, findLabel(v)))
+      )
+    }
+    return h('span', findLabel(raw))
+  }
+  return h('span', raw == null ? '' : String(raw))
+})
+
+// ========== 常驻编辑器（列 alwaysEdit: true）==========
+// 语义：编辑器不由 vxe 编辑态渲染，而是直接填充单元格默认插槽 —— 始终显示输入类组件；
+// 输入只更新组件本地值（防抖 300ms / 失焦 / 卸载时写回 row[field]），
+// 点击单元格不再切换「显示态 / 编辑态」（因此也不设置 col.editable）。
+// 约束：
+//   · 仅支持对象式（EL_EDIT_MAP）/ 函数式 / 字符串式 editRender；
+//   · TextareaPopoverEdit 依赖编辑态生命周期（clearEdit 关闭 popover），不参与常驻模式；
+//   · 用户显式配置 slots.default 时以用户配置为准（不接管）；
+//   · 用户显式配置 slots.edit 时复用到常驻位置（值由用户自行绑 row[field]）。
+const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
+const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
+
+// 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
+const applyAlwaysEditClass = (col) => {
+  if (typeof col.className === 'function') {
+    const userClassName = col.className
+    col.className = (params) => {
+      const cls = userClassName(params)
+      return cls ? `${cls} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
+    }
+    return
+  }
+  col.className = col.className ? `${col.className} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
+}
+
+// 对象配置式常驻编辑器：输入只更新本地值（组件侧防抖写回 row），不做逐键行写回
+// 注意：er 必须在构建期传入 —— 常驻模式会删除 col.editRender，渲染期再读会丢失配置
+const buildAlwaysEditSlotFn = (ctx, col, field, Comp, wrapName, er) => markRaw((scope) => {
+  const row = scope.row
+  const column = scope.column || col
+  const erName = er && er.name
+  const extra = {
+    modelValue: typeof ctx.getAlwaysEditValue === 'function'
+      ? ctx.getAlwaysEditValue(row, field)
+      : (field != null && row ? row[field] : undefined),
+    // 每次输入：仅记入组件本地值（防抖/失焦/卸载时才写回 row）
+    'onUpdate:modelValue': (v) => {
+      if (typeof ctx.onAlwaysEditInput === 'function') {
+        ctx.onAlwaysEditInput({ row, column, field, value: v })
+      }
+    },
+    // 透传列标题 / 表格实例，保持与编辑态插槽一致的 props
+    title: col.title,
+    table: markRaw(scope.$table),
+  }
+  const popperCls = resolvePopperClass(erName, er && er.props && er.props.popperClass)
+  if (popperCls != null) extra.popperClass = popperCls
+  const bindProps = mergeEditCompProps(
+    field,
+    er,
+    ctx.cellEditProps,
+    extra,
+    (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
+  )
+  // 失焦 / 单元格卸载（虚拟滚动回收、切页）立即写回，避免防抖窗口内丢输入；
+  // 保留用户自带的 onBlur，先落盘再透传
+  const commitAlwaysEdit = () => {
+    if (typeof ctx.onAlwaysEditCommit === 'function') {
+      ctx.onAlwaysEditCommit({ row, column, field })
+    }
+  }
+  const userOnBlur = bindProps.onBlur
+  bindProps.onBlur = (e) => {
+    commitAlwaysEdit()
+    if (typeof userOnBlur === 'function') userOnBlur(e)
+  }
+  bindProps.onVnodeUnmounted = commitAlwaysEdit
+  if (!wrapName) return h(Comp, bindProps)
+  const options = resolveEditOptions(field, er, ctx.editOptions)
+  return h(Comp, bindProps, { default: () => buildWrapOptionChildren(options, field, wrapName) })
+})
+
+// 常驻编辑总入口：成功接管返回 true；不支持时返回 false（回退普通点击编辑）
+const applyAlwaysEdit = (ctx, col, field, rawCol) => {
+  // 显式 slots.default（用户自定义展示内容）优先，不接管
+  if (rawCol && rawCol.slots && rawCol.slots.default) return false
+  const userEditSlot = col.slots && col.slots.edit
+  const er = col.editRender
+  if (typeof userEditSlot === 'function') {
+    col.slots.default = markRaw((scope) => userEditSlot(scope))
+  } else if (typeof userEditSlot === 'string' && typeof ctx.externalSlots[userEditSlot] === 'function') {
+    col.slots.default = userEditSlot
+  } else if (typeof er === 'function') {
+    const userEdit = er
+    col.slots.default = markRaw((scope) => {
+      try {
+        const row = scope.row
+        const params = {
+          row,
+          column: scope.column || col,
+          field,
+          cellValue: field != null && row ? row[field] : undefined,
+          rowIndex: scope.$rowIndex,
+          columnIndex: scope.$columnIndex,
+          $table: scope.$table,
+        }
+        return userEdit(params, h)
+      } catch (e) {
+        return renderSlotError(e)
+      }
+    })
+  } else if (typeof er === 'string') {
+    if (typeof ctx.externalSlots[er] !== 'function') return false
+    col.slots.default = er
+  } else {
+    const erName = er && er.name
+    if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return false
+    col.slots.default = buildAlwaysEditSlotFn(
+      ctx,
+      col,
+      field,
+      EL_EDIT_MAP[erName].comp,
+      EL_EDIT_MAP[erName].wrap,
+      er,
+    )
+  }
+  // 常驻模式不经过 vxe 编辑态：移除编辑插槽与编辑配置
+  delete col.slots.edit
+  delete col.editRender
+  applyAlwaysEditClass(col)
+  return true
+}
+
+// 4c) 对象配置式 editRender → editable + slots.edit + label 回退
+const applyObjectEditRender = (ctx, col, field, editEnabled) => {
+  if (editEnabled && col.editable == null) col.editable = true
+  const erName = col.editRender.name
+  const mapEntry = EL_EDIT_MAP[erName]
+  if (!mapEntry) return
+
+  const Comp = mapEntry.comp
+  const wrapName = mapEntry.wrap
+  if (editEnabled && !col.slots.edit) {
+    // markRaw 避免 Vue 深度劫持造成渲染循环或状态丢失
+    col.slots.edit = buildObjectEditSlotFn(ctx, col, field, Comp, wrapName)
+  } else if (editEnabled && typeof col.slots.edit === 'string') {
+    // 用户写 slots.edit: 'edit_xxx' 字符串：包一层以附加自动弹出钩子，内部仍交给外部具名插槽
+    const slotName = col.slots.edit
+    if (typeof ctx.externalSlots[slotName] === 'function') {
+      col.slots.edit = markRaw((scope) => attachSlotAutoOpen(ctx.externalSlots[slotName](scope)))
+    }
+  }
+  // 未提供 render/slots.default 时，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
+  if (!col.slots.default) {
+    col.slots.default = buildEditLabelFallback(ctx, col, field)
+  }
+}
+
+// 4) editRender → editable:true + slots.edit（分流：函数式 / 字符串式 / 对象配置式）
+// 优先级：用户显式 slots.edit > editRender（详见 README）
+// editable=false 时（权限控制）：不设置 col.editable / 不构建 slots.edit，
+//   点击不进入编辑态、表头无编辑图标；对象式的 slots.default label 回退仍生效（仅显示）
+// alwaysEdit 列（常驻编辑器）：接管为 slots.default 后直接返回 —— 不参与 vxe 编辑态
+const applyEditRenderSlot = (ctx, col, field, rawCol) => {
+  const editEnabled = ctx.editable !== false
+  // alwaysEdit 先于 editRender 存在性判断：允许「仅配置 slots.edit」的列启用常驻渲染
+  if (editEnabled && col.alwaysEdit === true && applyAlwaysEdit(ctx, col, field, rawCol)) return
+  if (!col.editRender) return
+  if (typeof col.editRender === 'function') {
+    applyFunctionEditRender(col, field, editEnabled)
+  } else if (typeof col.editRender === 'string') {
+    applyStringEditRender(ctx, col, editEnabled)
+  } else if (col.editRender.name) {
+    applyObjectEditRender(ctx, col, field, editEnabled)
+  }
+}
+
+// 5) 默认过滤值注入（initParam.filters → col.filters[0].data）
+const applyDefaultFilterValue = (ctx, col, field) => {
+  if (!col.filters || !col.filters.length || !col.filterRender) return
+  const fName = col.filterRender.name
+  if (!fName || !FILTER_DEFAULTS[fName]) return
+  const defaultVal = ctx.initFilters[field]
+  if (defaultVal == null) return
+  const data = buildFilterDataFromDefault(fName, defaultVal)
+  if (!data) return
+  col.filters = col.filters.map((opt, i) =>
+    i === 0 ? { ...opt, data: { ...data }, checked: isFilterActive(fName, data) } : { ...opt },
+  )
+}
+
+// 6) 操作列标记：params.isAction === true 的列注入 NO_ELLIPSIS_CLASS，
+// 组件样式据此把该列排除在省略号裁剪之外（按钮等操作内容应完整显示）；
+// 用户已配置 className 时追加（函数式 className 包一层）
+const applyNoEllipsisClass = (col) => {
+  if (!(col.params && col.params.isAction === true)) return
+  if (typeof col.className === 'function') {
+    const userClassName = col.className
+    col.className = (params) => {
+      const cls = userClassName(params)
+      return cls ? `${cls} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
+    }
+    return
+  }
+  col.className = col.className ? `${col.className} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
+}
+
+// 叶子列处理总入口：按步骤调用各辅助函数
+const transformLeafColumn = (ctx, rawCol) => {
+  if (!rawCol || typeof rawCol !== 'object') return rawCol
+  const colType = rawCol.type
+  const isSpecialCol = !!(colType && /^(checkbox|seq|radio|expand)$/.test(colType))
+
+  let col = { ...rawCol }
+  // slots 深拷贝一层，避免污染 rawCol
+  col.slots = rawCol.slots ? { ...rawCol.slots } : {}
+
+  // 1) 公共列属性
+  col = applyCommonColumnProps(ctx, col, rawCol, isSpecialCol)
+  // 1a) 对齐默认值与一致性
+  applyColumnAlign(col, colType)
+  // 2) filterType 自动注入过滤配置
+  applyFilterTypeConfig(ctx, col)
+  // 3) render → slots.default
+  const field = col.field || ''
+  applyRenderSlot(ctx, col, field)
+  // 3a) headerRender → slots.header
+  applyHeaderRender(ctx, col, field)
+  // 4) editRender → editable:true + slots.edit（alwaysEdit 列 → 常驻编辑器）
+  applyEditRenderSlot(ctx, col, field, rawCol)
+  // 5) 默认过滤值注入
+  applyDefaultFilterValue(ctx, col, field)
+  // 6) 操作列：params.isAction === true 注入排除省略标记类
+  applyNoEllipsisClass(col)
+
+  return col
+}
+
+// 父分组列：只递归子列 + 应用 headerRender，跳过数据列专属逻辑避免错误注入
+// params.hideColumn === true 的列完全不渲染（区别于 visible:false 可在个性化配置中开启）
+const transformColumn = (ctx, rawCol) => {
+  if (!rawCol || typeof rawCol !== 'object') return rawCol
+  // hideColumn=true：直接过滤，不进入 vxe-grid columns，个性化配置也无法开启
+  if (rawCol.params && rawCol.params.hideColumn === true) return null
+  if (Array.isArray(rawCol.children) && rawCol.children.length) {
+    const col = { ...rawCol }
+    col.slots = rawCol.slots ? { ...rawCol.slots } : {}
+    col.children = rawCol.children.map((c) => transformColumn(ctx, c)).filter(Boolean)
+    // 父分组列：所有子列都被 hideColumn 隐藏时，父列也不渲染
+    if (col.children.length === 0) return null
+    // 父分组列也支持 headerRender（自定义表头渲染）
+    applyHeaderRender(ctx, col, col.field || '')
+    return col
+  }
+  return transformLeafColumn(ctx, rawCol)
+}
+
 /**
  * 构建合并列配置（原 mergedColumns computed 逻辑）
  * @param {Object} config 见文件头注释
  * @returns {Array} 可直接传给 vxe-grid columns 的列数组（hideColumn 列已被过滤）
  */
 export const buildColumns = (config) => {
-  const {
-    columns,
-    defaultColumnConfig,
-    initParam,
-    slots,
-    editable,
-    editOptions,
-    cellEditProps,
-    editLocalState,
-    resolveEditStateKey,
-    getAlwaysEditValue,
-    onAlwaysEditInput,
-    onAlwaysEditCommit,
-    emit,
-  } = config || {}
-
-  const defCfg = defaultColumnConfig || {}
+  const cfg = config || {}
+  const defCfg = cfg.defaultColumnConfig || {}
   const { filterDefaults: defFilterDefaults, ...defColumnCommon } = defCfg
+  const ip = cfg.initParam || {}
 
-  const filterDefaults = { ...DEFAULT_FILTER_CONFIG, ...(defFilterDefaults || {}) }
-
-  const ip = initParam || {}
-  const initFilters = ip.filters && typeof ip.filters === 'object' ? ip.filters : {}
-
-  // 外部插槽集合，用于支持 render/headerRender 字符串引用具名插槽
-  const externalSlots = slots || {}
-
-  // 应用 headerRender → slots.header（叶子列与父分组列共用）
-  // 优先级：用户显式 slots.header > col.headerRender。支持函数式 JSX 或字符串引用具名插槽
-  const applyHeaderRender = (col, field) => {
-    if (col.slots.header) return
-    if (typeof col.headerRender === 'function') {
-      const userHeader = col.headerRender
-      col.slots.header = markRaw((scope) => {
-        try {
-          const params = {
-            column: col,
-            field,
-            title: col.title,
-            $table: scope.$table,
-            rowIndex: scope.$rowIndex,
-            columnIndex: scope.$columnIndex,
-          }
-          return userHeader(params, h)
-        } catch (e) {
-          return renderSlotError(e)
-        }
-      })
-    } else if (typeof col.headerRender === 'string') {
-      const slotName = col.headerRender
-      if (typeof externalSlots[slotName] === 'function') {
-        col.slots.header = slotName
-      }
-    }
+  // 各辅助函数的共享上下文（原 buildColumns 闭包变量）
+  const ctx = {
+    externalSlots: cfg.slots || {}, // 外部插槽集合，支持 render/headerRender 字符串引用具名插槽
+    defColumnCommon,
+    filterDefaults: { ...DEFAULT_FILTER_CONFIG, ...(defFilterDefaults || {}) },
+    initFilters: ip.filters && typeof ip.filters === 'object' ? ip.filters : {},
+    editable: cfg.editable,
+    editOptions: cfg.editOptions,
+    cellEditProps: cfg.cellEditProps,
+    editLocalState: cfg.editLocalState,
+    resolveEditStateKey: cfg.resolveEditStateKey,
+    getAlwaysEditValue: cfg.getAlwaysEditValue,
+    onAlwaysEditInput: cfg.onAlwaysEditInput,
+    onAlwaysEditCommit: cfg.onAlwaysEditCommit,
+    emit: cfg.emit,
   }
 
-  // ---------- 叶子列处理：步骤拆分辅助函数 ----------
-  // 1) 公共列属性合并（仅对非特殊列生效，避免 checkbox/seq 的居中、showOverflow 干扰）
-  const applyCommonColumnProps = (col, rawCol, isSpecialCol) => {
-    if (!isSpecialCol && Object.keys(defColumnCommon).length) {
-      const merged = { ...defColumnCommon, ...col }
-      // 列 slots 在展开 defColumnCommon 时可能被覆盖，重新恢复
-      merged.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      return merged
-    }
-    return col
-  }
-
-  // 1a) 对齐默认值与一致性：列显式配置 > defaultColumnConfig > 组件默认 'left'
-  const applyColumnAlign = (col, colType) => {
-    if (colType === 'checkbox' || colType === 'seq') {
-      if (col.align == null) col.align = 'center'
-      if (col.headerAlign == null) col.headerAlign = 'center'
-    } else if (col.headerAlign != null && col.align == null) {
-      col.align = col.headerAlign
-    } else if (col.align == null && col.headerAlign == null) {
-      col.align = 'left'
-      col.headerAlign = 'left'
-    }
-  }
-
-  // 2) 过滤配置自动注入：支持两种等价写法
-  //    · filterType: 'FilterCheckbox'（简写，自动注入 filters + filterRender）
-  //    · filterRender: { name: 'FilterCheckbox' }（已有 name 时可省略 filterType，
-  //      按 name 自动注入 filters，filterRender 保留用户配置）
-  const applyFilterTypeConfig = (col) => {
-    const typeKey = col.filterType || (col.filterRender && col.filterRender.name)
-    if (!typeKey || !filterDefaults[typeKey]) return
-    const autoCfg = filterDefaults[typeKey] || {}
-    if (col.filters == null && autoCfg.filters) {
-      // 逐列深拷贝默认 data（含 values 数组）：filterDefaults 的 data 字面量是模块级
-      // 共享的，浅拷贝会让多列引用同一数组，导致一列的默认值/重置影响其他列
-      col.filters = autoCfg.filters.map((o) => ({
-        ...o,
-        data: o.data ? cloneFilterData(o.data) : {},
-      }))
-    }
-    if (col.filterRender == null && autoCfg.filterRender) {
-      col.filterRender = { ...autoCfg.filterRender }
-    }
-  }
-
-  // 3) render → slots.default（支持函数式 JSX 或字符串引用外部具名插槽）
-  const applyRenderSlot = (col, field) => {
-    if (col.slots.default) return
-    if (typeof col.render === 'function') {
-      const userRender = col.render
-      col.slots.default = markRaw((scope) => {
-        try {
-          const params = {
-            row: scope.row,
-            column: col,
-            field,
-            cellValue: field ? scope.row && scope.row[field] : undefined,
-            rowIndex: scope.$rowIndex,
-            columnIndex: scope.$columnIndex,
-            $table: scope.$table,
-          }
-          return wrapBareTextVNodes(userRender(params, h))
-        } catch (e) {
-          return renderSlotError(e)
-        }
-      })
-    } else if (typeof col.render === 'string') {
-      const slotName = col.render
-      if (typeof externalSlots[slotName] === 'function') {
-        col.slots.default = slotName
-      }
-    }
-  }
-
-  // 函数式/字符串式 editRender 的标记渲染器名：
-  // vxe 仅凭 isEnableConf(column.editRender)（truthy 且 enabled!==false）判定列可编辑
-  //   —— 点击激活（edit/hook.js handleEditActive）、编辑态渲染（cell.js runRenderer）、
-  //      表头编辑图标（cell.js renderEditHeader）全部以此为开关；
-  // 而 columnInfo 初始化对「truthy 但非对象」的 editRender 会抛 errProp 警告。
-  // 因此函数/字符串既不能原样保留，也不能直接删除（删除=列不可编辑：点击无反应、无图标），
-  // 统一替换为该标记对象：实际渲染完全由 col.slots.edit 接管
-  // （runRenderer 优先调用 edit 插槽，不会查 renderer 表）。
-  const SLOT_EDIT_RENDER_NAME = 'TableProSlotEdit'
-  // autofocus: true → vxe 编辑激活后（handleFocus，默认 editConfig.autoFocus=true）
-  // 自动匹配 cell 内第一个 input/textarea 并聚焦；
-  // 函数式/字符串式的 slots.edit 是用户自定义控件、无注册 renderer 可提供
-  // tableAutoFocus，必须显式声明 autofocus 才能点击后自动聚焦
-  const buildSlotEditRender = () => ({ name: SLOT_EDIT_RENDER_NAME, autofocus: true })
-
-  // 4a) 函数式 editRender → slots.edit（JSX 渲染）
-  const applyFunctionEditRender = (col, field, editEnabled) => {
-    if (editEnabled) {
-      if (col.editable == null) col.editable = true
-      if (!col.slots.edit) {
-        const userEdit = col.editRender
-        col.slots.edit = markRaw((scope) => {
-          try {
-            const row = scope.row
-            const originalVal = field != null && row ? row[field] : undefined
-            const params = {
-              row,
-              column: col,
-              field,
-              cellValue: scope.cellValue != null ? scope.cellValue : originalVal,
-              rowIndex: scope.$rowIndex,
-              columnIndex: scope.$columnIndex,
-              $table: scope.$table,
-            }
-            return attachSlotAutoOpen(userEdit(params, h))
-          } catch (e) {
-            return renderSlotError(e)
-          }
-        })
-      }
-      // 保留 vxe 合法的对象式 editRender 标记，列才可点击编辑 / 显示表头编辑图标
-      col.editRender = buildSlotEditRender()
-    } else {
-      // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
-      delete col.editRender
-    }
-  }
-
-  // 4b) 字符串式 editRender → 引用外部具名插槽
-  const applyStringEditRender = (col, editEnabled) => {
-    if (editEnabled) {
-      if (col.editable == null) col.editable = true
-      const slotName = col.editRender
-      if (!col.slots.edit && typeof externalSlots[slotName] === 'function') {
-        // 包一层以附加自动弹出钩子（直接赋 slotName 字符串则无法注入 onVnodeMounted）；
-        // vxe 对 slots.edit 函数与字符串的处理等价（callSlot），行为不变
-        col.slots.edit = markRaw((scope) => attachSlotAutoOpen(externalSlots[slotName](scope)))
-      }
-      // 仅当插槽命中（slots.edit 已就绪）时保留可编辑标记；
-      // 插槽缺失时移除配置，避免出现「有编辑图标但点击无控件」的坏列
-      if (col.slots.edit) {
-        col.editRender = buildSlotEditRender()
-      } else {
-        delete col.editRender
-      }
-    } else {
-      // 不可编辑（权限控制）：彻底移除，避免 vxe 非对象配置警告
-      delete col.editRender
-    }
-  }
-
-  // 4c-1) 构建 Select/Radio/Checkbox 子项（options → VNode 数组）
-  const buildWrapOptionChildren = (options, field, wrapName) => {
-    const WrapComp = WRAP_COMPONENTS[wrapName]
-    return options.map((opt, idx) => {
-      const labelText = opt.label != null ? opt.label : opt.value
-      const optValue = opt.value != null ? opt.value : opt.label
-      const key = `${field}-opt-${idx}-${String(optValue)}`
-      const wrapProps = { key }
-      if (wrapName === 'ElOption') {
-        // ElOption：value + label
-        wrapProps.label = labelText
-        wrapProps.value = optValue
-      } else {
-        // ElRadio/ElCheckbox 子项：label 是 group 的选中绑定值
-        wrapProps.label = optValue
-        wrapProps.value = optValue
-      }
-      if (opt.disabled != null) wrapProps.disabled = !!opt.disabled
-      return h(WrapComp, wrapProps, () => labelText)
-    })
-  }
-
-  // 4c-2) 对象配置式 editRender：构建 slots.edit 渲染函数（Input 类无子项 / Select·Radio·Checkbox 渲染 options）
-  const buildObjectEditSlotFn = (col, field, Comp, wrapName) => markRaw((scope) => {
-    const row = scope.row
-    const originalVal = field != null && row ? row[field] : undefined
-    const currentVal = scope.cellValue != null ? scope.cellValue : originalVal
-    // 从全局编辑态取本地值（edit-actived 初始化），避免在 slots 函数里新建 ref/watch
-    const stateKey = resolveEditStateKey(row, field)
-    if (!(stateKey in editLocalState)) editLocalState[stateKey] = currentVal
-    const erName = col.editRender && col.editRender.name
-    const extra = {
-      modelValue: editLocalState[stateKey],
-      'onUpdate:modelValue': (v) => { editLocalState[stateKey] = v },
-      // 透传列标题，供自定义编辑组件（如 TextareaPopoverEdit）在头部显示
-      title: col.title,
-      // 透传 vxe 表格实例（scope.$table），供自定义编辑组件调用 clearActive 等方法退出编辑态
-      table: markRaw(scope.$table),
-    }
-    // 弹出面板类控件：给 popper 加 vxe-table--ignore-clear，防止点击面板选项时退出编辑态
-    const popperCls = resolvePopperClass(erName, col.editRender && col.editRender.props && col.editRender.props.popperClass)
-    if (popperCls != null) extra.popperClass = popperCls
-    // TextareaPopoverEdit 三按钮事件透传：携带 { row, column, field, value } 抛给 tablePro
-    if (erName === 'TextareaPopoverEdit') {
-      const buildPayload = (val) => ({ row, column: scope.column, field, value: val })
-      extra.onClear = (e) => emit('textarea-clear', buildPayload(e?.value ?? editLocalState[stateKey]))
-      extra.onCancel = (e) => emit('textarea-cancel', buildPayload(e?.value ?? editLocalState[stateKey]))
-      extra.onConfirm = (e) => emit('textarea-confirm', buildPayload(e?.value ?? editLocalState[stateKey]))
-    }
-    const bindProps = mergeEditCompProps(
-      field,
-      col.editRender,
-      cellEditProps,
-      extra,
-      (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
-    )
-    // 注：onBlur/onChange 不主动 commit，统一在 edit-closed 提交，避免 vxe 状态机混乱
-
-    // 自动弹出面板（ElSelect/ElDatePicker/ElTimePicker）：组件挂载后调用 focus()
-    const onMountedHook = autoOpenOnMounted(erName)
-    if (onMountedHook) bindProps.onVnodeMounted = onMountedHook
-
-    if (!wrapName) {
-      // Input/InputNumber/DatePicker/TimePicker/Switch/Rate：无子项
-      return h(Comp, bindProps)
-    }
-    // Select/Radio/Checkbox：渲染 options
-    const colEditRender = col.editRender || {}
-    const options = resolveEditOptions(field, colEditRender, editOptions)
-    const children = buildWrapOptionChildren(options, field, wrapName)
-    return h(Comp, bindProps, { default: () => children })
-  })
-
-  // 4c-3) 对象配置式 editRender 时，为非编辑态构建 label 回退（基于 editOptions 映射）
-  // 注：editEnabled=false 时也生效，确保不可编辑状态下仍按 options 显示 label
-  const buildEditLabelFallback = (col, field) => markRaw((scope) => {
-    const raw = field != null && scope.row ? scope.row[field] : undefined
-    const colEditRender = col.editRender || {}
-    const options = resolveEditOptions(field, colEditRender, editOptions)
-    if (options.length) {
-      const findLabel = (v) => {
-        const hit = options.find((o) => o.value === v || String(o.value) === String(v))
-        return hit ? hit.label : (v == null ? '' : String(v))
-      }
-      if (Array.isArray(raw)) {
-        return h(
-          'span',
-          raw.map((v, i) => h('span', { key: i, style: i ? 'margin-left:6px' : '' }, findLabel(v)))
-        )
-      }
-      return h('span', findLabel(raw))
-    }
-    return h('span', raw == null ? '' : String(raw))
-  })
-
-  // ========== 常驻编辑器（列 alwaysEdit: true）==========
-  // 语义：编辑器不由 vxe 编辑态渲染，而是直接填充单元格默认插槽 —— 始终显示输入类组件；
-  // 输入只更新组件本地值（防抖 300ms / 失焦 / 卸载时写回 row[field]），
-  // 点击单元格不再切换「显示态 / 编辑态」（因此也不设置 col.editable）。
-  // 约束：
-  //   · 仅支持对象式（EL_EDIT_MAP）/ 函数式 / 字符串式 editRender；
-  //   · TextareaPopoverEdit 依赖编辑态生命周期（clearEdit 关闭 popover），不参与常驻模式；
-  //   · 用户显式配置 slots.default 时以用户配置为准（不接管）；
-  //   · 用户显式配置 slots.edit 时复用到常驻位置（值由用户自行绑 row[field]）。
-  const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
-  const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
-
-  // 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
-  const applyAlwaysEditClass = (col) => {
-    if (typeof col.className === 'function') {
-      const userClassName = col.className
-      col.className = (params) => {
-        const cls = userClassName(params)
-        return cls ? `${cls} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
-      }
-      return
-    }
-    col.className = col.className ? `${col.className} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
-  }
-
-  // 对象配置式常驻编辑器：输入只更新本地值（组件侧防抖写回 row），不做逐键行写回
-  // 注意：er 必须在构建期传入 —— 常驻模式会删除 col.editRender，渲染期再读会丢失配置
-  const buildAlwaysEditSlotFn = (col, field, Comp, wrapName, er) => markRaw((scope) => {
-    const row = scope.row
-    const column = scope.column || col
-    const erName = er && er.name
-    const extra = {
-      modelValue: typeof getAlwaysEditValue === 'function'
-        ? getAlwaysEditValue(row, field)
-        : (field != null && row ? row[field] : undefined),
-      // 每次输入：仅记入组件本地值（防抖/失焦/卸载时才写回 row）
-      'onUpdate:modelValue': (v) => {
-        if (typeof onAlwaysEditInput === 'function') {
-          onAlwaysEditInput({ row, column, field, value: v })
-        }
-      },
-      // 透传列标题 / 表格实例，保持与编辑态插槽一致的 props
-      title: col.title,
-      table: markRaw(scope.$table),
-    }
-    const popperCls = resolvePopperClass(erName, er && er.props && er.props.popperClass)
-    if (popperCls != null) extra.popperClass = popperCls
-    const bindProps = mergeEditCompProps(
-      field,
-      er,
-      cellEditProps,
-      extra,
-      (EL_EDIT_MAP[erName] && EL_EDIT_MAP[erName].defaultProps) || {},
-    )
-    // 失焦 / 单元格卸载（虚拟滚动回收、切页）立即写回，避免防抖窗口内丢输入；
-    // 保留用户自带的 onBlur，先落盘再透传
-    const commitAlwaysEdit = () => {
-      if (typeof onAlwaysEditCommit === 'function') {
-        onAlwaysEditCommit({ row, column, field })
-      }
-    }
-    const userOnBlur = bindProps.onBlur
-    bindProps.onBlur = (e) => {
-      commitAlwaysEdit()
-      if (typeof userOnBlur === 'function') userOnBlur(e)
-    }
-    bindProps.onVnodeUnmounted = commitAlwaysEdit
-    if (!wrapName) return h(Comp, bindProps)
-    const options = resolveEditOptions(field, er, editOptions)
-    return h(Comp, bindProps, { default: () => buildWrapOptionChildren(options, field, wrapName) })
-  })
-
-  // 常驻编辑总入口：成功接管返回 true；不支持时返回 false（回退普通点击编辑）
-  const applyAlwaysEdit = (col, field, rawCol) => {
-    // 显式 slots.default（用户自定义展示内容）优先，不接管
-    if (rawCol && rawCol.slots && rawCol.slots.default) return false
-    const userEditSlot = col.slots && col.slots.edit
-    const er = col.editRender
-    if (typeof userEditSlot === 'function') {
-      col.slots.default = markRaw((scope) => userEditSlot(scope))
-    } else if (typeof userEditSlot === 'string' && typeof externalSlots[userEditSlot] === 'function') {
-      col.slots.default = userEditSlot
-    } else if (typeof er === 'function') {
-      const userEdit = er
-      col.slots.default = markRaw((scope) => {
-        try {
-          const row = scope.row
-          const params = {
-            row,
-            column: scope.column || col,
-            field,
-            cellValue: field != null && row ? row[field] : undefined,
-            rowIndex: scope.$rowIndex,
-            columnIndex: scope.$columnIndex,
-            $table: scope.$table,
-          }
-          return userEdit(params, h)
-        } catch (e) {
-          return renderSlotError(e)
-        }
-      })
-    } else if (typeof er === 'string') {
-      if (typeof externalSlots[er] !== 'function') return false
-      col.slots.default = er
-    } else {
-      const erName = er && er.name
-      if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return false
-      col.slots.default = buildAlwaysEditSlotFn(
-        col,
-        field,
-        EL_EDIT_MAP[erName].comp,
-        EL_EDIT_MAP[erName].wrap,
-        er,
-      )
-    }
-    // 常驻模式不经过 vxe 编辑态：移除编辑插槽与编辑配置
-    delete col.slots.edit
-    delete col.editRender
-    applyAlwaysEditClass(col)
-    return true
-  }
-
-  // 4c) 对象配置式 editRender → editable + slots.edit + label 回退
-  const applyObjectEditRender = (col, field, editEnabled) => {
-    if (editEnabled && col.editable == null) col.editable = true
-    const erName = col.editRender.name
-    const mapEntry = EL_EDIT_MAP[erName]
-    if (!mapEntry) return
-
-    const Comp = mapEntry.comp
-    const wrapName = mapEntry.wrap
-    if (editEnabled && !col.slots.edit) {
-      // markRaw 避免 Vue 深度劫持造成渲染循环或状态丢失
-      col.slots.edit = buildObjectEditSlotFn(col, field, Comp, wrapName)
-    } else if (editEnabled && typeof col.slots.edit === 'string') {
-      // 用户写 slots.edit: 'edit_xxx' 字符串：包一层以附加自动弹出钩子，内部仍交给外部具名插槽
-      const slotName = col.slots.edit
-      if (typeof externalSlots[slotName] === 'function') {
-        col.slots.edit = markRaw((scope) => attachSlotAutoOpen(externalSlots[slotName](scope)))
-      }
-    }
-    // 未提供 render/slots.default 时，自动给非编辑态渲染 label 文本（基于 editOptions 映射）
-    if (!col.slots.default) {
-      col.slots.default = buildEditLabelFallback(col, field)
-    }
-  }
-
-  // 4) editRender → editable:true + slots.edit（分流：函数式 / 字符串式 / 对象配置式）
-  // 优先级：用户显式 slots.edit > editRender（详见 README）
-  // editable=false 时（权限控制）：不设置 col.editable / 不构建 slots.edit，
-  //   点击不进入编辑态、表头无编辑图标；对象式的 slots.default label 回退仍生效（仅显示）
-  // alwaysEdit 列（常驻编辑器）：接管为 slots.default 后直接返回 —— 不参与 vxe 编辑态
-  const applyEditRenderSlot = (col, field, rawCol) => {
-    const editEnabled = editable !== false
-    // alwaysEdit 先于 editRender 存在性判断：允许「仅配置 slots.edit」的列启用常驻渲染
-    if (editEnabled && col.alwaysEdit === true && applyAlwaysEdit(col, field, rawCol)) return
-    if (!col.editRender) return
-    if (typeof col.editRender === 'function') {
-      applyFunctionEditRender(col, field, editEnabled)
-    } else if (typeof col.editRender === 'string') {
-      applyStringEditRender(col, editEnabled)
-    } else if (col.editRender.name) {
-      applyObjectEditRender(col, field, editEnabled)
-    }
-  }
-
-  // 5) 默认过滤值注入（initParam.filters → col.filters[0].data）
-  const applyDefaultFilterValue = (col, field) => {
-    if (!col.filters || !col.filters.length || !col.filterRender) return
-    const fName = col.filterRender.name
-    if (!fName || !FILTER_DEFAULTS[fName]) return
-    const defaultVal = initFilters[field]
-    if (defaultVal == null) return
-    const data = buildFilterDataFromDefault(fName, defaultVal)
-    if (!data) return
-    col.filters = col.filters.map((opt, i) =>
-      i === 0 ? { ...opt, data: { ...data }, checked: isFilterActive(fName, data) } : { ...opt },
-    )
-  }
-
-  // 6) 操作列标记：params.isAction === true 的列注入 NO_ELLIPSIS_CLASS，
-  // 组件样式据此把该列排除在省略号裁剪之外（按钮等操作内容应完整显示）；
-  // 用户已配置 className 时追加（函数式 className 包一层）
-  const applyNoEllipsisClass = (col) => {
-    if (!(col.params && col.params.isAction === true)) return
-    if (typeof col.className === 'function') {
-      const userClassName = col.className
-      col.className = (params) => {
-        const cls = userClassName(params)
-        return cls ? `${cls} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
-      }
-      return
-    }
-    col.className = col.className ? `${col.className} ${NO_ELLIPSIS_CLASS}` : NO_ELLIPSIS_CLASS
-  }
-
-  // 叶子列处理总入口：按步骤调用各辅助函数
-  const transformLeafColumn = (rawCol) => {
-    if (!rawCol || typeof rawCol !== 'object') return rawCol
-    const colType = rawCol.type
-    const isSpecialCol = !!(colType && /^(checkbox|seq|radio|expand)$/.test(colType))
-
-    let col = { ...rawCol }
-    // slots 深拷贝一层，避免污染 rawCol
-    col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-
-    // 1) 公共列属性
-    col = applyCommonColumnProps(col, rawCol, isSpecialCol)
-    // 1a) 对齐默认值与一致性
-    applyColumnAlign(col, colType)
-    // 2) filterType 自动注入过滤配置
-    applyFilterTypeConfig(col)
-    // 3) render → slots.default
-    const field = col.field || ''
-    applyRenderSlot(col, field)
-    // 3a) headerRender → slots.header
-    applyHeaderRender(col, field)
-    // 4) editRender → editable:true + slots.edit（alwaysEdit 列 → 常驻编辑器）
-    applyEditRenderSlot(col, field, rawCol)
-    // 5) 默认过滤值注入
-    applyDefaultFilterValue(col, field)
-    // 6) 操作列：params.isAction === true 注入排除省略标记类
-    applyNoEllipsisClass(col)
-
-    return col
-  }
-
-  // 父分组列：只递归子列 + 应用 headerRender，跳过数据列专属逻辑避免错误注入
-  // params.hideColumn === true 的列完全不渲染（区别于 visible:false 可在个性化配置中开启）
-  const transformColumn = (rawCol) => {
-    if (!rawCol || typeof rawCol !== 'object') return rawCol
-    // hideColumn=true：直接过滤，不进入 vxe-grid columns，个性化配置也无法开启
-    if (rawCol.params && rawCol.params.hideColumn === true) return null
-    if (Array.isArray(rawCol.children) && rawCol.children.length) {
-      const col = { ...rawCol }
-      col.slots = rawCol.slots ? { ...rawCol.slots } : {}
-      col.children = rawCol.children.map(transformColumn).filter(Boolean)
-      // 父分组列：所有子列都被 hideColumn 隐藏时，父列也不渲染
-      if (col.children.length === 0) return null
-      // 父分组列也支持 headerRender（自定义表头渲染）
-      applyHeaderRender(col, col.field || '')
-      return col
-    }
-    return transformLeafColumn(rawCol)
-  }
-
-  return (columns || []).map(transformColumn).filter(Boolean)
+  return (cfg.columns || []).map((c) => transformColumn(ctx, c)).filter(Boolean)
 }
