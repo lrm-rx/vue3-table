@@ -1,0 +1,243 @@
+// 工具栏图标按钮间距（用于工具栏与表格右边框的间距对齐）
+$table-toolbar-gap: 12px;
+
+.table-pro {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--el-bg-color, #fff);
+  border: 1px solid var(--el-border-color-light, #ebeef5);
+  border-radius: 4px;
+  overflow: hidden;
+
+  &__body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+
+    :deep(.vxe-grid) {
+      width: 100%;
+      height: 100%;
+    }
+
+    // ========== 固定列分界线：左/右固定列与滚动区域之间添加实线 border ==========
+    // vxe 默认仅用 box-shadow 做视觉分隔，在 border=true 的表格中缺少明确的分界感。
+    // 同时给固定列表头/表体 wrapper 同步加 border，保证滚动时线条连续不中断。
+    :deep(.vxe-table--fixed-left-wrapper) {
+      border-right: 1px solid var(--el-border-color-lighter, #dcdfe6);
+      box-sizing: border-box;
+    }
+    :deep(.vxe-table--fixed-right-wrapper) {
+      border-left: 1px solid var(--el-border-color-lighter, #dcdfe6);
+      box-sizing: border-box;
+    }
+    // 固定列内部 header/body wrapper 也需要 border，否则滚动时分界线会断开
+    :deep(.vxe-table--fixed-left-wrapper .vxe-table--header-wrapper),
+    :deep(.vxe-table--fixed-left-wrapper .vxe-table--body-wrapper) {
+      border-right: 1px solid var(--el-border-color-lighter, #dcdfe6);
+    }
+    :deep(.vxe-table--fixed-right-wrapper .vxe-table--header-wrapper),
+    :deep(.vxe-table--fixed-right-wrapper .vxe-table--body-wrapper) {
+      border-left: 1px solid var(--el-border-color-lighter, #dcdfe6);
+    }
+
+    // ========== 列头布局：统一 flex 布局，防止图标换行 ==========
+    // 所有列（left/center/right）均使用 flex 布局，确保过滤图标和排序图标始终在一起，
+    // 文字可被挤压省略，但图标不会被压缩或换行。
+    :deep(.vxe-header--column) {
+      // 确保表头单元格不裁剪过滤图标的激活角标（::after 伪元素延伸到按钮外）
+      overflow: visible;
+
+      .vxe-cell--wrapper.vxe-header-cell--wrapper {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        // 默认不允许换行：图标和文字必须在同一行
+        flex-wrap: nowrap;
+        // 确保 wrapper 不裁剪过滤图标角标
+        overflow: visible;
+
+        // 标题文字：可被挤压省略，但保留最小宽度避免完全消失
+        .vxe-cell--title {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          flex: 0 1 auto;
+        }
+
+        // 排序、过滤、编辑、必填图标：不可压缩，始终完整显示
+        // 必填星号也需 flex-shrink:0，否则长标题列会把星号挤压到与编辑图标堆叠重叠
+        .vxe-cell--sort,
+        .vxe-cell--filter,
+        .vxe-cell--edit-icon,
+        .vxe-cell--required-icon {
+          flex-shrink: 0;
+        }
+      }
+
+      // 按 headerAlign 差异化对齐
+      // col--left：title 占剩余空间 + 图标靠右（两端对齐）
+      &.col--left {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          .vxe-cell--title {
+            margin-right: auto;
+          }
+        }
+      }
+      // col--center：title + 图标作为整体居中
+      &.col--center {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          justify-content: center;
+        }
+      }
+      // col--right：title 靠右 + 图标在左
+      &.col--right {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper {
+          .vxe-cell--title {
+            margin-left: auto;
+          }
+        }
+      }
+
+      .vxe-filter--btn {
+        position: relative;
+      }
+
+      // 过滤图标激活态（主色 + 角标提示）
+      &.is--filter-active,
+      &.col--filter.is--filter-active {
+        .vxe-filter--btn {
+          color: var(--el-color-primary, #409eff) !important;
+        }
+        .vxe-filter--btn::after {
+          content: "";
+          position: absolute;
+          top: -2px;
+          right: -2px;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: var(--el-color-danger, #f56c6c);
+          display: block;
+        }
+      }
+
+      // 排序图标激活态（主色高亮 asc/desc 激活按钮）
+      &.is--sort-active {
+        .vxe-sort--asc-btn.is--active,
+        .vxe-sort--desc-btn.is--active {
+          color: var(--el-color-primary, #409eff) !important;
+        }
+      }
+    }
+  }
+
+  // ========== 省略模式：插槽 / JSX 内容超出时显示省略号 ==========
+  // vxe 的 text-overflow: ellipsis 只对 wrapper 内纯文本生效；
+  // 插槽 / JSX 渲染的根元素是原子内联盒（el-button、el-tag、inline-flex 容器等），
+  // 会整体溢出被直接裁剪而不出现省略号，需让根元素自身约束宽度并裁剪省略。
+  // 换行模式下排除（列级 showOverflow 可能残留 col--ellipsis，避免误裁剪多行内容）；
+  // vxe 列宽测量期（data-calc-col）排除，避免 max-width:100% 干扰 width:"auto" 列的测量；
+  // 操作列（params.isAction → .table-pro__col--no-ellipsis）排除，按钮等操作内容不省略。
+  &:not(.is--wrap-text) {
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.col--ellipsis:not(.col--active):not(.table-pro__col--no-ellipsis):not(.table-pro__col--always-edit) > .vxe-cell > .vxe-cell--wrapper) {
+      & > * {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        // 内层具名元素（el-tag__content、JSX 内层 span 等）同样需要裁剪省略。
+        // 注意：不能设 display:inline-block —— overflow:hidden 的 inline-block 基线会变为
+        // 盒底缘（CSS 规范），把行盒从 line-height 撑高并下移文字（如 vxe-cell--label 内层 span
+        // 22px→28.8px），切换换行模式时出现上下跳动；el-tag/el-button 等内部 span 是 flex 项，
+        // 会被弹性布局自动块级化，overflow/text-overflow 本就生效，无需显式块级化。
+        & > * {
+          min-width: 0;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+
+          // 第三层：el-button 等组件内部可能还有一层文本容器（如 button > span 里的
+          // <b>/<strong>），同样需要约束才能触发 text-overflow；svg 内部为矢量图形，排除。
+          &:not(svg) > * {
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+        }
+
+        // 图标防压缩：内容被截断时 svg 图标保持原尺寸
+        & > svg {
+          flex-shrink: 0;
+        }
+      }
+    }
+
+    // 操作列（params.isAction）：覆盖 vxe 自带 col--ellipsis 的裁剪，按钮等内容完整显示
+    :deep(.vxe-table:not([data-calc-col]) .vxe-body--column.table-pro__col--no-ellipsis:not(.col--active) > .vxe-cell) {
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+      }
+    }
+  }
+
+  // ========== 文本换行模式 ==========
+  // vxe 在 table 级 showOverflow=false 时只会移除 col--ellipsis；
+  // 插槽 / JSX 渲染的内容常自带 white-space:nowrap（如 el-tag、el-button），
+  // 或列级 showOverflow 仍保留 col--ellipsis，导致换行不生效。
+  // 这里在换行模式下对单元格内容统一强制换行，确保自定义渲染同样生效。
+  &.is--wrap-text {
+    :deep(.vxe-body--column > .vxe-cell > .vxe-cell--wrapper) {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+
+      // 插槽 / JSX 渲染的根元素（el-tag、el-button、自定义容器等）
+      & > * {
+        white-space: normal !important;
+      }
+    }
+  }
+
+  &__title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--el-text-color-primary, #303133);
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+
+  &__search {
+    width: 200px;
+  }
+
+  // 工具栏左右内边距 = 按钮间距
+  :deep(.vxe-toolbar) {
+    padding-left: $table-toolbar-gap;
+    padding-right: $table-toolbar-gap;
+
+    .table-pro__title {
+      align-self: center;
+    }
+
+    .table-pro__reset-filter-btn {
+      margin-right: var(--vxe-ui-button-current-margin-left, 0.8em);
+    }
+  }
+
+  :deep(.el-dropdown-menu__item.is-active) {
+    color: var(--el-color-primary, #409eff);
+    font-weight: 600;
+  }
+}

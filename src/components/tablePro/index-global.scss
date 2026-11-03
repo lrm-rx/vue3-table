@@ -1,0 +1,265 @@
+// ======= 变量定义 =======
+$vxe-filter-arrow-size: 8px;
+$vxe-filter-arrow-gap: 2px; // 箭头底部与面板顶部边框之间的视觉安全间距
+$vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
+
+// ======= 面板主样式（!important 提升优先级覆盖 vxe 自带样式）=======
+.vxe-table--filter-wrapper.is--active {
+  max-width: min(92vw, 420px) !important;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+
+  background-color: #ffffff !important;
+  border: 1px solid var(--el-border-color-lighter, #dcdfe6) !important;
+  border-radius: 6px !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.08) !important;
+}
+
+// ======= 三角形箭头：两个伪元素叠加形成带边框、实心底色的三角形 =======
+.vxe-table--filter-wrapper.is--active::before,
+.vxe-table--filter-wrapper.is--active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--vxe-filter-arrow-left, 50%);
+  transform: translate(-50%, -100%); // 把三角形挪到面板上边缘"上方"
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  display: block !important; // 确保一定渲染
+  visibility: visible !important;
+}
+
+// 外层：灰色边框三角（比内层大 1px）
+.vxe-table--filter-wrapper.is--active::before {
+  border-left: #{$vxe-filter-arrow-size + 1px} solid transparent !important;
+  border-right: #{$vxe-filter-arrow-size + 1px} solid transparent !important;
+  border-bottom: #{$vxe-filter-arrow-size + 1px} solid
+    var(--el-border-color-lighter, #dcdfe6) !important;
+  z-index: 0;
+}
+
+// 内层：白色实心三角（比外层小 1px，叠在上面只让外层底部露出 1px "边"）
+.vxe-table--filter-wrapper.is--active::after {
+  border-left: #{$vxe-filter-arrow-size} solid transparent !important;
+  border-right: #{$vxe-filter-arrow-size} solid transparent !important;
+  margin-top: 1px; // 往下 1px 嵌入边框三角内部
+  border-bottom: #{$vxe-filter-arrow-size} solid #ffffff !important;
+  z-index: 1;
+}
+
+// ======= 箭头正下方的 border 遮罩：让三角形底边接到面板顶边，不留缝隙 =======
+.vxe-table--filter-wrapper.is--active {
+  --vxe-filter-cover-left: calc(
+    var(--vxe-filter-arrow-left, 50%) - #{$vxe-filter-arrow-size}
+  );
+}
+.vxe-table--filter-wrapper.is--active
+  > .vxe-table--filter-wrapper--arrow-cover {
+  position: absolute;
+  top: -1px;
+  left: var(--vxe-filter-cover-left);
+  width: #{$vxe-filter-arrow-size * 2};
+  height: 3px;
+  background: #ffffff;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.vxe-table--filter-wrapper.is--active .filter-panel {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+// 覆盖 .el-range-editor 的 width/min-width，避免清空按钮撑宽输入框
+.vxe-table--filter-wrapper.is--active {
+  .el-date-editor.el-input,
+  .el-date-editor.el-range-editor,
+  .el-date-editor {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+  }
+
+  .el-range-editor {
+    .el-range-input-wrapper {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .el-range-input {
+      min-width: 0;
+      width: 100%;
+    }
+  }
+}
+
+// ======= 编辑态：约束 Element Plus 输入类组件不超出单元格宽度 =======
+// Element Plus 默认宽度（如 InputNumber 150px、DatePicker 220px）会超出窄列单元格，统一覆盖为 100%
+.vxe-table {
+  .vxe-body--column.col--active {
+    > .vxe-cell {
+      width: 100%;
+      box-sizing: border-box;
+
+      // 所有 Element Plus 输入类组件本体宽度统一 100%
+      // font-size: inherit —— 修复点击激活编辑时内容"上移"：
+      // 显示态文本字号随表格尺寸（如 size=small 为 12px），el 控件默认 14px，
+      // 激活瞬间字号跳变会加重"内容上移"的观感，这里让控件字号跟随单元格
+      .el-input,
+      .el-input-number,
+      .el-input__wrapper,
+      .el-select,
+      .el-select-v2,
+      .el-date-editor,
+      .el-time-editor,
+      .el-time-picker,
+      .el-time-select {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+        font-size: inherit;
+      }
+
+      // InputNumber 内部输入框自适应
+      .el-input-number {
+        .el-input__wrapper {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+      }
+
+      // DatePicker/TimePicker 范围选择器内部 input 自适应
+      .el-range-editor {
+        .el-range-input-wrapper {
+          flex: 1 1 auto;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .el-range-input {
+          min-width: 0;
+          width: 100%;
+        }
+      }
+    }
+  }
+}
+
+// ======= 编辑态：修复点击激活编辑时单元格内容"上移" =======
+// 显示态文本是 22px 行盒在单元格内垂直居中；Element Plus 控件默认 32px 高，
+// 比单元格内容盒（行高 - 上下 padding）高，激活后盒体向上溢出（如 size=small：
+// 内容盒 28px，输入框 32px，盒顶比文本行盒高 5px），观感即"内容上移"。
+// 把控件尺寸锚定为内容盒高度（行高 - 2×padding），控件与显示态文本保持同一垂直中心。
+.vxe-table--render-default .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 32px; // 默认：行高 48 - padding 8*2（与 el 默认一致，行为不变）
+}
+.vxe-table--render-default.size--medium .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 30px; // 行高 44 - padding 7*2
+}
+.vxe-table--render-default.size--small .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 28px; // 行高 40 - padding 6*2
+}
+.vxe-table--render-default.size--mini .vxe-body--column.col--active > .vxe-cell {
+  --el-component-size: 26px; // 行高 36 - padding 5*2
+}
+
+// ======= 常驻编辑器（列 alwaysEdit）：编辑器始终显示，约束宽度不超出单元格 =======
+// 与上方 col--active（vxe 编辑态）同一套宽度覆盖：Element Plus 默认宽度
+// （如 InputNumber 150px、DatePicker 220px）会超出窄列单元格，统一覆盖为 100%
+.vxe-table {
+  .vxe-body--column.table-pro__col--always-edit {
+    > .vxe-cell {
+      width: 100%;
+      box-sizing: border-box;
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        width: 100%;
+        overflow: visible;
+        white-space: normal;
+      }
+
+      .el-input,
+      .el-input-number,
+      .el-input__wrapper,
+      .el-select,
+      .el-select-v2,
+      .el-date-editor,
+      .el-time-editor,
+      .el-time-picker,
+      .el-time-select {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+      }
+
+      .el-input-number {
+        .el-input__wrapper {
+          padding-left: 8px;
+          padding-right: 8px;
+        }
+      }
+
+      .el-range-editor {
+        .el-range-input-wrapper {
+          flex: 1 1 auto;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .el-range-input {
+          min-width: 0;
+          width: 100%;
+        }
+      }
+    }
+  }
+}
+
+// 修复 width:"auto" 列每次刷新列宽累加：vxe 测量期（data-calc-col）必须让 wrapper
+// 收缩为内容宽度，否则上一次列宽会被当作内容宽度测回（calcCellWidth 每次 +4、每刷新跑 4 次 = +16）。
+// 必须 !important：上方表头 flex 布局规则给 .vxe-header-cell--wrapper 设了 width:100%，
+// :deep() 编译后特异性更高，非 !important 无法覆盖
+.vxe-table[data-calc-col] .vxe-cell > .vxe-cell--wrapper {
+  width: max-content !important;
+}
+
+// body 级兜底：popover 计算位置出错时也不要出现页面级横向滚动条
+body {
+  overflow-x: hidden;
+}
+
+// ======= 校验失败浮层样式修复（对齐 vxe 内联校验提示 .vxe-cell--valid-error-tip）=======
+// 配色：vxe-table 4.20 将校验浮层迁移到 vxe-pc-ui 的 VxeTooltip，浮层 class 变为
+// .vxe-tooltip--wrapper.vxe-table--valid-error，但 vxe-table 样式表仍只针对旧 class
+// div.vxe-table--tooltip-wrapper 编写校验配色 → 新浮层匹配不到红底样式，只剩
+// theme--dark 的深灰底（#303133），与多行/固定高度表格里的内联红底提示不一致。
+// 此处按 vxe 自身变量补回红底白字（含箭头），与内联校验提示视觉统一。
+// 宽度：旧版 vxe-pc-ui 的 tooltip 定位（updatePanelPlacement 默认 isMinWidth=true）
+// 会给浮层内联写入 min-width = 目标单元格宽度，短文案时浮层被撑成与单元格同宽；
+// 本项目 vxe-pc-ui@4.17 已显式传 isMinWidth:false 不会写入，min-width 覆盖为防御性，
+// 保证组件复制到旧版本项目后表现一致。内联样式优先级高于普通规则，必须 !important。
+.vxe-tooltip--wrapper.vxe-table--valid-error {
+  min-width: 0 !important;
+
+  .vxe-tooltip--body {
+    background-color: var(--vxe-ui-table-validate-error-color, #f56c6c) !important;
+    color: #fff !important;
+  }
+
+  // 高度收紧：tooltip 通用内容 padding（8px 12px）对单行校验提示偏大，
+  // 对齐 vxe 内联校验提示的紧凑观感
+  .vxe-tooltip--content {
+    padding: 4px 8px !important;
+  }
+
+  // 隐藏三角箭头：对齐内联校验提示 .vxe-cell--valid-error-tip 的样式（内联提示无箭头）
+  .vxe-tooltip--arrow {
+    display: none !important;
+  }
+}
