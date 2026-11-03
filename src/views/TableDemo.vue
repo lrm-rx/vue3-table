@@ -94,7 +94,14 @@ const columns = ref([
       props: {
         onKeydown: (e) => {
           const { row, column } = editingCell.value || {};
-          console.log("[username keydown]", e.key, "行:", row, "列:", column?.title);
+          console.log(
+            "[username keydown]",
+            e.key,
+            "行:",
+            row,
+            "列:",
+            column?.title,
+          );
         },
         onFocus: () => {
           const { row, column } = editingCell.value || {};
@@ -218,7 +225,7 @@ const columns = ref([
       props: { options: [] },
     },
     editRender: { name: "ElSelect" },
-   // render: "cell_department",
+    // render: "cell_department",
   },
   {
     field: "status",
@@ -349,7 +356,9 @@ const columns = ref([
     // 非编辑态展示色块 + 色值文本（便于识别当前选中颜色）
     render: ({ cellValue }) =>
       cellValue ? (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+        <span
+          style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+        >
           <span
             style={{
               display: "inline-block",
@@ -377,7 +386,9 @@ const editRules = ref({
   age: [{ required: true, message: "请输入年龄", trigger: "change" }],
   department: [{ required: true, message: "请选择部门", trigger: "change" }],
   role: [{ required: true, message: "请选择角色", trigger: "change" }],
-  createTime: [{ required: true, message: "请选择创建时间", trigger: "change" }],
+  createTime: [
+    { required: true, message: "请选择创建时间", trigger: "change" },
+  ],
 });
 
 const currentApi = ref(getUserListApi);
@@ -472,7 +483,12 @@ const staticData = ref(genStaticData());
 
 const staticColumns = ref([
   { type: "seq", width: 60, title: "序号" },
-  { field: "username", title: "姓名", sortable: true, filterType: "FilterInput" },
+  {
+    field: "username",
+    title: "姓名",
+    sortable: true,
+    filterType: "FilterInput",
+  },
   {
     field: "role",
     title: "角色",
@@ -529,7 +545,9 @@ const staticInitParam = { sortField: "createTime", sortOrder: "desc" };
 const onStaticFilterConfirm = (payload) => {
   const active = (payload?.filters || []).filter((f) => f.active).length;
   const sorts = (payload?.sorts || []).filter((s) => s.order).length;
-  ElMessage.success(`本地过滤确认：生效过滤 ${active} 条，排序 ${sorts} 个字段`);
+  ElMessage.success(
+    `本地过滤确认：生效过滤 ${active} 条，排序 ${sorts} 个字段`,
+  );
 };
 
 // ========== 常驻编辑器（列 alwaysEdit）示例 ==========
@@ -571,7 +589,11 @@ const alwaysEditColumns = ref([
     width: 180,
     editRender: {
       name: "ElDatePicker",
-      props: { type: "date", valueFormat: "YYYY-MM-DD", placeholder: "选择日期" },
+      props: {
+        type: "date",
+        valueFormat: "YYYY-MM-DD",
+        placeholder: "选择日期",
+      },
     },
     alwaysEdit: true,
   },
@@ -612,11 +634,15 @@ const onAlwaysEditChange = ({ field, value, cellValue }) => {
 const onAlwaysEditSave = async () => {
   const data = alwaysEditRef.value?.getData?.() || [];
   await alwaysEditRef.value?.markSaved?.();
-  ElMessage.success(`已保存 ${data.length} 条（首行：${data[0]?.username} / ${data[0]?.department} / ${data[0]?.age}）`);
+  ElMessage.success(
+    `已保存 ${data.length} 条（首行：${data[0]?.username} / ${data[0]?.department} / ${data[0]?.age}）`,
+  );
 };
 const onAlwaysEditCancel = async () => {
   const reverted = await alwaysEditRef.value?.revertChanges?.();
-  ElMessage[reverted ? "success" : "info"](reverted ? "已还原为变更前数据" : "当前没有可还原的变更");
+  ElMessage[reverted ? "success" : "info"](
+    reverted ? "已还原为变更前数据" : "当前没有可还原的变更",
+  );
 };
 
 // ===== 校验 trigger + 无固定高度单行提示兜底 验证 =====
@@ -627,11 +653,30 @@ const onAlwaysEditCancel = async () => {
 const validDemoRef = ref();
 const validDemoColumns = ref([
   { type: "seq", width: 60, title: "序号" },
-  { field: "username", title: "姓名", width: 160, editRender: { name: "ElInput" } },
-  { field: "code", title: "编码（非必填，须为数字）", minWidth: 200, editRender: { name: "ElInput" } },
-  { field: "email", title: "邮箱（非必填，blur校验）", minWidth: 220, editRender: { name: "ElInput" } },
+  {
+    field: "username",
+    title: "姓名",
+    width: 160,
+    editRender: { name: "ElInput" },
+  },
+  {
+    field: "code",
+    title: "编码（非必填，须为数字）",
+    minWidth: 200,
+    editRender: { name: "ElInput" },
+  },
+  {
+    field: "email",
+    title: "邮箱（非必填，blur校验）",
+    minWidth: 220,
+    editRender: { name: "ElInput" },
+  },
 ]);
-const validDemoData = ref([{ id: 1, username: "张三", code: "100", email: "a@b.co" }]);
+const validDemoData = ref([
+  { id: 1, username: "", code: "aa", email: "a@b.co" },  
+  { id: 2, username: "", code: "aad", email: "c@d.co" },
+  { id: 3, username: "王五", code: "300", email: "e@f.co" }
+]);
 const validDemoRules = ref({
   username: [{ required: true, message: "请输入姓名", trigger: "change" }],
   code: [
@@ -639,7 +684,11 @@ const validDemoRules = ref({
       trigger: "change",
       message: "编码必须为数字",
       validator: ({ cellValue }) => {
-        if (cellValue != null && cellValue !== "" && !/^\d+$/.test(String(cellValue))) {
+        if (
+          cellValue != null &&
+          cellValue !== "" &&
+          !/^\d+$/.test(String(cellValue))
+        ) {
           return new Error("编码必须为数字");
         }
       },
@@ -651,7 +700,11 @@ const validDemoRules = ref({
       trigger: "blur",
       message: "邮箱格式不正确",
       validator: ({ cellValue }) => {
-        if (cellValue != null && cellValue !== "" && !/^[\w.-]+@[\w.-]+\.\w+$/.test(String(cellValue))) {
+        if (
+          cellValue != null &&
+          cellValue !== "" &&
+          !/^[\w.-]+@[\w.-]+\.\w+$/.test(String(cellValue))
+        ) {
           return new Error("邮箱格式不正确");
         }
       },
@@ -683,7 +736,11 @@ const onValidDemoSubmit = async () => {
 // z-index 必须高于 dialog 遮罩才不被遮挡。此处实测验证两种提示均可见。
 const dialogValidVisible = ref(false);
 const dialogValidRef = ref();
-const dialogValidData = ref([{ id: 1, username: "张三", code: "100", email: "a@b.co" }]);
+const dialogValidData = ref([
+  { id: 1, username: "张三", code: "100", email: "a@b.co" },
+  { id: 2, username: "李四", code: "200", email: "c@d.co" },
+  { id: 3, username: "王五", code: "300", email: "e@f.co" },
+]);
 const onDialogValidSubmit = async () => {
   const errMap = await dialogValidRef.value?.fullValidate?.(true);
   ElMessage[errMap ? "error" : "success"](
@@ -732,16 +789,22 @@ const onEmailBlur = (row, column) => {
 const onTextareaClear = () => ElMessage.info("已清空备注");
 const onTextareaCancel = (params) => {
   const { row, field, value } = params || {};
-  ElMessage.info(`已取消编辑：${field}（行：${row?.username || row?.account}），未保存值=${JSON.stringify(value)}`);
+  ElMessage.info(
+    `已取消编辑：${field}（行：${row?.username || row?.account}），未保存值=${JSON.stringify(value)}`,
+  );
 };
 const onTextareaConfirm = (params) => {
   const { row, field, value } = params || {};
-  ElMessage.success(`已确认编辑：${field} = ${JSON.stringify(value)}（行：${row?.username || row?.account}）`);
+  ElMessage.success(
+    `已确认编辑：${field} = ${JSON.stringify(value)}（行：${row?.username || row?.account}）`,
+  );
 };
 const onRefresh = (payload) => {
   const activeFilters = (payload?.filters || []).filter((f) => f.active).length;
   const activeSorts = (payload?.sorts || []).filter((s) => s.order).length;
-  ElMessage.success(`工具栏刷新：过滤条件 ${activeFilters} 条，排序条件 ${activeSorts} 条`);
+  ElMessage.success(
+    `工具栏刷新：过滤条件 ${activeFilters} 条，排序条件 ${activeSorts} 条`,
+  );
 };
 const onResetFilter = (payload) => {
   const remaining = (payload?.filters || []).filter((f) => f.active).length;
@@ -767,7 +830,9 @@ const doValidate = async () => {
       ElMessage.error(`校验未通过：${errCount} 个字段存在错误`);
       return false;
     }
-    ElMessage.success(`校验通过，提交 ${tableProRef.value?.getData?.()?.length || 0} 条数据`);
+    ElMessage.success(
+      `校验通过，提交 ${tableProRef.value?.getData?.()?.length || 0} 条数据`,
+    );
     return true;
   } catch (err) {
     ElMessage.error(`校验异常：${err?.message || err}`);
@@ -783,7 +848,9 @@ const onSaveChanges = async () => {
 };
 const onCancelChanges = async () => {
   const ok = await tableProRef.value?.revertChanges?.();
-  ElMessage[ok ? "success" : "info"](ok ? "已还原为变更前数据" : "当前没有可还原的变更");
+  ElMessage[ok ? "success" : "info"](
+    ok ? "已还原为变更前数据" : "当前没有可还原的变更",
+  );
 };
 const onInsertRow = () => tableProRef.value?.insertRow?.({});
 const onRemoveSelected = () => {
@@ -896,7 +963,9 @@ const onRemoveSelected = () => {
       </template>
 
       <template #header_phone="{ column }">
-        <span style="color: var(--el-color-primary)">📱 {{ column.title }}</span>
+        <span style="color: var(--el-color-primary)"
+          >📱 {{ column.title }}</span
+        >
       </template>
       <template #operation="{ row }">
         <div style="display: flex; gap: 8px; justify-content: center">
@@ -921,16 +990,20 @@ const onRemoveSelected = () => {
     </TablePro>
 
     <el-divider content-position="left">
-      本地过滤 + 排序：由 localFilterSort 布尔属性控制（true=本地处理 / false=后端参与，与是否传 requestApi 无关）
+      本地过滤 + 排序：由 localFilterSort 布尔属性控制（true=本地处理 /
+      false=后端参与，与是否传 requestApi 无关）
     </el-divider>
-    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+    <div
+      style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px"
+    >
       <el-switch
         v-model="localFilterSortEnabled"
         @change="onToggleLocalFilterSort"
       />
       <span style="font-size: 13px; color: #606266">
-        localFilterSort = <b>{{ localFilterSortEnabled }}</b>
-        （{{ localFilterSortEnabled ? "本地处理，后端不参与" : "后端参与" }}）
+        localFilterSort = <b>{{ localFilterSortEnabled }}</b> （{{
+          localFilterSortEnabled ? "本地处理，后端不参与" : "后端参与"
+        }}）
       </span>
       <el-tag size="small" type="warning">
         requestFilterAPI 被调用次数：{{ staticFilterApiCalls }}
@@ -953,9 +1026,13 @@ const onRemoveSelected = () => {
     />
 
     <el-divider content-position="left">
-      常驻编辑器（列 alwaysEdit）：单元格始终为输入控件（不进入点击编辑态），输入停止 300ms / 失焦时写回行数据
+      常驻编辑器（列
+      alwaysEdit）：单元格始终为输入控件（不进入点击编辑态），输入停止 300ms /
+      失焦时写回行数据
     </el-divider>
-    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+    <div
+      style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px"
+    >
       <el-tag :type="alwaysEditChanged ? 'warning' : 'success'">
         cellChanged = {{ alwaysEditChanged }}
       </el-tag>
@@ -989,10 +1066,12 @@ const onRemoveSelected = () => {
     />
 
     <el-divider content-position="left">
-      校验 trigger 生效 + 无固定高度单行提示兜底（:height="null" + max-height 固定 +
-      单行数据 + validConfig.autoPos=false，校验失败浮层应完整可见）
+      校验 trigger 生效 + 无固定高度单行提示兜底（:height="null" + max-height
+      固定 + 单行数据 + validConfig.autoPos=false，校验失败浮层应完整可见）
     </el-divider>
-    <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
+    <div
+      style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px"
+    >
       <el-button type="success" @click="onValidDemoSubmit">提交校验</el-button>
       <el-button @click="toggleValidDemoRows">
         {{ validDemoData.length > 1 ? "恢复单行" : "添加一行" }}
@@ -1009,7 +1088,7 @@ const onRemoveSelected = () => {
       :data="validDemoData"
       :editable="true"
       :edit-rules="validDemoRules"
-      :valid-config="{ autoPos: false }"
+      :valid-config="{ autoPos: false, msgMode: 'full' }"
       :pagination="false"
       :show-toolbar="false"
       :height="null"
@@ -1017,17 +1096,29 @@ const onRemoveSelected = () => {
     />
 
     <el-divider content-position="left">
-      弹窗中的表格校验提示（el-dialog 遮罩 z-index 较高，内联/浮层提示均应可见不被遮挡）
+      弹窗中的表格校验提示（el-dialog 遮罩 z-index
+      较高，内联/浮层提示均应可见不被遮挡）
     </el-divider>
-    <el-button @click="dialogValidVisible = true">在弹窗中打开校验表格</el-button>
+    <el-button @click="dialogValidVisible = true"
+      >在弹窗中打开校验表格</el-button
+    >
     <el-dialog
       v-model="dialogValidVisible"
       title="弹窗中的表格"
       width="800px"
       append-to-body
     >
-      <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px">
-        <el-button type="success" @click="onDialogValidSubmit">提交校验</el-button>
+      <div
+        style="
+          margin-bottom: 8px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        "
+      >
+        <el-button type="success" @click="onDialogValidSubmit"
+          >提交校验</el-button
+        >
         <span style="font-size: 13px; color: #606266">
           清空姓名后点「提交校验」：单行浮层应浮在弹窗之上
         </span>
