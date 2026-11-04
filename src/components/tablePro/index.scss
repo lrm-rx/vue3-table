@@ -58,7 +58,8 @@ $table-toolbar-gap: 12px;
         // 确保 wrapper 不裁剪过滤图标角标
         overflow: visible;
 
-        // 标题文字：可被挤压省略，但保留最小宽度避免完全消失
+        // 标题文字：可被挤压省略，但保留最小宽度避免完全消失（默认单行省略号）；
+        // headerWrap 开启时由下方 .is--header-wrap 规则块覆盖为换行完整显示
         .vxe-cell--title {
           min-width: 0;
           overflow: hidden;
@@ -239,5 +240,20 @@ $table-toolbar-gap: 12px;
   :deep(.el-dropdown-menu__item.is-active) {
     color: var(--el-color-primary, #409eff);
     font-weight: 600;
+  }
+
+  // ========== header-wrap：表头标题过长换行完整显示 ==========
+  // 开启（根节点带 is--header-wrap）：取消省略三件套，标题换行完整显示；
+  // 关闭（默认）：沿用上方基础规则，单行截断并显示省略号
+  &.is--header-wrap {
+    .table-pro__body {
+      :deep(.vxe-header--column) {
+        .vxe-cell--wrapper.vxe-header-cell--wrapper .vxe-cell--title {
+          overflow: visible;
+          text-overflow: clip;
+          white-space: normal;
+        }
+      }
+    }
   }
 }

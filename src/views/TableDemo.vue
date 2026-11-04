@@ -302,9 +302,16 @@ const columns = ref([
   },
   {
     field: "remark",
-    title: "备注",
+    title: "备注备注备注备注备注备注备注备注备注备注备注备注备注",
+    filterType: "FilterInput",
     minWidth: 200,
-    editRender: { name: "TextareaPopoverEdit" },
+    editRender: {
+      name: "TextareaPopoverEdit",
+      props: {
+        // 函数式 placeholder：接收 { row, column, field }，可按当前行数据定制
+        placeholder: ({ row }) => `请输入${row?.username ?? "该行"}的备注`,
+      },
+    },
     params: { hideColumn: false },
   },
   {
@@ -861,10 +868,29 @@ const onRemoveSelected = () => {
   }
   tableProRef.value?.removeRows?.(rows);
 };
+
+// 表头标题过长换行开关（绑定主表 header-wrap 属性；true=换行完整显示，false=单行省略号）
+const headerWrapEnabled = ref(false);
 </script>
 
 <template>
   <div style="padding: 0 20px 20px">
+    <el-divider content-position="left">
+      主表：header-wrap 控制表头标题过长时换行完整显示（关闭=单行省略号；长标题示例：创建时间
+      / 备注列）
+    </el-divider>
+    <div
+      style="margin-bottom: 8px; display: flex; align-items: center; gap: 10px"
+    >
+      <el-switch v-model="headerWrapEnabled" />
+      <span style="font-size: 13px; color: #606266">
+        headerWrap = <b>{{ headerWrapEnabled }}</b> （{{
+          headerWrapEnabled
+            ? "表头标题过长换行完整显示"
+            : "单行显示省略号（悬停 title 显示完整标题）"
+        }}）
+      </span>
+    </div>
     <TablePro
       ref="tableProRef"
       :key="paginationEnabled ? 'p-on' : 'p-off'"
@@ -883,6 +909,7 @@ const onRemoveSelected = () => {
       :pagination="paginationEnabled"
       :pager-config="{ pageSizes }"
       :editable="editableEnabled"
+      :header-wrap="headerWrapEnabled"
       v-model:cellChanged="cellChanged"
       :init-param="initParam"
       :sort-config="{ remote: true, multiple: false, trigger: 'button' }"

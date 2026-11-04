@@ -27,7 +27,7 @@
  *      注：vxe 外部点击走 handleClearEdit 内部方法，不经过 clearEdit，故该拦截仅为辅助。
  *      外部点击的真正拦截由第 1 步的 vxe-table--ignore-clear 类完成。
  */
-import { ref, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { ElPopover, ElInput, ElButton } from "element-plus";
 
 const props = defineProps({
@@ -37,7 +37,22 @@ const props = defineProps({
   title: { type: String, default: "" },
   // vxe 表格实例（由 tablePro 透传 scope.$table），用于调用 clearEdit 退出编辑态
   table: { type: Object, default: null },
+  // 当前行数据（由 tablePro 透传 scope.row），供函数式 placeholder 等属性按行取值
+  row: { type: Object, default: null },
+  // 当前列配置（由 tablePro 透传 scope.column）
+  column: { type: Object, default: null },
+  // 当前字段名（由 tablePro 透传）
+  field: { type: String, default: "" },
+  // 占位文本：字符串直接显示；函数接收 { row, column, field } 返回值显示（可按行数据定制）
+  placeholder: { type: [String, Function], default: "请输入内容" },
 });
+
+// 解析占位文本：函数式时传入当前行上下文求值
+const resolvedPlaceholder = computed(() =>
+  typeof props.placeholder === "function"
+    ? props.placeholder({ row: props.row, column: props.column, field: props.field })
+    : props.placeholder,
+);
 const emit = defineEmits(["update:modelValue", "clear", "cancel", "confirm"]);
 
 // 本地副本：进入编辑时初始化为 modelValue（原值）
@@ -254,7 +269,7 @@ onBeforeUnmount(() => {
         v-model="text"
         type="textarea"
         :rows="textareaRows"
-        placeholder="请输入内容"
+        :placeholder="resolvedPlaceholder"
       />
     </div>
   </ElPopover>
@@ -308,18 +323,13 @@ onBeforeUnmount(() => {
   }
 }
 
-// 放大并加深 popover 箭头，使其指向更明显
+// 放大 popover 箭头，使其指向更明显
 .el-popper.textarea-popover-edit {
-  // 箭头默认 8px，放大到 12px 并加深颜色
+  // 箭头默认 8px，放大到 12px；颜色不覆盖，沿用 el-popper 默认（与 popover 背景一致）
   .el-popper__arrow,
   .el-popper__arrow::before {
     width: 12px;
     height: 12px;
-  }
-
-  .el-popper__arrow::before {
-    background: var(--el-color-primary, #409eff);
-    border-color: var(--el-color-primary, #409eff);
   }
 
   // popper 在蒙版之上，确保可交互

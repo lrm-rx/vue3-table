@@ -562,6 +562,10 @@ const buildObjectEditSlotFn = (ctx, col, field, Comp, wrapName) => markRaw((scop
   if (popperCls != null) extra.popperClass = popperCls
   // TextareaPopoverEdit 三按钮事件透传：携带 { row, column, field, value } 抛给 tablePro
   if (erName === 'TextareaPopoverEdit') {
+    // 透传当前行/列/字段上下文，供函数式属性（如 placeholder: ({ row }) => ...）按行求值
+    extra.row = row
+    extra.column = scope.column
+    extra.field = field
     const buildPayload = (val) => ({ row, column: scope.column, field, value: val })
     extra.onClear = (e) => ctx.emit('textarea-clear', buildPayload(e?.value ?? ctx.editLocalState[stateKey]))
     extra.onCancel = (e) => ctx.emit('textarea-cancel', buildPayload(e?.value ?? ctx.editLocalState[stateKey]))

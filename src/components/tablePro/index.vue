@@ -200,6 +200,12 @@ const props = defineProps({
     default: () => ({ minWidth: 120 }),
   },
 
+  // ========== 表头标题过长换行（与 wrapText 命名/语义对齐）==========
+  // 开启后所有列表头标题过长时换行完整显示；
+  // 关闭（默认）单行截断显示省略号，并通过原生 title 属性悬停显示完整标题
+  // （vxe table 级 showHeaderOverflow='title'）。列级 showHeaderOverflow 显式配置优先级更高
+  headerWrap: { type: Boolean, default: false },
+
   // ========== 单元格编辑：预置选项数组 ==========
   // 按列 field 索引，用于 ElSelect/ElRadio/ElCheckbox 等需要 options 的编辑控件
   editOptions: { type: Object, default: () => ({}) },
@@ -1945,6 +1951,8 @@ const gridProps = computed(() => {
       expandConfig: props.expandConfig,
       columnConfig: { resizable: true, ...props.columnConfig },
       showOverflow: wrapText.value ? false : "tooltip",
+      // 表头标题过长：headerWrap 关闭（默认）单行省略号 + 原生 title 悬停显示完整标题，开启则换行完整显示（列级配置可覆盖）
+      showHeaderOverflow: props.headerWrap ? false : "title",
       columns: mergedColumns.value,
       data: renderData.value,
       // 校验规则透传到 vxe-grid，配合暴露的 validate / fullValidate 方法
@@ -2259,7 +2267,10 @@ defineExpose({
 <template>
   <div
     class="table-pro"
-    :class="[attrs.class, { 'is--wrap-text': wrapText }]"
+    :class="[
+      attrs.class,
+      { 'is--wrap-text': wrapText, 'is--header-wrap': props.headerWrap },
+    ]"
     :style="attrs.style"
   >
     <div class="table-pro__body">
