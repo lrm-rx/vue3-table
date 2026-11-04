@@ -6,6 +6,7 @@
 import {
   ref,
   reactive,
+  readonly,
   computed,
   useSlots,
   useAttrs,
@@ -210,16 +211,18 @@ const props = defineProps({
   // 形如：{ remark: [{ required: true, message: '请输入备注', trigger: 'change' }] }
   // 配合暴露的 validate / fullValidate / clearValidate 方法在提交时触发
   editRules: { type: Object, default: () => ({}) },
-
-  // ========== 变更跟踪（v-model:cellChanged 双向绑定）==========
-  // 监听 vxe-grid 自带的三类本地操作（单元格编辑 / 新增行 / 移除行），
-  // 是否存在未保存变更；脏状态时父组件可显示保存/取消按钮
-  // （保存成功后调用暴露的 markSaved，取消时调用 revertChanges 还原基线）
-  // 即时性：单元格处于编辑态时，每次输入/选择与原值不一致即立刻翻为 true，
-  // 改回原值立刻翻回 false —— 不等待失焦 / edit-closed / 下拉面板关闭
-  // （编辑中按单值 O(1) 比对；edit-closed 提交后才交由 vxe getRecordset 全表 diff 接管）
-  cellChanged: { type: Boolean, default: false },
 });
+
+// ========== 变更跟踪（defineModel:cellChanged，可 v-model 也可 ref 直读）==========
+// 监听 vxe-grid 自带的三类本地操作（单元格编辑 / 新增行 / 移除行），
+// 是否存在未保存变更；脏状态时父组件可显示保存/取消按钮
+// （保存成功后调用暴露的 markSaved，取消时调用 revertChanges 还原基线）
+// 即时性：单元格处于编辑态时，每次输入/选择与原值不一致即立刻翻为 true，
+// 改回原值立刻翻回 false —— 不等待失焦 / edit-closed / 下拉面板关闭
+// （编辑中按单值 O(1) 比对；edit-closed 提交后才交由 vxe getRecordset 全表 diff 接管）
+// defineModel：父组件可继续 v-model:cellChanged 双向绑定；不绑定时内部状态自维护，
+// 且经 defineExpose 暴露只读值，父组件可直接 ref.cellChanged 读取（无需声明本地变量）
+const cellChangedModel = defineModel("cellChanged", { type: Boolean, default: false });
 
 // 声明组件 emits：vxe-grid 透传事件 + TablePro 自身事件
 const emit = defineEmits([...FORWARD_GRID_EVENTS, ...TABLE_PRO_EVENTS]);
@@ -380,8 +383,13 @@ const onEditActivated = (params) => {
   // 对象式 editRender 的 v-model 绑 editLocalState[key]；
   // 函数式/字符串式（customEditFields）由用户插槽直接绑 row[field]
   const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
+  // 注意：vxe edit-activated 事件参数里的 row 是 internalData 中的原始对象（非响应式），
+  // 而用户编辑器（插槽作用域里的 row）是同一 target 的响应式代理。
+  // 直接用原始对象做 watch source 读不到依赖、永不触发；
+  // reactive(row) 命中 Vue 的 proxy 缓存，拿到渲染期同一个代理，修改才能被感知。
+  const rowProxy = isCustomEdit ? reactive(row) : null
   const source = isCustomEdit
-    ? () => row[field]
+    ? () => rowProxy[field]
     : () => editLocalState[key]
   // flush:sync → 输入事件当拍翻转，不等 nextTick；自定义插槽监听单字段用 deep 兜底原地突变
   const stop = watch(
@@ -544,15 +552,12 @@ const refreshBaseline = () => {
   baselineRows.value = fullData && fullData.length ? cloneDeep(fullData) : [];
 };
 
-// 沿 lastEmitted 去重而非仅比 props.cellChanged：sync watcher 支持同一拍内
-// true→false 连翻（程序式连续赋值），此时父组件 v-model 回写尚未刷新 prop，
-// 只比 prop 会漏掉 false 沿；内部状态每次实际翻转都必须通知父组件
-let lastEmittedChanged = props.cellChanged;
+// 沿 model 本地值去重：defineModel 写入当拍即同步本地值，sync watcher 同一拍内
+// true→false 连翻（程序式连续赋值）也能读到最新值，无需额外的 lastEmitted 变量
 const emitChanged = (val) => {
   internalChanged.value = val;
-  if (val !== lastEmittedChanged || val !== props.cellChanged) {
-    lastEmittedChanged = val;
-    emit("update:cellChanged", val);
+  if (cellChangedModel.value !== val) {
+    cellChangedModel.value = val;
   }
 };
 
@@ -714,14 +719,13 @@ const revertChanges = async () => {
 };
 
 // 父组件主动写 cellChanged=false（v-model 回写）视为保存语义：以当前数据为新基线
-watch(
-  () => props.cellChanged,
-  (val) => {
-    if (val === internalChanged.value) return;
-    if (!val) markSaved();
-    else recomputeChanged();
-  },
-);
+// 内部 emitChanged 写入也会触发本 watcher，但 internalChanged 先于 model 更新，
+// val === internalChanged 时被跳过，仅父组件外部写入才分流 markSaved / recompute
+watch(cellChangedModel, (val) => {
+  if (val === internalChanged.value) return;
+  if (!val) markSaved();
+  else recomputeChanged();
+});
 
 // ========== 新增/移除行封装（vxe 自带操作的包装，调用后自动同步变更状态）==========
 const afterChangeOp = (res) => {
@@ -2169,6 +2173,9 @@ const runValidate = async (method, args) => {
 // ========== 暴露常用方法 ==========
 defineExpose({
   gridRef,
+  // 变更状态只读暴露：父组件可直接 tableProRef.cellChanged 读取（等价于
+  // v-model:cellChanged 的值），无需在父组件声明本地变量
+  cellChanged: readonly(cellChangedModel),
   // 读取数据前先落盘常驻编辑的防抖输入，保证拿到的是最新值
   getData: () => {
     flushAlwaysEdit();
