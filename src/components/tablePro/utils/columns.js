@@ -689,6 +689,59 @@ const buildAlwaysEditSlotFn = (ctx, col, field, Comp, wrapName, er) => markRaw((
   return h(Comp, bindProps, { default: () => buildWrapOptionChildren(options, field, wrapName) })
 })
 
+// ========== alwaysEdit 各接管分支（拆分为独立小函数，控制圈复杂度）==========
+
+// 包装"用户自绑 row[field]"的编辑器渲染：附加即时脏态监听登记
+const wrapWithRawWatch = (registerRawWatch, renderFn) =>
+  markRaw((scope) => {
+    if (registerRawWatch) registerRawWatch(scope)
+    return renderFn(scope)
+  })
+
+// 分支1：slots.edit 为函数（用户自定义编辑器渲染）
+const buildAlwaysEditUserSlot = (userEditSlot, registerRawWatch) =>
+  wrapWithRawWatch(registerRawWatch, (scope) => userEditSlot(scope))
+
+// 分支2：slots.edit / editRender 为字符串（外部具名插槽）
+const buildAlwaysEditNamedSlot = (ctx, slotName, registerRawWatch) => {
+  if (typeof ctx.externalSlots[slotName] !== 'function') return null
+  return wrapWithRawWatch(registerRawWatch, (scope) => ctx.externalSlots[slotName](scope))
+}
+
+// 分支3：editRender 为函数（用户自定义渲染函数）
+const buildAlwaysEditUserRender = (ctx, col, field, userEdit, registerRawWatch) =>
+  wrapWithRawWatch(registerRawWatch, (scope) => {
+    try {
+      const row = scope.row
+      const params = {
+        row,
+        column: scope.column || col,
+        field,
+        cellValue: field != null && row ? row[field] : undefined,
+        rowIndex: scope.$rowIndex,
+        columnIndex: scope.$columnIndex,
+        $table: scope.$table,
+      }
+      return userEdit(params, h)
+    } catch (e) {
+      return renderSlotError(e)
+    }
+  })
+
+// 分支4：对象式 editRender（内置 EL 组件映射）
+const buildAlwaysEditObjectRender = (ctx, col, field, er) => {
+  const erName = er && er.name
+  if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return null
+  return buildAlwaysEditSlotFn(
+    ctx,
+    col,
+    field,
+    EL_EDIT_MAP[erName].comp,
+    EL_EDIT_MAP[erName].wrap,
+    er,
+  )
+}
+
 // 常驻编辑总入口：成功接管返回 true；不支持时返回 false（回退普通点击编辑）
 const applyAlwaysEdit = (ctx, col, field, rawCol) => {
   // 显式 slots.default（用户自定义展示内容）优先，不接管
@@ -706,56 +759,20 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
             field,
           })
       : null
+  let slotFn = null
   if (typeof userEditSlot === 'function') {
-    col.slots.default = markRaw((scope) => {
-      if (registerRawWatch) registerRawWatch(scope)
-      return userEditSlot(scope)
-    })
-  } else if (typeof userEditSlot === 'string' && typeof ctx.externalSlots[userEditSlot] === 'function') {
-    const slotName = userEditSlot
-    col.slots.default = markRaw((scope) => {
-      if (registerRawWatch) registerRawWatch(scope)
-      return ctx.externalSlots[slotName](scope)
-    })
-  } else if (typeof er === 'function') {
-    const userEdit = er
-    col.slots.default = markRaw((scope) => {
-      try {
-        const row = scope.row
-        const params = {
-          row,
-          column: scope.column || col,
-          field,
-          cellValue: field != null && row ? row[field] : undefined,
-          rowIndex: scope.$rowIndex,
-          columnIndex: scope.$columnIndex,
-          $table: scope.$table,
-        }
-        if (registerRawWatch) registerRawWatch(scope)
-        return userEdit(params, h)
-      } catch (e) {
-        return renderSlotError(e)
-      }
-    })
-  } else if (typeof er === 'string') {
-    const slotName = er
-    if (typeof ctx.externalSlots[slotName] !== 'function') return false
-    col.slots.default = markRaw((scope) => {
-      if (registerRawWatch) registerRawWatch(scope)
-      return ctx.externalSlots[slotName](scope)
-    })
-  } else {
-    const erName = er && er.name
-    if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return false
-    col.slots.default = buildAlwaysEditSlotFn(
-      ctx,
-      col,
-      field,
-      EL_EDIT_MAP[erName].comp,
-      EL_EDIT_MAP[erName].wrap,
-      er,
-    )
+    slotFn = buildAlwaysEditUserSlot(userEditSlot, registerRawWatch)
+  } else if (typeof userEditSlot === 'string') {
+    slotFn = buildAlwaysEditNamedSlot(ctx, userEditSlot, registerRawWatch)
   }
+  // edit 插槽不可用（如字符串插槽名未注册）时回退按 editRender 接管
+  if (!slotFn) {
+    if (typeof er === 'function') slotFn = buildAlwaysEditUserRender(ctx, col, field, er, registerRawWatch)
+    else if (typeof er === 'string') slotFn = buildAlwaysEditNamedSlot(ctx, er, registerRawWatch)
+    else slotFn = buildAlwaysEditObjectRender(ctx, col, field, er)
+  }
+  if (!slotFn) return false
+  col.slots.default = slotFn
   // 常驻模式不经过 vxe 编辑态：移除编辑插槽与编辑配置
   delete col.slots.edit
   delete col.editRender
