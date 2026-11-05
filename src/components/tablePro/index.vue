@@ -688,6 +688,38 @@ const onAlwaysEditCommit = ({ row, column, field }) => {
   triggerCellRuleValidate("blur", row, column, row[field]);
 };
 
+// ========== 常驻编辑器（函数式/字符串式 editRender）的即时脏态 ==========
+// 这两种形式的编辑器由用户自行绑定 row[field]，不经过 onAlwaysEditInput，
+// 没有任何脏态信号。这里在单元格首次渲染时按 row+field 登记一次响应式监听：
+// 输入当下（flush:sync）与「登记时的值」比对，翻转 editingDirty → cellChanged，
+// 与点击编辑的即时翻转行为保持一致。
+// 以 session key 去重（重复渲染只登记一次）；数据替换 / 保存时由 clearEditSessions 清除，
+// 单元格重新渲染后以当时数据为新基准重新登记。
+const registerAlwaysEditRawWatch = ({ row, column, field }) => {
+  if (!row || field == null) return;
+  const key = resolveEditStateKey(row, field);
+  if (editingWatchers.has(key)) return;
+  const originalSnapshot = snapshotEditOriginal(row[field]);
+  // 与编辑态同理：行对象可能来自 vxe 内部（非响应式），reactive(row) 命中 proxy 缓存
+  // 拿到渲染期同一个代理，用户写 row[field] 才能被感知
+  const rowProxy = reactive(row);
+  const stop = watch(
+    () => rowProxy[field],
+    (cur) => {
+      if (!isEqual(cur, originalSnapshot)) editingDirtyKeys.add(key);
+      else editingDirtyKeys.delete(key);
+      const hasDirty = editingDirtyKeys.size > 0;
+      if (hasDirty !== editingDirty.value) {
+        editingDirty.value = hasDirty;
+        applyChanged();
+      }
+      triggerCellRuleValidate("change", row, column, cur);
+    },
+    { flush: "sync", deep: true },
+  );
+  editingWatchers.set(key, stop);
+};
+
 onBeforeUnmount(() => {
   // 卸载前尽量落盘，避免用户最后一次输入丢失
   flushAlwaysEdit();
@@ -833,6 +865,7 @@ const mergedColumns = computed(() =>
     getAlwaysEditValue,
     onAlwaysEditInput,
     onAlwaysEditCommit,
+    registerAlwaysEditRawWatch,
     emit,
   }),
 );

@@ -695,10 +695,28 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
   if (rawCol && rawCol.slots && rawCol.slots.default) return false
   const userEditSlot = col.slots && col.slots.edit
   const er = col.editRender
+  // 函数式 / 字符串式 / 用户自定义 edit 插槽：编辑器由用户自行绑定 row[field]，
+  // 不经过 onAlwaysEditInput，需登记响应式监听才能产生即时脏态（cellChanged）
+  const registerRawWatch =
+    typeof ctx.registerAlwaysEditRawWatch === 'function'
+      ? (scope) =>
+          ctx.registerAlwaysEditRawWatch({
+            row: scope.row,
+            column: scope.column || col,
+            field,
+          })
+      : null
   if (typeof userEditSlot === 'function') {
-    col.slots.default = markRaw((scope) => userEditSlot(scope))
+    col.slots.default = markRaw((scope) => {
+      if (registerRawWatch) registerRawWatch(scope)
+      return userEditSlot(scope)
+    })
   } else if (typeof userEditSlot === 'string' && typeof ctx.externalSlots[userEditSlot] === 'function') {
-    col.slots.default = userEditSlot
+    const slotName = userEditSlot
+    col.slots.default = markRaw((scope) => {
+      if (registerRawWatch) registerRawWatch(scope)
+      return ctx.externalSlots[slotName](scope)
+    })
   } else if (typeof er === 'function') {
     const userEdit = er
     col.slots.default = markRaw((scope) => {
@@ -713,14 +731,19 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
           columnIndex: scope.$columnIndex,
           $table: scope.$table,
         }
+        if (registerRawWatch) registerRawWatch(scope)
         return userEdit(params, h)
       } catch (e) {
         return renderSlotError(e)
       }
     })
   } else if (typeof er === 'string') {
-    if (typeof ctx.externalSlots[er] !== 'function') return false
-    col.slots.default = er
+    const slotName = er
+    if (typeof ctx.externalSlots[slotName] !== 'function') return false
+    col.slots.default = markRaw((scope) => {
+      if (registerRawWatch) registerRawWatch(scope)
+      return ctx.externalSlots[slotName](scope)
+    })
   } else {
     const erName = er && er.name
     if (!erName || !EL_EDIT_MAP[erName] || ALWAYS_EDIT_EXCLUDED_NAMES.has(erName)) return false
@@ -889,6 +912,7 @@ export const buildColumns = (config) => {
     getAlwaysEditValue: cfg.getAlwaysEditValue,
     onAlwaysEditInput: cfg.onAlwaysEditInput,
     onAlwaysEditCommit: cfg.onAlwaysEditCommit,
+    registerAlwaysEditRawWatch: cfg.registerAlwaysEditRawWatch,
     emit: cfg.emit,
   }
 

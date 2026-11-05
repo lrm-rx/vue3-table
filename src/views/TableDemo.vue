@@ -160,6 +160,7 @@ const columns = ref([
     headerRender: "header_phone",
     // 函数式 editRender：params 自带 { row, column, field, cellValue, rowIndex, columnIndex, $table }，
     // 事件闭包直接使用，无需借助外部状态
+    alwaysEdit: true,
     editRender: (params, h) => {
       const { row, field } = params;
       return (
