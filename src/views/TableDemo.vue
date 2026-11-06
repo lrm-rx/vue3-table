@@ -3,7 +3,7 @@
  * 表格组件演示页：TablePro 远程模式 + 本地过滤排序 + 可编辑单元格 + 配置式 render。
  * 原内联于 App.vue，路由化后独立为视图。
  */
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { ElMessage, ElTag, ElButton } from "element-plus";
 import { getUserListApi, getFilterOptionsApi } from "@/api";
 
@@ -872,6 +872,29 @@ const onRemoveSelected = () => {
 
 // 表头标题过长换行开关（绑定主表 header-wrap 属性；true=换行完整显示，false=单行省略号）
 const headerWrapEnabled = ref(false);
+
+// 列显示/隐藏示例：直接调用 vxe 原生 showColumn/hideColumn（支持数组批量，内部一次刷新）
+const remarkVisible = ref(true);
+watch(remarkVisible, (v) => setColsVisible(["remark"], v));
+
+const setColsVisible = (fields, visible) => {
+  const grid = tableProRef.value?.gridRef;
+  if (!grid) return;
+  if (visible) grid.showColumn?.(fields);
+  else grid.hideColumn?.(fields);
+};
+
+// 批量切换：数组入参一次完成
+const batchToggle = () => {
+  const target = !(createTimeVisible.value && accountVisible.value);
+  setColsVisible(["createTime", "account"], target);
+  createTimeVisible.value = target;
+  accountVisible.value = target;
+};
+const createTimeVisible = ref(true);
+const accountVisible = ref(true);
+watch(createTimeVisible, (v) => setColsVisible(["createTime"], v));
+watch(accountVisible, (v) => setColsVisible(["account"], v));
 </script>
 
 <template>
@@ -891,6 +914,28 @@ const headerWrapEnabled = ref(false);
             : "单行显示省略号（悬停 title 显示完整标题）"
         }}）
       </span>
+    </div>
+    <el-divider content-position="left">
+      列显示/隐藏：vxe 原生 showColumn/hideColumn（数组批量，内部一次刷新）
+    </el-divider>
+    <div
+      style="margin-bottom: 8px; display: flex; align-items: center; gap: 18px"
+    >
+      <span style="font-size: 13px; color: #606266">
+        备注列
+        <el-switch v-model="remarkVisible" />
+      </span>
+      <span style="font-size: 13px; color: #606266">
+        创建时间列
+        <el-switch v-model="createTimeVisible" />
+      </span>
+      <span style="font-size: 13px; color: #606266">
+        账号列
+        <el-switch v-model="accountVisible" />
+      </span>
+      <el-button size="small" type="primary" @click="batchToggle">
+        批量切换（创建时间 + 账号）
+      </el-button>
     </div>
     <TablePro
       ref="tableProRef"
