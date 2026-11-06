@@ -306,6 +306,7 @@ const columns = ref([
     title: "备注备注备注备注备注备注备注备注备注备注备注备注备注",
     filterType: "FilterInput",
     minWidth: 200,
+    alwaysEdit: true,
     editRender: {
       name: "TextareaPopoverEdit",
       props: {

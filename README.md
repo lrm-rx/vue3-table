@@ -265,10 +265,10 @@ const onCellEditChange = ({ row, column, field, value, cellValue }) => {
 
 - 编辑器直接渲染在单元格内（不再经过 vxe 编辑态），输入即时回显
 - **防抖写回**：输入先只更新组件本地值，停止输入 300ms 或**失焦/单元格卸载**时才写回 `row[field]`，避免逐键改动行数据触发本地排序/过滤等全量重算；保存前如需强制写回可调用组件暴露的 `flushAlwaysEdit()`（`getFullData()` 内部也会先自动落盘）
-- 支持对象式 / 函数式 / 字符串式 `editRender`，也支持仅配置 `slots.edit`；`TextareaPopoverEdit` 依赖编辑态生命周期，不支持常驻（函数式/字符串式/自定义插槽由用户自行绑定值，组件不做防抖）
+- 支持对象式 / 函数式 / 字符串式 `editRender`，也支持仅配置 `slots.edit`；`TextareaPopoverEdit` 依赖编辑态生命周期，不支持常驻（函数式/字符串式/自定义插槽由用户自行绑定值，组件不做防抖）。此类无法常驻的列会呈现输入框外观作为提示，点击仍走普通编辑流程
 - 列若额外显式配置 `slots.default`，以显式配置为准（不接管）；列若显式配置 `slots.edit`，则复用该插槽作为常驻渲染
 - 需与普通编辑一样开启 `:editable="true"`（组件默认 `false`）；`:editable="false"` 时不渲染常驻编辑器（权限控制生效）
-- 变更跟踪：对象式编辑器的输入由组件接管，输入时 `cellChanged` 即时翻为 `true`（防抖 300ms 后由 recordset 归并，改回原值自动归净），写回 `row` 时发射 `cell-edit-change`；函数式/字符串式/自定义插槽直接改 `row`，组件无法感知输入，脏态需父组件自行处理
+- 变更跟踪：对象式编辑器的输入由组件接管，输入时 `cellChanged` 即时翻为 `true`（防抖 300ms 后由 recordset 归并，改回原值自动归净），写回 `row` 时发射 `cell-edit-change`；函数式/字符串式/自定义插槽直接改 `row`，组件通过响应式监听同样能即时反映脏态
 - 常驻列不参与 vxe 编辑态校验（`editRules` 的单元格校验仅对点击编辑生效）
 
 ### 权限控制：全局禁用编辑（`editable` prop）

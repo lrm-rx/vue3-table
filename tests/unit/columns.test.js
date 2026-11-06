@@ -576,8 +576,11 @@ describe("常驻编辑器（alwaysEdit）", () => {
     const strCol = run([{ field: "e", editRender: "edit_e", alwaysEdit: true }], {
       slots: { edit_e: slotFn },
     }).result[0];
-    expect(strCol.slots.default).toBe("edit_e");
+    // 字符串插槽会被包装为常驻渲染函数（内部调用外部具名插槽）
+    expect(typeof strCol.slots.default).toBe("function");
+    expect(strCol.slots.default(scopeFor("e", { e: "y" }))).toBeNull();
     expect(strCol.editRender).toBeUndefined();
+    expect(strCol.className).toBe(ALWAYS_EDIT_CLASS);
   });
 
   it("不支持场景回退普通编辑：TextareaPopoverEdit / 显式 slots.default / 字符串插槽未命中", () => {
@@ -656,7 +659,9 @@ describe("常驻编辑器（alwaysEdit）", () => {
       ],
       { slots: { edit_b: slotFn } },
     ).result[0];
-    expect(strCol.slots.default).toBe("edit_b");
+    // 字符串插槽同样被包装为函数，调用后渲染外部具名插槽内容
+    expect(typeof strCol.slots.default).toBe("function");
+    expect(strCol.slots.default(scopeFor("b", { b: "x" })).type).toBe("input");
     expect(strCol.slots.edit).toBeUndefined();
     expect(strCol.editRender).toBeUndefined();
   });

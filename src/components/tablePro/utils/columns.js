@@ -627,20 +627,29 @@ const buildEditLabelFallback = (ctx, col, field) => markRaw((scope) => {
 //   · 用户显式配置 slots.default 时以用户配置为准（不接管）；
 //   · 用户显式配置 slots.edit 时复用到常驻位置（值由用户自行绑 row[field]）。
 const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
+// 配置了 alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit 依赖编辑态生命周期）时，
+// 给单元格加「输入框外观」提示可点击编辑；实际点击仍走普通编辑流程
+const ALWAYS_EDIT_LOOK_CLASS = 'table-pro__col--always-edit-look'
 const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
 
-// 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
-const applyAlwaysEditClass = (col) => {
+// 给列追加标记类（className 支持字符串或返回字符串的函数）
+const appendColumnClass = (col, cls) => {
+  const append = (base) => (base ? `${base} ${cls}` : cls)
   if (typeof col.className === 'function') {
     const userClassName = col.className
-    col.className = (params) => {
-      const cls = userClassName(params)
-      return cls ? `${cls} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
-    }
+    col.className = (params) => append(userClassName(params))
     return
   }
-  col.className = col.className ? `${col.className} ${ALWAYS_EDIT_CLASS}` : ALWAYS_EDIT_CLASS
+  col.className = append(col.className)
 }
+
+// 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
+const applyAlwaysEditClass = (col) => appendColumnClass(col, ALWAYS_EDIT_CLASS)
+
+// 仅对象式编辑器配置（有 name）才加外观提示：
+// 字符串插槽未注册等「无编辑器可用」的情况不加，避免误导
+const isAlwaysEditLookFallback = (er) =>
+  !!er && typeof er === 'object' && !!er.name
 
 // 对象配置式常驻编辑器：输入只更新本地值（组件侧防抖写回 row），不做逐键行写回
 // 注意：er 必须在构建期传入 —— 常驻模式会删除 col.editRender，渲染期再读会丢失配置
@@ -771,7 +780,11 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
     else if (typeof er === 'string') slotFn = buildAlwaysEditNamedSlot(ctx, er, registerRawWatch)
     else slotFn = buildAlwaysEditObjectRender(ctx, col, field, er)
   }
-  if (!slotFn) return false
+  if (!slotFn) {
+    // 编辑器无法常驻：保留普通点击编辑，同时给单元格加输入框外观
+    if (isAlwaysEditLookFallback(er)) appendColumnClass(col, ALWAYS_EDIT_LOOK_CLASS)
+    return false
+  }
   col.slots.default = slotFn
   // 常驻模式不经过 vxe 编辑态：移除编辑插槽与编辑配置
   delete col.slots.edit

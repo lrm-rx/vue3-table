@@ -221,6 +221,55 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
   }
 }
 
+// ======= alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit）：单元格呈现输入框外观 =======
+// 点击仍走普通编辑态（弹出 popover），此处仅做视觉提示，避免与纯文本列混淆。
+// 尺寸变量与上方 col--active 对齐，保证控件高度 = 单元格内容盒高度，行高不变。
+.vxe-table--render-default .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+  --el-component-size: 32px;
+}
+.vxe-table--render-default.size--medium .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+  --el-component-size: 30px;
+}
+.vxe-table--render-default.size--small .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+  --el-component-size: 28px;
+}
+.vxe-table--render-default.size--mini .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+  --el-component-size: 26px;
+}
+
+.vxe-table {
+  // :not(.col--active)：编辑态由真实编辑器渲染，避免出现双层边框
+  .vxe-body--column.table-pro__col--always-edit-look:not(.col--active) {
+    > .vxe-cell {
+      width: 100%;
+      box-sizing: border-box;
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        display: block;
+        width: 100%;
+        height: var(--el-component-size, 32px);
+        padding: 0 11px;
+        box-sizing: border-box;
+        border: 1px solid var(--el-border-color, #dcdfe6);
+        border-radius: var(--el-border-radius-base, 4px);
+        background-color: var(--el-fill-color-blank, #fff);
+        color: var(--el-text-color-regular, #606266);
+        line-height: calc(var(--el-component-size, 32px) - 2px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: text;
+        transition: border-color 0.2s;
+      }
+    }
+
+    &:hover > .vxe-cell > .vxe-cell--wrapper {
+      border-color: var(--el-border-color-hover, #c0c4cc);
+    }
+  }
+}
+
 // 修复 width:"auto" 列每次刷新列宽累加：vxe 测量期（data-calc-col）必须让 wrapper
 // 收缩为内容宽度，否则上一次列宽会被当作内容宽度测回（calcCellWidth 每次 +4、每刷新跑 4 次 = +16）。
 // 必须 !important：上方表头 flex 布局规则给 .vxe-header-cell--wrapper 设了 width:100%，

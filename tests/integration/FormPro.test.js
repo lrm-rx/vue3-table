@@ -785,11 +785,11 @@ describe("FormPro 配置式表单", () => {
     expect(collapsedCount()).toBe(2);
   });
 
-  it("分组 allToggle：显示「折叠全部 / 展开全部」按钮，点击切换全部分组", async () => {
+  it("分组全折叠/展开：toggleAllGroups 切换所有分组，allGroupsCollapsed 同步", async () => {
     const wrapper = mountFormPro({
       modelValue: {},
       items: [
-        { group: true, title: "G1", allToggle: true },
+        { group: true, title: "G1" },
         { prop: "a", label: "A" },
         { group: true, title: "G2" },
         { prop: "b", label: "B" },
@@ -800,32 +800,27 @@ describe("FormPro 配置式表单", () => {
       wrapper
         .findAll(".form-pro__group-body")
         .filter((b) => b.classes().includes("is-collapsed")).length;
-    const allToggle = wrapper.find(".form-pro__group-toggle-all");
-    expect(allToggle.exists()).toBe(true);
-    // 默认未全折叠 → 文案「折叠全部」
-    expect(allToggle.text()).toContain("折叠全部");
     expect(collapsedCount()).toBe(0);
-    // 点击 → 全部折叠
-    await allToggle.trigger("click");
+    expect(wrapper.vm.allGroupsCollapsed).toBe(false);
+    // 调用一次 → 全部折叠
+    wrapper.vm.toggleAllGroups();
     await flushPromises();
     expect(collapsedCount()).toBe(2);
-    expect(allToggle.text()).toContain("展开全部");
-    // 再次点击 → 全部展开
-    await allToggle.trigger("click");
+    expect(wrapper.vm.allGroupsCollapsed).toBe(true);
+    // 再调用一次 → 全部展开
+    wrapper.vm.toggleAllGroups();
     await flushPromises();
     expect(collapsedCount()).toBe(0);
-    // 暴露方法 toggleAllGroups 等价
-    expect(typeof wrapper.vm.toggleAllGroups).toBe("function");
+    expect(wrapper.vm.allGroupsCollapsed).toBe(false);
   });
 
-  it("分组标题扩展区 render：在标题与右侧按钮之间渲染 JSX 内容", async () => {
+  it("分组标题扩展区 render：在标题之后渲染 JSX 内容", async () => {
     const wrapper = mountFormPro({
       modelValue: { a: "" },
       items: [
         {
           group: true,
           title: "G1",
-          allToggle: true,
           render: (ctx, h) => h("span", { class: "group-tip-render" }, "提示信息"),
         },
         { prop: "a", label: "A" },
@@ -835,15 +830,13 @@ describe("FormPro 配置式表单", () => {
     const extra = wrapper.find(".form-pro__group-header-extra");
     expect(extra.exists()).toBe(true);
     expect(extra.text()).toContain("提示信息");
-    // 扩展区位于「标题区」与「allToggle 按钮」之间（DOM 顺序）
+    // 扩展区位于标题区之后（DOM 顺序）
     const header = wrapper.find(".form-pro__group-header");
     const children = [...header.element.children].map((el) => el.className);
     const mainIdx = children.findIndex((c) => c.includes("form-pro__group-header-main"));
     const extraIdx = children.findIndex((c) => c.includes("form-pro__group-header-extra"));
-    const toggleIdx = children.findIndex((c) => c.includes("form-pro__group-toggle-all"));
     expect(mainIdx).toBeGreaterThanOrEqual(0);
     expect(extraIdx).toBeGreaterThan(mainIdx);
-    expect(toggleIdx).toBeGreaterThan(extraIdx);
   });
 
   it("分组标题扩展区 slot：用具名插槽渲染内容，且点击不触发分组折叠", async () => {

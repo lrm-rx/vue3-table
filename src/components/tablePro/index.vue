@@ -558,13 +558,13 @@ const refreshBaseline = () => {
   baselineRows.value = fullData && fullData.length ? cloneDeep(fullData) : [];
 };
 
-// 沿 model 本地值去重：defineModel 写入当拍即同步本地值，sync watcher 同一拍内
-// true→false 连翻（程序式连续赋值）也能读到最新值，无需额外的 lastEmitted 变量
+// 按内部状态翻转沿去重：不能用 cellChangedModel.value 比对 —— 父级绑定 v-model 时
+// 属于受控模式，prop 回写是异步的；同一拍内 true→false 连翻（改回原值）时 model
+// 仍停留在旧值，用 model 值去重会把「归净」事件吞掉。
 const emitChanged = (val) => {
+  if (val === internalChanged.value) return;
   internalChanged.value = val;
-  if (cellChangedModel.value !== val) {
-    cellChangedModel.value = val;
-  }
+  cellChangedModel.value = val;
 };
 
 // 汇总裁决：recordset 脏态 || 编辑中脏态 || 常驻编辑输入中脏态；
