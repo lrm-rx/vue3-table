@@ -264,7 +264,7 @@ const onCellEditChange = ({ row, column, field, value, cellValue }) => {
 ```
 
 - 编辑器直接渲染在单元格内（不再经过 vxe 编辑态），输入即时回显
-- **防抖写回**：输入先只更新组件本地值，停止输入 300ms 或**失焦/单元格卸载**时才写回 `row[field]`，避免逐键改动行数据触发本地排序/过滤等全量重算；保存前如需强制写回可调用组件暴露的 `flushAlwaysEdit()`（`getData()` 内部也会先自动落盘）
+- **防抖写回**：输入先只更新组件本地值，停止输入 300ms 或**失焦/单元格卸载**时才写回 `row[field]`，避免逐键改动行数据触发本地排序/过滤等全量重算；保存前如需强制写回可调用组件暴露的 `flushAlwaysEdit()`（`getFullData()` 内部也会先自动落盘）
 - 支持对象式 / 函数式 / 字符串式 `editRender`，也支持仅配置 `slots.edit`；`TextareaPopoverEdit` 依赖编辑态生命周期，不支持常驻（函数式/字符串式/自定义插槽由用户自行绑定值，组件不做防抖）
 - 列若额外显式配置 `slots.default`，以显式配置为准（不接管）；列若显式配置 `slots.edit`，则复用该插槽作为常驻渲染
 - 需与普通编辑一样开启 `:editable="true"`（组件默认 `false`）；`:editable="false"` 时不渲染常驻编辑器（权限控制生效）
@@ -628,7 +628,7 @@ const restoreColumnConfig = async () => {
 | 方法 | 说明 |
 | --- | --- |
 | `gridRef` | vxe-grid 实例（直接调用 vxe 原生方法） |
-| `getData()` | 获取当前全量数据 |
+| `getFullData()` | 获取当前全量数据（对齐 vxe 同名方法，额外保证 alwaysEdit 输入已落盘） |
 | `getCheckboxRecords()` | 多选选中行 |
 | `getRadioRecord()` | 单选选中行 |
 | `setCheckboxRow(rows, checked)` | 设置多选 |

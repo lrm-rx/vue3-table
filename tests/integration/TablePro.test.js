@@ -1455,14 +1455,14 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
     wrapper.unmount();
   });
 
-  it("getData 读取前自动落盘", async () => {
+  it("getFullData 读取前自动落盘", async () => {
     const rows = makeRows(2);
     const { wrapper } = await mountAlways(rows, { fullData: rows });
     const { row, render } = cellOf(wrapper, "name", 0);
 
     render().props["onUpdate:modelValue"]("G");
     expect(row.name).toBe("name-0");
-    const data = wrapper.vm.getData();
+    const data = wrapper.vm.getFullData();
     expect(row.name).toBe("G");
     expect(data[0].name).toBe("G");
     expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);

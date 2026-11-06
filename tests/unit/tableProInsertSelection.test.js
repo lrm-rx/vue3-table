@@ -120,14 +120,14 @@ describe("tablePro 临时添加行的单选/多选获取", () => {
     vm.insertRow({ name: "临时用户", age: 20 });
     await flushPromises();
 
-    const fullData = vm.getData();
+    const fullData = vm.getFullData();
     const inserted = fullData.find((r) => r.name === "临时用户");
     expect(inserted, "临时行已插入").toBeTruthy();
     expect(String(inserted.id).startsWith("row_")).toBe(true);
     // 多次插入 id 唯一
     vm.insertRow({ name: "临时用户2", age: 21 });
     await flushPromises();
-    const ids = vm.getData()
+    const ids = vm.getFullData()
       .filter((r) => String(r.id).startsWith("row_"))
       .map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -149,7 +149,7 @@ describe("tablePro 临时添加行的单选/多选获取", () => {
     );
     await flushPromises();
 
-    const fullData = vm.getData();
+    const fullData = vm.getFullData();
     const row1 = fullData.find((r) => r.name === "批量临时1");
     const row2 = fullData.find((r) => r.name === "自带id");
     expect(String(row1.id).startsWith("row_")).toBe(true);

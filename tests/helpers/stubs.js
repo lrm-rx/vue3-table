@@ -36,6 +36,7 @@ export const createVxeGridStub = () => {
         getColumns: () => mock.columns,
         getSortColumns: () => mock.sorts,
         getTableData: () => ({ fullData: mock.fullData }),
+        getFullData: () => mock.fullData,
         getCheckboxRecords: () => mock.fullData,
         sort: (...args) => mock.calls.sort.push(args),
         clearSort: () => {

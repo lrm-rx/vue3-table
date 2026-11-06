@@ -2217,10 +2217,12 @@ defineExpose({
   // 变更状态只读暴露：父组件可直接 tableProRef.cellChanged 读取（等价于
   // v-model:cellChanged 的值），无需在父组件声明本地变量
   cellChanged: readonly(cellChangedModel),
-  // 读取数据前先落盘常驻编辑的防抖输入，保证拿到的是最新值
-  getData: () => {
+  // 读取数据前先落盘常驻编辑的防抖输入，保证拿到的是最新值。
+  // 命名对齐 vxe 原生 getFullData()（无参、返回全量数据数组），
+  // 避免与 vxe 的 getData(rowIndex)（按索引取单行）语义冲突
+  getFullData: () => {
     flushAlwaysEdit();
-    return gridRef.value?.getTableData?.()?.fullData || [];
+    return gridRef.value?.getFullData?.() || [];
   },
   // 强制写回常驻编辑器（alwaysEdit）尚未落地的输入（如父组件自定义保存流程前调用）
   flushAlwaysEdit,

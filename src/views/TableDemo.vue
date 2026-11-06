@@ -638,9 +638,9 @@ const onAlwaysEditChange = ({ field, value, cellValue }) => {
     `常驻编辑器写回：${field} = ${JSON.stringify(value)}（原值=${JSON.stringify(cellValue)}）`,
   );
 };
-// getData 内部会先 flush 未写回的防抖输入，可直接拿到最新数据
+// getFullData 内部会先 flush 未写回的防抖输入，可直接拿到最新数据
 const onAlwaysEditSave = async () => {
-  const data = alwaysEditRef.value?.getData?.() || [];
+  const data = alwaysEditRef.value?.getFullData?.() || [];
   await alwaysEditRef.value?.markSaved?.();
   ElMessage.success(
     `已保存 ${data.length} 条（首行：${data[0]?.username} / ${data[0]?.department} / ${data[0]?.age}）`,
@@ -839,7 +839,7 @@ const doValidate = async () => {
       return false;
     }
     ElMessage.success(
-      `校验通过，提交 ${tableProRef.value?.getData?.()?.length || 0} 条数据`,
+      `校验通过，提交 ${tableProRef.value?.getFullData?.()?.length || 0} 条数据`,
     );
     return true;
   } catch (err) {
@@ -1114,7 +1114,7 @@ watch(accountVisible, (v) => setColsVisible(["account"], v));
         :disabled="!alwaysEditChanged"
         @click="onAlwaysEditSave"
       >
-        保存（getData 落盘）
+        保存（getFullData 落盘）
       </el-button>
       <el-button :disabled="!alwaysEditChanged" @click="onAlwaysEditCancel">
         取消
