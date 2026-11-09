@@ -627,9 +627,12 @@ const buildEditLabelFallback = (ctx, col, field) => markRaw((scope) => {
 //   · 用户显式配置 slots.default 时以用户配置为准（不接管）；
 //   · 用户显式配置 slots.edit 时复用到常驻位置（值由用户自行绑 row[field]）。
 const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
-// 配置了 alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit 依赖编辑态生命周期）时，
-// 给单元格加「输入框外观」提示可点击编辑；实际点击仍走普通编辑流程
-const ALWAYS_EDIT_LOOK_CLASS = 'table-pro__col--always-edit-look'
+// 「输入框外观」标记类，两种用法：
+//   1. 配置了 alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit 依赖编辑态生命周期）时
+//      由组件自动追加到列上；实际点击仍走普通编辑流程；
+//   2. 行级可编辑：列 className 传函数（或 JSX 渲染内容）按行数据判断后自行返回该类
+const INPUT_LOOK_CLASS = 'table-pro__col--input-look'
+const PLACEHOLDER_CLASS = 'table-pro__cell-placeholder'
 const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
 
 // 给列追加标记类（className 支持字符串或返回字符串的函数）
@@ -751,6 +754,33 @@ const buildAlwaysEditObjectRender = (ctx, col, field, er) => {
   )
 }
 
+// 解析 placeholder（支持字符串 / 函数式 ({ row, column, field }) => string），
+// 优先级与 mergeEditCompProps 一致：cellEditProps 注入 > editRender.props.props > editRender.props
+const resolveEditPlaceholder = (ctx, col, field, scope) => {
+  const erProps = (col.editRender && col.editRender.props) || {}
+  const innerProps = erProps.props || {}
+  const cellProps = (ctx.cellEditProps && ctx.cellEditProps[field]) || {}
+  const raw = cellProps.placeholder ?? innerProps.placeholder ?? erProps.placeholder
+  if (typeof raw === 'function') {
+    try {
+      return raw({ row: scope.row, column: scope.column || col, field })
+    } catch (e) {
+      return ''
+    }
+  }
+  return raw
+}
+
+// 无法常驻的编辑器：非编辑态展示「值 / placeholder」，
+// 让模拟输入框在空值时也能看到占位提示（与真实输入框一致）
+const buildAlwaysEditLookSlot = (ctx, col, field) => markRaw((scope) => {
+  const row = scope.row
+  const value = field != null && row ? row[field] : scope.cellValue
+  if (value != null && value !== '') return h('span', String(value))
+  const placeholder = resolveEditPlaceholder(ctx, col, field, scope)
+  return h('span', { class: PLACEHOLDER_CLASS }, placeholder == null ? '' : String(placeholder))
+})
+
 // 常驻编辑总入口：成功接管返回 true；不支持时返回 false（回退普通点击编辑）
 const applyAlwaysEdit = (ctx, col, field, rawCol) => {
   // 显式 slots.default（用户自定义展示内容）优先，不接管
@@ -781,8 +811,14 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
     else slotFn = buildAlwaysEditObjectRender(ctx, col, field, er)
   }
   if (!slotFn) {
-    // 编辑器无法常驻：保留普通点击编辑，同时给单元格加输入框外观
-    if (isAlwaysEditLookFallback(er)) appendColumnClass(col, ALWAYS_EDIT_LOOK_CLASS)
+    // 编辑器无法常驻：保留普通点击编辑，同时给单元格加输入框外观；
+    // 空值时在模拟输入框内显示 placeholder（用户已配置 render/slots.default 时不接管展示）
+    if (isAlwaysEditLookFallback(er)) {
+      appendColumnClass(col, INPUT_LOOK_CLASS)
+      if (!col.slots.default) {
+        col.slots.default = buildAlwaysEditLookSlot(ctx, col, field)
+      }
+    }
     return false
   }
   col.slots.default = slotFn

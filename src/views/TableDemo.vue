@@ -306,6 +306,8 @@ const columns = ref([
     title: "备注备注备注备注备注备注备注备注备注备注备注备注备注",
     filterType: "FilterInput",
     minWidth: 200,
+    // TextareaPopoverEdit 依赖编辑态生命周期，无法常驻：单元格呈现模拟输入框外观；
+    // 空值时同样在模拟输入框内显示 placeholder（函数式，可按行数据定制）
     alwaysEdit: true,
     editRender: {
       name: "TextareaPopoverEdit",
@@ -315,6 +317,30 @@ const columns = ref([
       },
     },
     params: { hideColumn: false },
+  },
+  {
+    field: "remark2",
+    title: "备注（按行判断可编辑）",
+    minWidth: 220,
+    // 行级可编辑：status=1 的行呈现模拟输入框外观；其余行保持纯文本（不可编辑）
+    className: ({ row }) =>
+      row?.status === 1 ? "table-pro__col--input-look" : "",
+    // JSX 渲染只负责展示态：点击后仍由 TextareaPopoverEdit 弹出输入
+    render: ({ row }) => {
+      const text = row?.remark2;
+      if (row?.status !== 1) return <span>{text || "—"}</span>;
+      return text ? (
+        <span>{text}</span>
+      ) : (
+        <span class="table-pro__cell-placeholder">点击填写备注</span>
+      );
+    },
+    editRender: {
+      name: "TextareaPopoverEdit",
+      props: {
+        placeholder: ({ row }) => `请输入${row?.username ?? "该行"}的备注`,
+      },
+    },
   },
   {
     field: "createTime",
@@ -435,6 +461,8 @@ const onDataCallback = (data) => {
     regionPath: item.regionPath || ["zhejiang", "hangzhou"],
     // favColor：ElColorPicker 编辑验证
     favColor: item.favColor || "#409EFF",
+    // remark2：行级可编辑示例，仅 status=1 的行允许编辑（与 remark 同源数据）
+    remark2: item.remark,
   }));
   return data;
 };
@@ -874,6 +902,10 @@ const onRemoveSelected = () => {
 // 表头标题过长换行开关（绑定主表 header-wrap 属性；true=换行完整显示，false=单行省略号）
 const headerWrapEnabled = ref(false);
 
+// 行级编辑开关：仅 status=1（启用）的行允许编辑 remark2 列，其余行点击不弹编辑；其他列不受影响
+const beforeEditMethod = ({ row, column }) =>
+  column?.field === "remark2" ? row?.status === 1 : true;
+
 // 列显示/隐藏示例：直接调用 vxe 原生 showColumn/hideColumn（支持数组批量，内部一次刷新）
 const remarkVisible = ref(true);
 watch(remarkVisible, (v) => setColsVisible(["remark"], v));
@@ -956,6 +988,7 @@ watch(accountVisible, (v) => setColsVisible(["account"], v));
       :pagination="paginationEnabled"
       :pager-config="{ pageSizes }"
       :editable="editableEnabled"
+      :edit-config="{ beforeEditMethod }"
       :header-wrap="headerWrapEnabled"
       v-model:cellChanged="cellChanged"
       :init-param="initParam"

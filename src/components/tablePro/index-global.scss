@@ -221,25 +221,28 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
   }
 }
 
-// ======= alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit）：单元格呈现输入框外观 =======
+// ======= 单元格「输入框外观」 =======
+// 两种来源：
+//   1. alwaysEdit 但编辑器无法常驻（如 TextareaPopoverEdit）：组件自动给列追加该类；
+//   2. 行级可编辑：列 className 传函数，按行数据判断后返回该类（见 TableDemo 备注示例）。
 // 点击仍走普通编辑态（弹出 popover），此处仅做视觉提示，避免与纯文本列混淆。
 // 尺寸变量与上方 col--active 对齐，保证控件高度 = 单元格内容盒高度，行高不变。
-.vxe-table--render-default .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+.vxe-table--render-default .vxe-body--column.table-pro__col--input-look > .vxe-cell {
   --el-component-size: 32px;
 }
-.vxe-table--render-default.size--medium .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+.vxe-table--render-default.size--medium .vxe-body--column.table-pro__col--input-look > .vxe-cell {
   --el-component-size: 30px;
 }
-.vxe-table--render-default.size--small .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+.vxe-table--render-default.size--small .vxe-body--column.table-pro__col--input-look > .vxe-cell {
   --el-component-size: 28px;
 }
-.vxe-table--render-default.size--mini .vxe-body--column.table-pro__col--always-edit-look > .vxe-cell {
+.vxe-table--render-default.size--mini .vxe-body--column.table-pro__col--input-look > .vxe-cell {
   --el-component-size: 26px;
 }
 
 .vxe-table {
   // :not(.col--active)：编辑态由真实编辑器渲染，避免出现双层边框
-  .vxe-body--column.table-pro__col--always-edit-look:not(.col--active) {
+  .vxe-body--column.table-pro__col--input-look:not(.col--active) {
     > .vxe-cell {
       width: 100%;
       box-sizing: border-box;
@@ -268,6 +271,11 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       border-color: var(--el-border-color-hover, #c0c4cc);
     }
   }
+}
+
+// 模拟输入框内的占位提示：与 Element Plus 输入框 placeholder 颜色一致
+.table-pro__cell-placeholder {
+  color: var(--el-text-color-placeholder, #a8abb2);
 }
 
 // 修复 width:"auto" 列每次刷新列宽累加：vxe 测量期（data-calc-col）必须让 wrapper
