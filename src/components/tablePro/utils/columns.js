@@ -649,6 +649,28 @@ const appendColumnClass = (col, cls) => {
 // 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
 const applyAlwaysEditClass = (col) => appendColumnClass(col, ALWAYS_EDIT_CLASS)
 
+// 窄列查看优化：文本型常驻编辑器在内容溢出（scrollWidth > clientWidth）时，
+// 悬停用原生 title 显示完整值；未溢出则移除 title，避免无意义提示
+const OVERFLOW_TITLE_NAMES = new Set(['ElInput'])
+const bindOverflowTitle = (bindProps, erName) => {
+  if (!OVERFLOW_TITLE_NAMES.has(erName)) return
+  // 用 mouseover 而非 mouseenter：ElInput 声明了 mouseenter emit（监听器不会落到 DOM 上），
+  // mouseover 未声明，会作为原生事件透传到根元素/输入框
+  const userOver = bindProps.onMouseover
+  bindProps.onMouseover = (e) => {
+    if (typeof userOver === 'function') userOver(e)
+    const root = (e && (e.currentTarget || e.target)) || null
+    const el = (root && root.querySelector && root.querySelector('input, textarea')) || root
+    if (!el || typeof el.scrollWidth !== 'number') return
+    const value = el.value != null ? el.value : el.textContent
+    if (value && el.scrollWidth > el.clientWidth + 1) {
+      el.setAttribute('title', String(value))
+    } else {
+      el.removeAttribute('title')
+    }
+  }
+}
+
 // 仅对象式编辑器配置（有 name）才加外观提示：
 // 字符串插槽未注册等「无编辑器可用」的情况不加，避免误导
 const isAlwaysEditLookFallback = (er) =>
@@ -670,8 +692,8 @@ const buildAlwaysEditSlotFn = (ctx, col, field, Comp, wrapName, er) => markRaw((
         ctx.onAlwaysEditInput({ row, column, field, value: v })
       }
     },
-    // 透传列标题 / 表格实例，保持与编辑态插槽一致的 props
-    title: col.title,
+    // 透传表格实例（scope.$table）；不再透传列标题 —— 常驻模式下 title 会成为
+    // ElInput 等控件的原生 title（悬停显示「账号」而非内容），且会覆盖溢出提示
     table: markRaw(scope.$table),
   }
   const popperCls = resolvePopperClass(erName, er && er.props && er.props.popperClass)
@@ -696,6 +718,8 @@ const buildAlwaysEditSlotFn = (ctx, col, field, Comp, wrapName, er) => markRaw((
     if (typeof userOnBlur === 'function') userOnBlur(e)
   }
   bindProps.onVnodeUnmounted = commitAlwaysEdit
+  // 窄列：内容被截断时悬停显示完整值（原生 title，不改布局）
+  bindOverflowTitle(bindProps, erName)
   if (!wrapName) return h(Comp, bindProps)
   const options = resolveEditOptions(field, er, ctx.editOptions)
   return h(Comp, bindProps, { default: () => buildWrapOptionChildren(options, field, wrapName) })

@@ -117,6 +117,7 @@ const columns = ref([
     title: "账号",
     sortable: true,
     filterType: "FilterInput",
+    alwaysEdit: true,
     editRender: { name: "ElInput" },
     render: "cell_account",
   },
