@@ -542,6 +542,10 @@ const internalChanged = ref(false);
 const baselineRows = ref(null);
 // 最近一次 getRecordset 全表 diff 的缓存结果（仅在提交/增删/换数据时刷新，热路径不重算）
 const recordChanged = ref(false);
+// 临时行净增量（insertRecords - removeRecords）：vxe 的 insert/insertAt/remove 只写入
+// 内部临时存储，远程 total 与静态 data.length 都不含它们，导致分页器总数不随增删变化；
+// 在 recomputeChanged 时同步该增量并叠加到分页 total，数据重载/保存/取消后自动归零
+const tempRowDelta = ref(0);
 // 常驻编辑器（列 alwaysEdit）输入中的临时脏态：输入当下置真，防抖后交回 recordset 裁决
 // （与 editingDirty 同理：避免每次按键都跑全表深 diff，同时保证 cellChanged 即时翻转）
 const alwaysEditDirty = ref(false);
@@ -603,6 +607,7 @@ const recomputeChanged = () => {
   alwaysEditDirty.value = alwaysEditValues.size > 0;
   const rs = getChangeState();
   recordChanged.value = rs.changed;
+  tempRowDelta.value = rs.insertRecords.length - rs.removeRecords.length;
   applyChanged();
 };
 
@@ -753,6 +758,7 @@ const markSaved = async () => {
   flushAlwaysEdit();
   resetAlwaysEditValues();
   recordChanged.value = false;
+  tempRowDelta.value = 0;
   const fullData = gridRef.value?.getTableData?.()?.fullData;
   await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
   emitChanged(false);
@@ -767,6 +773,7 @@ const revertChanges = async () => {
   // 取消即放弃未写回输入：直接丢弃本地值，以基线数据为准
   resetAlwaysEditValues();
   recordChanged.value = false;
+  tempRowDelta.value = 0;
   await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
   emitChanged(false);
   await nextTick();
@@ -1079,13 +1086,14 @@ watch(
 );
 
 // 实际分页配置：远程用 useTable.pageable；静态+分页用 localPager（total 同步 data.length）；否则原样
+// 两种模式的 total 都叠加临时行净增量（insertAt/remove 的临时数据不入后端 total / props.data）
 const currentPager = computed(() => {
   if (isRemoteMode.value) {
     const pg = tableHook.pageable.value || {};
     return {
       currentPage: pg.pageNum || 1,
       pageSize: pg.pageSize || 10,
-      total: pg.total || 0,
+      total: Math.max(0, (pg.total || 0) + tempRowDelta.value),
       pageSizes: props.pagerConfig?.pageSizes || [10, 20, 50, 100],
     };
   }
@@ -1093,8 +1101,8 @@ const currentPager = computed(() => {
     return {
       currentPage: localPager.value.currentPage,
       pageSize: localPager.value.pageSize,
-      // total 基于本地过滤+排序后的数据（过滤后总数随之变化）
-      total: localProcessedData.value.length,
+      // total 基于本地过滤+排序后的数据（过滤后总数随之变化）+ 临时行净增量
+      total: Math.max(0, localProcessedData.value.length + tempRowDelta.value),
       pageSizes: localPager.value.pageSizes || [10, 20, 50, 100],
     };
   }

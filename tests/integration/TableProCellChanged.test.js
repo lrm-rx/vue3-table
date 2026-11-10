@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { VxeGrid } from "vxe-table";
 import TablePro from "../../src/components/tablePro/index.vue";
+import Pagination from "../../src/components/tablePro/pagination/Pagination.vue";
 
 // jsdom 缺失的浏览器 API（vxe 依赖）
 if (!global.ResizeObserver) {
@@ -162,6 +163,75 @@ describe("TablePro cellChanged 与 vxe 修改标记一致性", () => {
     await t.edit("");
     expect(t.changed()).toBe(false);
     expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+});
+
+describe("TablePro 临时行与分页 total 联动", () => {
+  // insertAt/insert/remove 写入的是 vxe 内部临时存储，后端 total 不含它们；
+  // TablePro 应把临时行净增量叠加到分页 total 上
+  const mountPagerTable = async (rowCount) => {
+    let rows = [];
+    const requestApi = async () => {
+      rows = Array.from({ length: rowCount }, (_, i) => ({
+        id: i + 1,
+        username: `u${i + 1}`,
+      }));
+      return { list: rows, total: rows.length };
+    };
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns: [
+          { field: "id", title: "ID", width: 80 },
+          { field: "username", title: "姓名" },
+        ],
+        showToolbar: false,
+        pagination: true,
+        requestApi,
+        requestAuto: true,
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+    const pagerTotal = () =>
+      wrapper.findComponent(Pagination).props("pagerConfig").total;
+    return { wrapper, pagerTotal };
+  };
+
+  it("insertRowAt 添加 22 条临时数据后，分页 total 同步 +22；removeRows 后回落", async () => {
+    const t = await mountPagerTable(10);
+    expect(t.pagerTotal()).toBe(10);
+
+    const temps = Array.from({ length: 22 }, (_, i) => ({
+      username: `tmp${i + 1}`,
+    }));
+    await t.wrapper.vm.insertRowAt(temps, -1);
+    await flushPromises();
+    await nextFrame();
+    expect(t.pagerTotal()).toBe(32);
+
+    const inserted = t.wrapper.vm.getChangeState().insertRecords;
+    await t.wrapper.vm.removeRows(inserted.slice(0, 2));
+    await flushPromises();
+    await nextFrame();
+    expect(t.pagerTotal()).toBe(30);
+    t.wrapper.unmount();
+  });
+
+  it("数据重载（markSaved）后临时行增量归零，total 以新数据为准", async () => {
+    const t = await mountPagerTable(10);
+    await t.wrapper.vm.insertRowAt([{ username: "a" }, { username: "b" }], -1);
+    await flushPromises();
+    await nextFrame();
+    expect(t.pagerTotal()).toBe(12);
+
+    await t.wrapper.vm.markSaved();
+    await flushPromises();
+    await nextFrame();
+    // markSaved 触发远程重载，requestApi 返回的 total 仍为 10（临时行未持久化到后端）
+    expect(t.pagerTotal()).toBe(10);
     t.wrapper.unmount();
   });
 });
