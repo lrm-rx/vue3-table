@@ -635,16 +635,18 @@ const INPUT_LOOK_CLASS = 'table-pro__col--input-look'
 const PLACEHOLDER_CLASS = 'table-pro__cell-placeholder'
 const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
 
-// 给列追加标记类（className 支持字符串或返回字符串的函数）
-const appendColumnClass = (col, cls) => {
+// 给列追加标记类（className / headerClassName 均支持字符串或返回字符串的函数）
+const appendClassField = (col, key, cls) => {
   const append = (base) => (base ? `${base} ${cls}` : cls)
-  if (typeof col.className === 'function') {
-    const userClassName = col.className
-    col.className = (params) => append(userClassName(params))
+  if (typeof col[key] === 'function') {
+    const userCls = col[key]
+    col[key] = (params) => append(userCls(params))
     return
   }
-  col.className = append(col.className)
+  col[key] = append(col[key])
 }
+const appendColumnClass = (col, cls) => appendClassField(col, 'className', cls)
+const appendHeaderClass = (col, cls) => appendClassField(col, 'headerClassName', cls)
 
 // 常驻编辑列标记类：组件样式据此让编辑器撑满单元格、不被省略号裁剪
 const applyAlwaysEditClass = (col) => appendColumnClass(col, ALWAYS_EDIT_CLASS)
@@ -839,6 +841,8 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
     // 空值时在模拟输入框内显示 placeholder（用户已配置 render/slots.default 时不接管展示）
     if (isAlwaysEditLookFallback(er)) {
       appendColumnClass(col, INPUT_LOOK_CLASS)
+      // 仅外观列：表头同步标记，样式隐藏编辑图标（常驻列已移除 editRender，本就不显示）
+      appendHeaderClass(col, INPUT_LOOK_CLASS)
       if (!col.slots.default) {
         col.slots.default = buildAlwaysEditLookSlot(ctx, col, field)
       }

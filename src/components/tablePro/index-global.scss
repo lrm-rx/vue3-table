@@ -273,6 +273,12 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
   }
 }
 
+// 表头编辑图标：alwaysEdit 但编辑器无法常驻的列（仅外观）与常驻列保持一致 ——
+// 常驻模式已移除 editRender，vxe 不会渲染表头图标，此处隐藏同样的图标避免不一致
+.vxe-header--column.table-pro__col--input-look .vxe-cell--edit-icon {
+  display: none;
+}
+
 // 模拟输入框内的占位提示：与 Element Plus 输入框 placeholder 颜色一致
 .table-pro__cell-placeholder {
   color: var(--el-text-color-placeholder, #a8abb2);
