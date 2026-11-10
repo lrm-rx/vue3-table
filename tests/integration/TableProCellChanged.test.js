@@ -1,0 +1,167 @@
+// @vitest-environment jsdom
+import { describe, it, expect } from "vitest";
+import { mount, flushPromises } from "@vue/test-utils";
+import { VxeGrid } from "vxe-table";
+import TablePro from "../../src/components/tablePro/index.vue";
+
+// jsdom 缺失的浏览器 API（vxe 依赖）
+if (!global.ResizeObserver) {
+  global.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+if (!window.matchMedia) {
+  window.matchMedia = () => ({
+    matches: false,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+  });
+}
+
+const nextFrame = () => new Promise((r) => setTimeout(r, 30));
+
+const getCells = () =>
+  Array.from(document.querySelectorAll(".vxe-table--body tbody tr")).map((tr) =>
+    Array.from(tr.querySelectorAll("td")),
+  );
+
+/**
+ * 挂载「alwaysEdit + TextareaPopoverEdit」的 look 回退列（与 TableDemo 备注列一致），
+ * 返回操作句柄：点击单元格 / 在 popover 中输入并确定 / 读取外部状态。
+ */
+const mountTable = async (initialRemark) => {
+  let rows = [];
+  const state = { changed: false };
+  const requestApi = async () => {
+    rows = [{ id: 1, remark: initialRemark, username: "u1" }];
+    return { list: rows, total: rows.length };
+  };
+  const wrapper = mount(TablePro, {
+    attachTo: document.body,
+    props: {
+      columns: [
+        { field: "id", title: "ID", width: 80 },
+        {
+          field: "remark",
+          title: "备注",
+          minWidth: 200,
+          alwaysEdit: true,
+          editRender: { name: "TextareaPopoverEdit" },
+          params: { hideColumn: false },
+        },
+      ],
+      editable: true,
+      showToolbar: false,
+      pagination: true,
+      requestApi,
+      requestAuto: true,
+      editRules: {
+        remark: [{ required: true, message: "请输入备注", trigger: "change" }],
+      },
+      cellChanged: false,
+      "onUpdate:cellChanged": (v) => {
+        state.changed = v;
+        wrapper.setProps({ cellChanged: v });
+      },
+    },
+    global: { plugins: [VxeGrid] },
+  });
+  await flushPromises();
+  await nextFrame();
+
+  const clickCell = async () => {
+    const td = getCells()[0][1];
+    td.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await nextFrame();
+  };
+  const typeAndConfirm = async (text) => {
+    const textarea = document.querySelector(".textarea-popover-edit textarea");
+    textarea.value = text;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    await flushPromises();
+    const btn = Array.from(
+      document.querySelectorAll(".textarea-popover-edit button"),
+    ).find((b) => b.textContent.trim() === "确定");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+    await nextFrame();
+  };
+
+  return {
+    wrapper,
+    rows: () => rows,
+    changed: () => state.changed,
+    dirtyCount: () => document.querySelectorAll(".col--dirty").length,
+    edit: async (text) => {
+      await clickCell();
+      await typeAndConfirm(text);
+    },
+  };
+};
+
+describe("TablePro cellChanged 与 vxe 修改标记一致性", () => {
+  it("原值为空：修改后为 true，清空回到原值后应为 false（无修改标记）", async () => {
+    const t = await mountTable("");
+    await t.edit("abc");
+    expect(t.changed()).toBe(true);
+    expect(t.dirtyCount()).toBeGreaterThan(0);
+
+    await t.edit("");
+    expect(t.rows()[0].remark).toBe("");
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("原值非空：清空不等于原值，cellChanged 应与修改标记一致保持 true", async () => {
+    const t = await mountTable("orig");
+    await t.edit("abc");
+    expect(t.changed()).toBe(true);
+
+    await t.edit("");
+    expect(t.rows()[0].remark).toBe("");
+    // 清空 ≠ 原值：vxe 仍显示修改标记，cellChanged 必须同步为 true
+    expect(t.dirtyCount()).toBeGreaterThan(0);
+    expect(t.changed()).toBe(true);
+    t.wrapper.unmount();
+  });
+
+  it("原值非空：改回原值后应归净（cellChanged=false、无修改标记）", async () => {
+    const t = await mountTable("orig");
+    await t.edit("xyz");
+    expect(t.changed()).toBe(true);
+
+    await t.edit("orig");
+    expect(t.rows()[0].remark).toBe("orig");
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("保存为新基线后再次编辑并清空：应归净（cellChanged=false、无修改标记）", async () => {
+    const t = await mountTable("orig");
+    // 先清空并保存，使空值成为新基线
+    await t.edit("");
+    expect(t.changed()).toBe(true);
+    await t.wrapper.vm.markSaved();
+    await flushPromises();
+    await nextFrame();
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+
+    // 再次修改 → 清空回基线
+    await t.edit("abc");
+    expect(t.changed()).toBe(true);
+    expect(t.dirtyCount()).toBeGreaterThan(0);
+
+    await t.edit("");
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+});

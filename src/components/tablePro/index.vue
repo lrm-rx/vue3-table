@@ -426,55 +426,63 @@ const onEditClosed = (params) => {
   const row = params && params.row
   const col = params && params.column
   const field = col && col.field
-  if (!row || !field) return
-  const key = resolveEditStateKey(row, field)
-  // 静默拆除即时脏态会话（不发事件）；提交完成后由末尾 recomputeChanged 统一裁决，
-  // 此时 vxe recordset 成为唯一事实来源，避免编辑态与 recordset 交接瞬间的闪烁 emit
-  teardownEditSession(key, true)
-  if (!(key in editLocalState)) {
+  // 参数缺失（列被隐藏/回收等异常路径）也必须收尾：拆除编辑会话并重算，
+  // 否则 editingDirtyKeys 残留会让 cellChanged 永久停留在 true
+  if (!row || !field) {
+    clearEditSessions()
     recomputeChanged()
     return
   }
+  const key = resolveEditStateKey(row, field)
+  try {
+    // 静默拆除即时脏态会话（不发事件）；提交完成后由末尾 recomputeChanged 统一裁决，
+    // 此时 vxe recordset 成为唯一事实来源，避免编辑态与 recordset 交接瞬间的闪烁 emit
+    teardownEditSession(key, true)
+    if (!(key in editLocalState)) return
 
-  const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
-  let newValue, oldValue
+    const isCustomEdit = !!(customEditFields.value && customEditFields.value[field])
+    let newValue, oldValue
 
-  if (isCustomEdit) {
-    // 函数式/字符串式：row[field] 已是新值，editLocalState 是旧值快照，不覆盖 row
-    newValue = row[field]
-    oldValue = editLocalState[key]
-  } else {
-    // 对象式：editLocalState 是新值，row[field] 是旧值
-    newValue = editLocalState[key]
-    oldValue = row[field]
-    // 注：直接赋值 row[field]，不调用 $table.setCellValue，避免触发 vxe 重新进入编辑态
-    try {
-      row[field] = newValue
-    } catch (e) { /* noop */ }
-  }
-
-  try { delete editLocalState[key] } catch (e) { editLocalState[key] = undefined }
-
-  // 仅值变化才发射 cell-edit-change
-  if (newValue !== oldValue) {
-    // 行数据被原地修改：使本地 FilterCheckbox 选项提取缓存失效，
-    // 下次打开面板能提取到编辑后的新值
-    bumpCheckboxOptionsCache();
-    const ctx = getEditContext_();
-    if (typeof ctx.onCellEditChange === 'function') {
-      ctx.onCellEditChange({
-        row,
-        column: col,
-        field,
-        value: newValue,
-        cellValue: oldValue,
-      })
+    if (isCustomEdit) {
+      // 函数式/字符串式：row[field] 已是新值，editLocalState 是旧值快照，不覆盖 row
+      newValue = row[field]
+      oldValue = editLocalState[key]
+    } else {
+      // 对象式：editLocalState 是新值，row[field] 是旧值
+      newValue = editLocalState[key]
+      oldValue = row[field]
+      // 注：直接赋值 row[field]，不调用 $table.setCellValue，避免触发 vxe 重新进入编辑态
+      try {
+        row[field] = newValue
+      } catch (e) { /* noop */ }
     }
+
+    try { delete editLocalState[key] } catch (e) { editLocalState[key] = undefined }
+
+    // 仅值变化才发射 cell-edit-change
+    if (newValue !== oldValue) {
+      // 行数据被原地修改：使本地 FilterCheckbox 选项提取缓存失效，
+      // 下次打开面板能提取到编辑后的新值
+      bumpCheckboxOptionsCache();
+      const ctx = getEditContext_();
+      if (typeof ctx.onCellEditChange === 'function') {
+        ctx.onCellEditChange({
+          row,
+          column: col,
+          field,
+          value: newValue,
+          cellValue: oldValue,
+        })
+      }
+    }
+    // 编辑关闭即触发 trigger=blur 的规则校验（用已写回的新值；
+    // 同时纠正 vxe 原生 checkValidate('blur') 在写回前读 row 旧值造成的误报）
+    triggerCellRuleValidate("blur", row, col, newValue);
+  } finally {
+    // 任何路径（含异常）都以 recordset 为唯一事实来源重新裁决，
+    // 保证「修改标记消失」时 cellChanged 同步归 false
+    recomputeChanged();
   }
-  // 编辑关闭即触发 trigger=blur 的规则校验（用已写回的新值；
-  // 同时纠正 vxe 原生 checkValidate('blur') 在写回前读 row 旧值造成的误报）
-  triggerCellRuleValidate("blur", row, col, newValue);
-  recomputeChanged();
 }
 
 // ========== 弹出面板编辑保护（插槽式/函数式 editRender 的弹出组件 + 过滤面板内弹层）==========
@@ -570,7 +578,9 @@ const emitChanged = (val) => {
 // 汇总裁决：recordset 脏态 || 编辑中脏态 || 常驻编辑输入中脏态；
 // 仅在翻转沿发事件（脏→净时刷新基线）
 const applyChanged = () => {
-  const changed = recordChanged.value || editingDirty.value || alwaysEditDirty.value;
+  // editingDirty 只在存在活跃编辑会话时才可信：无会话却仍为 true 视为残留脏标记
+  const editingPart = editingWatchers.size > 0 && editingDirty.value;
+  const changed = recordChanged.value || editingPart || alwaysEditDirty.value;
   if (changed === internalChanged.value) return;
   // 脏→净（如手动改回原值）：以当前干净数据重新快照基线
   if (!changed) refreshBaseline();
@@ -582,9 +592,17 @@ const applyChanged = () => {
 const recomputeChanged = () => {
   if (!gridRef.value?.getRecordset) return;
   clearAlwaysEditRecomputeTimer();
+  // 不变量：没有任何活跃编辑会话时，不可能存在「编辑中脏 key」——
+  // 异常路径（edit-closed 参数缺失 / 会话未正常拆除）遗留的 key 在此统一清掉，
+  // 避免 editingDirty 永久为 true 使 cellChanged 无法归净。
+  if (editingWatchers.size === 0 && editingDirtyKeys.size > 0) {
+    editingDirtyKeys.clear();
+    refreshEditingDirtySilent();
+  }
   // 仍有未写回的常驻输入 → 继续视为脏（写回后会再次调度裁决）
   alwaysEditDirty.value = alwaysEditValues.size > 0;
-  recordChanged.value = getChangeState().changed;
+  const rs = getChangeState();
+  recordChanged.value = rs.changed;
   applyChanged();
 };
 

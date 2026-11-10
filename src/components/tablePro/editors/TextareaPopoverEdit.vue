@@ -76,21 +76,59 @@ const handleVisibleUpdate = (val) => {
 };
 
 // monkey-patch $table.clearEdit：vxe 调用 clearEdit 时仅在 allowClose=true 时放行
-let originalClearEdit = null;
+// 幂等：补丁记录挂在 $table 上并用引用计数复用，避免组件反复挂载/卸载时
+// 叠加多层包装（旧的 allowClose=false 闭包留在链上会把 clearEdit 吞掉，
+// 导致 vxe 不派发 edit-closed → 行值不回写、cellChanged 无法归净）
+const CLEAR_EDIT_PATCH_KEY = "__tpClearEditPatch";
+let patchEntry = null;
 const patchClearEdit = () => {
   const $table = props.table;
   if (!$table || typeof $table.clearEdit !== "function") return;
-  originalClearEdit = $table.clearEdit.bind($table);
-  $table.clearEdit = () => {
-    if (allowClose.value) originalClearEdit();
-  };
+  let entry = $table[CLEAR_EDIT_PATCH_KEY];
+  if (!entry) {
+    const original = $table.clearEdit.bind($table);
+    const state = { allowClose: false };
+    const wrapper = () => {
+      if (state.allowClose) original();
+    };
+    $table.clearEdit = wrapper;
+    entry = { original, state, wrapper, refs: 0 };
+    $table[CLEAR_EDIT_PATCH_KEY] = entry;
+  }
+  if (patchEntry !== entry) {
+    entry.refs += 1;
+    patchEntry = entry;
+  }
 };
 const restoreClearEdit = () => {
   const $table = props.table;
-  if ($table && originalClearEdit) {
-    $table.clearEdit = originalClearEdit;
-    originalClearEdit = null;
+  const entry = patchEntry;
+  if (!$table || !entry) return;
+  entry.refs = Math.max(0, entry.refs - 1);
+  if (entry.refs === 0) {
+    if ($table.clearEdit === entry.wrapper) {
+      $table.clearEdit = entry.original;
+    }
+    if ($table[CLEAR_EDIT_PATCH_KEY] === entry) {
+      delete $table[CLEAR_EDIT_PATCH_KEY];
+    }
   }
+  patchEntry = null;
+};
+
+// 当前活动的编辑单元格是否仍是本实例所在行（用于兜底确认 edit-closed 已生效，
+// 且避免误关后续打开的其他单元格）
+const isSameRowEditing = ($table) => {
+  try {
+    if (typeof $table.getEditCell === "function") {
+      const cell = $table.getEditCell();
+      return !!(cell && cell.row && cell.row === props.row);
+    }
+  } catch (e) {
+    /* noop */
+  }
+  const actived = $table.getReactData?.()?.editStore?.actived;
+  return !!(actived && actived.row === props.row && actived.column);
 };
 
 // 关闭 vxe 编辑态（统一出口）：设置 allowClose=true → 调用 clearEdit → 触发 edit-closed 写回 row
@@ -98,8 +136,16 @@ const closeEdit = () => {
   allowClose.value = true;
   const $table = props.table;
   if (!$table) return;
+  if (patchEntry) patchEntry.state.allowClose = true;
   if (typeof $table.clearEdit === "function") $table.clearEdit();
   else if (typeof $table.clearActive === "function") $table.clearActive();
+  // 兜底：若 clearEdit 未生效（补丁链异常/被吞），下一帧强制退出编辑态，
+  // 确保 vxe 一定派发 edit-closed（onEditClosed 才会写回 row 并重算 cellChanged）
+  nextTick(() => {
+    if (!isSameRowEditing($table)) return;
+    if (typeof $table.clearEdit === "function") $table.clearEdit();
+    if (typeof $table.clearActive === "function") $table.clearActive();
+  });
 };
 
 // 清除：清空 textarea 内容（不关闭 popover，用户可继续输入）
