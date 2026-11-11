@@ -307,6 +307,17 @@ const editingDirty = ref(false); // 是否存在编辑中的脏会话（与 reco
 const snapshotEditOriginal = (v) =>
   v !== null && typeof v === "object" ? cloneDeep(v) : v;
 
+// 单元格值等价判定：与 vxe 脏态判定（table.js eqCellValue）保持同一套语义，
+// 否则会出现「vxe 修改标记已消失、cellChanged 却仍为 true」的不一致。
+// 关键差异：'' / null / undefined 三者相等（如 ElInput/ElSelect 的 clear 图标
+// 会把 null 清成 '' 或 undefined），字符串与数字按字符串比较，其余深比较。
+const isEmptyCellValue = (v) => v === "" || v === null || v === undefined;
+const isSameCellValue = (a, b) => {
+  if (isEmptyCellValue(a) && isEmptyCellValue(b)) return true;
+  if (typeof a === "string" || typeof a === "number") return `${a}` === `${b}`;
+  return isEqual(a, b);
+};
+
 // 仅重算布尔值、不发事件（供 onEditClosed 在提交前后静默拆除会话，
 // 避免「先 false 后 true」的闪烁 emit；提交完成后由 recomputeChanged 统一裁决）
 const refreshEditingDirtySilent = () => {
@@ -401,7 +412,7 @@ const onEditActivated = (params) => {
   const stop = watch(
     source,
     (cur) => {
-      if (!isEqual(cur, originalSnapshot)) editingDirtyKeys.add(key)
+      if (!isSameCellValue(cur, originalSnapshot)) editingDirtyKeys.add(key)
       else editingDirtyKeys.delete(key)
       const hasDirty = editingDirtyKeys.size > 0
       if (hasDirty !== editingDirty.value) {
@@ -729,7 +740,7 @@ const registerAlwaysEditRawWatch = ({ row, column, field }) => {
   const stop = watch(
     () => rowProxy[field],
     (cur) => {
-      if (!isEqual(cur, originalSnapshot)) editingDirtyKeys.add(key);
+      if (!isSameCellValue(cur, originalSnapshot)) editingDirtyKeys.add(key);
       else editingDirtyKeys.delete(key);
       const hasDirty = editingDirtyKeys.size > 0;
       if (hasDirty !== editingDirty.value) {

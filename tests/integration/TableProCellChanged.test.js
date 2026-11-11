@@ -167,6 +167,162 @@ describe("TablePro cellChanged 与 vxe 修改标记一致性", () => {
   });
 });
 
+describe("TablePro 与 vxe 空值语义一致（编辑组件 clear 清空）", () => {
+  // 背景：vxe 的脏态判定 eqCellValue 把 '' / null / undefined 统一视为空值相等，
+  // 而编辑中的即时比对若用严格深比较，则「null → clear 后的 ''」会被误判为脏，
+  // 出现「修改标记已消失但 cellChanged 仍为 true」
+  const mountInputTable = async (initialValue) => {
+    let rows = [];
+    const state = { changed: false };
+    const requestApi = async () => {
+      rows = [{ id: 1, username: initialValue }];
+      return { list: rows, total: rows.length };
+    };
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns: [
+          { field: "id", title: "ID", width: 80 },
+          {
+            field: "username",
+            title: "姓名",
+            editRender: { name: "ElInput", props: { clearable: true } },
+          },
+        ],
+        editable: true,
+        showToolbar: false,
+        pagination: true,
+        requestApi,
+        requestAuto: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          state.changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+
+    const clickCell = async () => {
+      // 限定在自身挂载容器内取单元格，避免与其他用例残留的表格互相干扰
+      const td = wrapper.element.querySelectorAll(
+        ".vxe-table--body tbody tr td",
+      )[1];
+      td.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await flushPromises();
+      await nextFrame();
+    };
+    // 通过编辑组件自身实例操作，模拟真实输入 / 点击 clear 图标
+    const getInputVm = () => wrapper.findComponent({ name: "ElInput" });
+    const typeValue = async (v) => {
+      getInputVm().vm.$emit("update:modelValue", v);
+      await flushPromises();
+      await nextFrame();
+    };
+    const clearByIcon = async () => {
+      getInputVm().vm.clear();
+      await flushPromises();
+      await nextFrame();
+    };
+    // 结束编辑（等价于点击其他单元格），触发 edit-closed 与行值回写
+    const closeEdit = async () => {
+      wrapper.findComponent({ name: "VxeGrid" }).vm.clearEdit();
+      await flushPromises();
+      await nextFrame();
+    };
+
+    return {
+      wrapper,
+      rows: () => rows,
+      changed: () => state.changed,
+      dirtyCount: () =>
+        wrapper.element.querySelectorAll(".col--dirty").length,
+      clickCell,
+      typeValue,
+      clearByIcon,
+      closeEdit,
+    };
+  };
+
+  it("原值为 null：输入后 clear 清空，cellChanged 应归 false（与修改标记一致）", async () => {
+    const t = await mountInputTable(null);
+    await t.clickCell();
+    await t.typeValue("abc");
+    expect(t.changed()).toBe(true);
+
+    await t.clearByIcon();
+    // 编辑仍未关闭，但值已回到空值语义上的原值
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("原值为 undefined：输入后 clear 清空，cellChanged 应归 false", async () => {
+    const t = await mountInputTable(undefined);
+    await t.clickCell();
+    await t.typeValue("abc");
+    expect(t.changed()).toBe(true);
+
+    await t.clearByIcon();
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("原值为 ''，清空后置为 undefined（ElSelect 清空行为）：cellChanged 应归 false", async () => {
+    const t = await mountInputTable("");
+    await t.clickCell();
+    await t.typeValue("abc");
+    expect(t.changed()).toBe(true);
+
+    await t.typeValue(undefined);
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("原值为 null：clear 后结束编辑仍为 false（无残留脏态）", async () => {
+    const t = await mountInputTable(null);
+    await t.clickCell();
+    await t.typeValue("abc");
+    expect(t.changed()).toBe(true);
+
+    await t.clearByIcon();
+    expect(t.changed()).toBe(false);
+
+    // 关闭编辑（等价于点击其他区域）：行值回写为空值，vxe 不应判定为脏
+    await t.closeEdit();
+    expect(t.changed()).toBe(false);
+    expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("clear 之后再次输入：应重新变脏", async () => {
+    const t = await mountInputTable(null);
+    await t.clickCell();
+    await t.typeValue("abc");
+    await t.clearByIcon();
+    expect(t.changed()).toBe(false);
+
+    await t.typeValue("def");
+    expect(t.changed()).toBe(true);
+    t.wrapper.unmount();
+  });
+
+  it("原值为 'abc'：clear 清空 ≠ 原值，cellChanged 应保持 true", async () => {
+    const t = await mountInputTable("abc");
+    await t.clickCell();
+    await t.typeValue("xyz");
+    expect(t.changed()).toBe(true);
+
+    await t.clearByIcon();
+    expect(t.changed()).toBe(true);
+    t.wrapper.unmount();
+  });
+});
+
 describe("TablePro 临时行与分页 total 联动", () => {
   // insertAt/insert/remove 写入的是 vxe 内部临时存储，后端 total 不含它们；
   // TablePro 应把临时行净增量叠加到分页 total 上

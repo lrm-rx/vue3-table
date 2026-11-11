@@ -1043,7 +1043,7 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
     expect(changed).toBe(false);
   });
 
-  it("数字类型严格比较：0→1 脏；字符串 '0' 不等于数字 0", async () => {
+  it("数值比较与 vxe 一致：0→1 脏；字符串 '0' 与数字 0 视为同值", async () => {
     const rows = [{ id: 1, age: 0 }];
     let changed = false;
     const { wrapper } = await mountTablePro(
@@ -1076,9 +1076,10 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
     expect(changed).toBe(true);
     setAge(0);
     expect(changed).toBe(false);
-    // 类型不同视为变更（避免数字/字符串误归净导致漏提交）
+    // 与 vxe 脏态判定 eqCellValue 对齐（字符串/数字按字符串比较），
+    // 保证编辑中的即时翻转与修改标记不会出现「标记消失但 cellChanged 仍为 true」
     setAge("0");
-    expect(changed).toBe(true);
+    expect(changed).toBe(false);
   });
 
   it("edit-closed 无对应激活态（异常序列）：不抛错并重算", async () => {
