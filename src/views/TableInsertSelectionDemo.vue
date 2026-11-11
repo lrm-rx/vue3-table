@@ -153,7 +153,7 @@ const formatRows = (rows) =>
 
     <el-row :gutter="16">
       <!-- ========== 多选（checkbox）========== -->
-      <el-col :span="12">
+      <el-col :span="24" style="margin-bottom: 16px">
         <el-card shadow="never" header="多选：临时添加行也可勾选获取">
           <TablePro
             ref="multiRef"
@@ -208,7 +208,7 @@ const formatRows = (rows) =>
       </el-col>
 
       <!-- ========== 单选（radio）========== -->
-      <el-col :span="12">
+      <el-col :span="24">
         <el-card shadow="never" header="单选：临时添加行也可选中获取">
           <TablePro
             ref="radioRef"

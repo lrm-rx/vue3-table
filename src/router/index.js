@@ -38,6 +38,12 @@ const routes = [
         meta: { title: "表格临时行选中", icon: "Grid" },
       },
       {
+        path: "table-temp-row-pagination",
+        name: "TableTempRowPagination",
+        component: () => import("@/views/TableTempRowPaginationDemo.vue"),
+        meta: { title: "表格临时行跨页保留", icon: "Grid" },
+      },
+      {
         path: "table-custom-sort",
         name: "TableCustomSort",
         component: () => import("@/views/TableCustomSortDemo.vue"),
