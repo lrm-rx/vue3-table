@@ -550,6 +550,86 @@ const recordChanged = ref(false);
 // 内部临时存储，远程 total 与静态 data.length 都不含它们，导致分页器总数不随增删变化；
 // 在 recomputeChanged 时同步该增量并叠加到分页 total，数据重载/保存/取消后自动归零
 const tempRowDelta = ref(0);
+// 临时行归属页登记：pageNum → [{ row, anchorId }]
+// 翻页/切页大小/刷新/过滤都会触发数据替换，vxe loadData 会清空 insertRowMaps；
+// 这里在新增时记下「所在页码 + 其后一行的主键」，数据装载完成后按锚点原样重插，
+// 使未保存的新增行在回到该页时仍在原位置（离开该页不显示，total 始终含全部临时行）
+const tempRowsByPage = new Map();
+const tempRowKeyField = () => props.rowConfig?.keyField || "id";
+const countTempRows = () => {
+  let count = 0;
+  tempRowsByPage.forEach((list) => {
+    count += list.length;
+  });
+  return count;
+};
+// 当前页码（远程取 useTable 分页；静态取本地分页）
+const getPagerPageNum = () => {
+  if (isRemoteMode.value) return Number(tableHook.pageable.value?.pageNum) || 1;
+  return Number(localPager.value?.currentPage) || 1;
+};
+// 登记新增行：锚点取其当前后一行的主键（重插时插到锚点之前，保持相对顺序）
+// 存 vxe 实际持有的行对象（reactive 代理）而非入参原始对象，
+// 这样用户在该行上的编辑值会随重插保留，移除时按对象/主键都能对上
+const registerTempRow = (row) => {
+  const full = gridRef.value?.getTableData?.()?.fullData || [];
+  const keyField = tempRowKeyField();
+  const rowKey = keyField ? row?.[keyField] : null;
+  // vxe 内部持有的是 reactive 代理，入参原始对象与 fullData 中的引用不相等，
+  // 故先按引用、再按主键定位，确保锚点能取到
+  let pos = full.indexOf(row);
+  if (pos < 0 && rowKey != null) {
+    pos = full.findIndex((r) => r && r[keyField] === rowKey);
+  }
+  const rowInTable = pos >= 0 ? full[pos] : row;
+  const next = pos >= 0 ? full[pos + 1] : null;
+  const pageNum = getPagerPageNum();
+  const list = tempRowsByPage.get(pageNum) || [];
+  list.push({
+    row: rowInTable,
+    key: keyField ? rowInTable?.[keyField] : null,
+    keyField,
+    anchorId: next && keyField ? next[keyField] : null,
+  });
+  tempRowsByPage.set(pageNum, list);
+};
+// 注销新增行（走 removeRows 时同步，避免重插后“复活”）
+const unregisterTempRows = (rows) => {
+  const removed = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  if (!removed.length) return;
+  const isRemoved = (item) =>
+    removed.some(
+      (r) =>
+        r === item.row ||
+        (item.key != null && item.keyField && r[item.keyField] === item.key),
+    );
+  tempRowsByPage.forEach((list, pageNum) => {
+    const kept = list.filter((item) => !isRemoved(item));
+    if (kept.length) tempRowsByPage.set(pageNum, kept);
+    else tempRowsByPage.delete(pageNum);
+  });
+};
+// 数据装载完成后恢复「当前页」的临时新增行：锚点存在 → 插到锚点前；否则追加到末尾
+const restoreTempRows = () => {
+  const grid = gridRef.value;
+  if (!grid?.insertAt || !tempRowsByPage.size) return;
+  const list = tempRowsByPage.get(getPagerPageNum());
+  if (!list || !list.length) return;
+  const keyField = tempRowKeyField();
+  const rowByKey = new Map();
+  if (keyField) {
+    (grid.getTableData?.()?.fullData || []).forEach((row) => {
+      if (row && row[keyField] != null) rowByKey.set(row[keyField], row);
+    });
+  }
+  list.forEach(({ row, anchorId }) => {
+    const anchor = anchorId != null ? rowByKey.get(anchorId) : null;
+    grid.insertAt(row, anchor || -1);
+    // 逐个登记，支持「后插的行以前一条临时行为锚点」的链式顺序
+    const key = keyField ? row?.[keyField] : null;
+    if (key != null) rowByKey.set(key, row);
+  });
+};
 // 常驻编辑器（列 alwaysEdit）输入中的临时脏态：输入当下置真，防抖后交回 recordset 裁决
 // （与 editingDirty 同理：避免每次按键都跑全表深 diff，同时保证 cellChanged 即时翻转）
 const alwaysEditDirty = ref(false);
@@ -603,7 +683,8 @@ const recomputeChanged = () => {
   alwaysEditDirty.value = alwaysEditValues.size > 0;
   const rs = getChangeState();
   recordChanged.value = rs.changed;
-  tempRowDelta.value = rs.insertRecords.length - rs.removeRecords.length;
+  // 增量按「全量登记数」计算：切页后本页临时行会被重插，但其他页的临时行也应计入 total
+  tempRowDelta.value = countTempRows() - rs.removeRecords.length;
   applyChanged();
 };
 
@@ -755,6 +836,8 @@ const markSaved = async () => {
   resetAlwaysEditValues();
   recordChanged.value = false;
   tempRowDelta.value = 0;
+  // 保存即落地：临时新增行不再随数据重载重插
+  tempRowsByPage.clear();
   const fullData = gridRef.value?.getTableData?.()?.fullData;
   await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
   emitChanged(false);
@@ -770,6 +853,8 @@ const revertChanges = async () => {
   resetAlwaysEditValues();
   recordChanged.value = false;
   tempRowDelta.value = 0;
+  // 取消即放弃：临时新增行登记一并清空，回载基线后不再重插
+  tempRowsByPage.clear();
   await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
   emitChanged(false);
   await nextTick();
@@ -808,17 +893,28 @@ const ensureTempRowKey = (record) => {
   return record;
 };
 // 顶部插入一行（record 缺省为空行，可携带初始值；缺主键时自动补临时 id）
-const insertRow = (record = {}) =>
-  afterChangeOp(gridRef.value?.insert?.(ensureTempRowKey(record)));
+const insertRow = (record = {}) => {
+  const row = ensureTempRowKey(record);
+  const res = gridRef.value?.insert?.(row);
+  registerTempRow(row);
+  return afterChangeOp(res);
+};
 // 指定位置插入（target 为行对象/行id；records 支持单行或数组，缺主键时自动补临时 id）
 const insertRowAt = (records, target) => {
   const normalized = Array.isArray(records)
     ? records.map((r) => ensureTempRowKey(r))
     : ensureTempRowKey(records);
-  return afterChangeOp(gridRef.value?.insertAt?.(normalized, target));
+  const res = gridRef.value?.insertAt?.(normalized, target);
+  (Array.isArray(normalized) ? normalized : [normalized]).forEach(
+    registerTempRow,
+  );
+  return afterChangeOp(res);
 };
 // 移除行（数组或单行）
-const removeRows = (rows) => afterChangeOp(gridRef.value?.remove?.(rows));
+const removeRows = (rows) => {
+  unregisterTempRows(rows);
+  return afterChangeOp(gridRef.value?.remove?.(rows));
+};
 
 // FilterCheckbox 列的重新拉取计数器：面板每次打开 bump 一次，强制重新 fetch 避免数据串列
 const filterRefetchCounter = reactive({});
@@ -1074,8 +1170,11 @@ watch(
       // 由 recordset 单独裁决（新数据才是事实来源）
       clearEditSessions();
       resetAlwaysEditValues();
-      recomputeChanged();
+      // 基线取数据源本身（此时尚未重插临时行），取消时不会把新增行当成基础数据
       refreshBaseline();
+      // 数据装载完成后恢复「当前页」的临时新增行（翻页/切页大小/刷新/过滤后不丢失）
+      restoreTempRows();
+      recomputeChanged();
     });
   },
   { immediate: true },
