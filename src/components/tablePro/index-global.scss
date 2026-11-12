@@ -3,6 +3,55 @@ $vxe-filter-arrow-size: 8px;
 $vxe-filter-arrow-gap: 2px; // 箭头底部与面板顶部边框之间的视觉安全间距
 $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
 
+// ======= 复用：Element Plus 控件填满单元格宽度 =======
+// $follow-font-size: 编辑态需要 font-size: inherit 跟随单元格字号，
+// 避免激活瞬间字号跳变（常驻编辑器不需要）
+@mixin tp-el-fill($follow-font-size: false) {
+  .el-input,
+  .el-input-number,
+  .el-input__wrapper,
+  .el-select,
+  .el-select-v2,
+  .el-date-editor,
+  .el-time-editor,
+  .el-time-picker,
+  .el-time-select {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+    @if $follow-font-size {
+      font-size: inherit;
+    }
+  }
+}
+
+// InputNumber 内部输入框自适应
+@mixin tp-el-input-number-padding {
+  .el-input-number {
+    .el-input__wrapper {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+  }
+}
+
+// DatePicker/TimePicker 范围选择器内部 input 自适应
+@mixin tp-el-range-fill {
+  .el-range-editor {
+    .el-range-input-wrapper {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .el-range-input {
+      min-width: 0;
+      width: 100%;
+    }
+  }
+}
+
 // ======= 面板主样式（!important 提升优先级覆盖 vxe 自带样式）=======
 .vxe-table--filter-wrapper.is--active {
   max-width: min(92vw, 420px) !important;
@@ -84,18 +133,7 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
     box-sizing: border-box;
   }
 
-  .el-range-editor {
-    .el-range-input-wrapper {
-      flex: 1 1 auto;
-      min-width: 0;
-      overflow: hidden;
-    }
-
-    .el-range-input {
-      min-width: 0;
-      width: 100%;
-    }
-  }
+  @include tp-el-range-fill;
 }
 
 // ======= 编辑态：约束 Element Plus 输入类组件不超出单元格宽度 =======
@@ -110,42 +148,13 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
       // font-size: inherit —— 修复点击激活编辑时内容"上移"：
       // 显示态文本字号随表格尺寸（如 size=small 为 12px），el 控件默认 14px，
       // 激活瞬间字号跳变会加重"内容上移"的观感，这里让控件字号跟随单元格
-      .el-input,
-      .el-input-number,
-      .el-input__wrapper,
-      .el-select,
-      .el-select-v2,
-      .el-date-editor,
-      .el-time-editor,
-      .el-time-picker,
-      .el-time-select {
-        width: 100% !important;
-        max-width: 100% !important;
-        min-width: 0 !important;
-        box-sizing: border-box;
-        font-size: inherit;
-      }
+      @include tp-el-fill(true);
 
       // InputNumber 内部输入框自适应
-      .el-input-number {
-        .el-input__wrapper {
-          padding-left: 8px;
-          padding-right: 8px;
-        }
-      }
+      @include tp-el-input-number-padding;
 
       // DatePicker/TimePicker 范围选择器内部 input 自适应
-      .el-range-editor {
-        .el-range-input-wrapper {
-          flex: 1 1 auto;
-          min-width: 0;
-          overflow: hidden;
-        }
-        .el-range-input {
-          min-width: 0;
-          width: 100%;
-        }
-      }
+      @include tp-el-range-fill;
     }
   }
 }
@@ -184,39 +193,9 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
         white-space: normal;
       }
 
-      .el-input,
-      .el-input-number,
-      .el-input__wrapper,
-      .el-select,
-      .el-select-v2,
-      .el-date-editor,
-      .el-time-editor,
-      .el-time-picker,
-      .el-time-select {
-        width: 100% !important;
-        max-width: 100% !important;
-        min-width: 0 !important;
-        box-sizing: border-box;
-      }
-
-      .el-input-number {
-        .el-input__wrapper {
-          padding-left: 8px;
-          padding-right: 8px;
-        }
-      }
-
-      .el-range-editor {
-        .el-range-input-wrapper {
-          flex: 1 1 auto;
-          min-width: 0;
-          overflow: hidden;
-        }
-        .el-range-input {
-          min-width: 0;
-          width: 100%;
-        }
-      }
+      @include tp-el-fill;
+      @include tp-el-input-number-padding;
+      @include tp-el-range-fill;
     }
   }
 }

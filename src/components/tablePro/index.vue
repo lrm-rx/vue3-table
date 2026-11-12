@@ -318,6 +318,34 @@ const isSameCellValue = (a, b) => {
   return isEqual(a, b);
 };
 
+// 注册单字段即时脏态 watcher（点击编辑态与常驻编辑器共用）：
+// 输入当下与「登记时的原值快照」比对，当拍翻转 editingDirty → cellChanged，
+// 并主动触发 trigger=change 的规则校验。
+// 去重守卫与快照取样时机由调用方负责：
+//   - 常驻编辑器：editingWatchers 已有同 key 时跳过（重复渲染只登记一次）；
+//   - 点击编辑态：重复激活时先 teardownEditSession 再注册。
+// 注意 originalSnapshot 必须由调用方在激活/首次渲染那一刻取，避免读到已修改的值。
+const watchEditDirty = (key, source, deep, row, column, originalSnapshot) => {
+  const stop = watch(
+    source,
+    (cur) => {
+      if (!isSameCellValue(cur, originalSnapshot)) editingDirtyKeys.add(key);
+      else editingDirtyKeys.delete(key);
+      const hasDirty = editingDirtyKeys.size > 0;
+      if (hasDirty !== editingDirty.value) {
+        editingDirty.value = hasDirty;
+        // applyChanged 定义在下方变更跟踪区（运行期调用，无 TDZ 问题）
+        applyChanged();
+      }
+      // 编辑值变化即触发 trigger=change 的规则校验（用编辑中的当前值；
+      // 对象式编辑器此刻 row[field] 尚未写回，vxe 原生链路读不到该值）
+      triggerCellRuleValidate("change", row, column, cur);
+    },
+    { flush: "sync", deep },
+  );
+  editingWatchers.set(key, stop);
+};
+
 // 仅重算布尔值、不发事件（供 onEditClosed 在提交前后静默拆除会话，
 // 避免「先 false 后 true」的闪烁 emit；提交完成后由 recomputeChanged 统一裁决）
 const refreshEditingDirtySilent = () => {
@@ -405,28 +433,15 @@ const onEditActivated = (params) => {
   // 直接用原始对象做 watch source 读不到依赖、永不触发；
   // reactive(row) 命中 Vue 的 proxy 缓存，拿到渲染期同一个代理，修改才能被感知。
   const rowProxy = isCustomEdit ? reactive(row) : null
-  const source = isCustomEdit
-    ? () => rowProxy[field]
-    : () => editLocalState[key]
   // flush:sync → 输入事件当拍翻转，不等 nextTick；自定义插槽监听单字段用 deep 兜底原地突变
-  const stop = watch(
-    source,
-    (cur) => {
-      if (!isSameCellValue(cur, originalSnapshot)) editingDirtyKeys.add(key)
-      else editingDirtyKeys.delete(key)
-      const hasDirty = editingDirtyKeys.size > 0
-      if (hasDirty !== editingDirty.value) {
-        editingDirty.value = hasDirty
-        // applyChanged 定义在下方变更跟踪区（运行期调用，无 TDZ 问题）
-        applyChanged()
-      }
-      // 编辑值变化即触发 trigger=change 的规则校验（用编辑中的当前值；
-      // 对象式编辑器此刻 row[field] 尚未写回，vxe 原生链路读不到该值）
-      triggerCellRuleValidate("change", row, params.column, cur)
-    },
-    { flush: "sync", deep: isCustomEdit },
+  watchEditDirty(
+    key,
+    isCustomEdit ? () => rowProxy[field] : () => editLocalState[key],
+    isCustomEdit,
+    row,
+    params.column,
+    originalSnapshot,
   )
-  editingWatchers.set(key, stop)
 }
 // 退出编辑态：写回 row + 发射 cell-edit-change + 清理本地态
 // 分流：对象式 editLocalState 存新值 → 写回 row；
@@ -803,21 +818,14 @@ const registerAlwaysEditRawWatch = ({ row, column, field }) => {
   // 与编辑态同理：行对象可能来自 vxe 内部（非响应式），reactive(row) 命中 proxy 缓存
   // 拿到渲染期同一个代理，用户写 row[field] 才能被感知
   const rowProxy = reactive(row);
-  const stop = watch(
+  watchEditDirty(
+    key,
     () => rowProxy[field],
-    (cur) => {
-      if (!isSameCellValue(cur, originalSnapshot)) editingDirtyKeys.add(key);
-      else editingDirtyKeys.delete(key);
-      const hasDirty = editingDirtyKeys.size > 0;
-      if (hasDirty !== editingDirty.value) {
-        editingDirty.value = hasDirty;
-        applyChanged();
-      }
-      triggerCellRuleValidate("change", row, column, cur);
-    },
-    { flush: "sync", deep: true },
+    true,
+    row,
+    column,
+    originalSnapshot,
   );
-  editingWatchers.set(key, stop);
 };
 
 onBeforeUnmount(() => {
@@ -825,6 +833,17 @@ onBeforeUnmount(() => {
   flushAlwaysEdit();
   resetAlwaysEditValues();
 });
+
+// 变更状态复位公共收尾：清空变更标记与临时行登记 → 装载数据 → 关闭标记 → 重建基线
+const resetChangeTracking = async (data) => {
+  recordChanged.value = false;
+  tempRowDelta.value = 0;
+  tempRowsByPage.clear();
+  await gridRef.value?.loadData?.(data);
+  emitChanged(false);
+  await nextTick();
+  refreshBaseline();
+};
 
 // 保存成功后调用：以当前数据为新基线并清除变更标记
 //（loadData 重建 keepSource 源数据并清空插入/删除标记，行对象引用保持不变）
@@ -834,31 +853,18 @@ const markSaved = async () => {
   // 常驻编辑：先落盘再重置，保证纳入新基线的是最新输入
   flushAlwaysEdit();
   resetAlwaysEditValues();
-  recordChanged.value = false;
-  tempRowDelta.value = 0;
-  // 保存即落地：临时新增行不再随数据重载重插
-  tempRowsByPage.clear();
+  // 保存即落地：临时新增行纳入基线，不再随数据重载重插
   const fullData = gridRef.value?.getTableData?.()?.fullData;
-  await gridRef.value?.loadData?.(fullData ? fullData.slice(0) : []);
-  emitChanged(false);
-  await nextTick();
-  refreshBaseline();
+  await resetChangeTracking(fullData ? fullData.slice(0) : []);
 };
 
 // 取消：还原到最近一次干净基线（编辑值/新增行/移除行的位置与内容全部还原）
 const revertChanges = async () => {
   if (!baselineRows.value || !internalChanged.value) return false;
   clearEditSessions();
-  // 取消即放弃未写回输入：直接丢弃本地值，以基线数据为准
+  // 取消即放弃未写回输入与临时新增行：以基线数据为准，回载后不再重插
   resetAlwaysEditValues();
-  recordChanged.value = false;
-  tempRowDelta.value = 0;
-  // 取消即放弃：临时新增行登记一并清空，回载基线后不再重插
-  tempRowsByPage.clear();
-  await gridRef.value?.loadData?.(cloneDeep(baselineRows.value));
-  emitChanged(false);
-  await nextTick();
-  refreshBaseline();
+  await resetChangeTracking(cloneDeep(baselineRows.value));
   return true;
 };
 

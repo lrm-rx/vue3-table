@@ -98,6 +98,14 @@ const setFilterArrowOffset = (panel, triggerCenterX, left, pw, arrowSize) => {
   panel.style.setProperty("--vxe-filter-arrow-left", `${arrowLeft}px`);
 };
 
+// 写入已 clamp 的面板坐标并同步箭头偏移（left/top 为 document 坐标系）
+const finalizePanelPosition = (panel, left, top, triggerCenterX, pw) => {
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
+  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+};
+
 // 基准快照：面板 clamp 完成时的 left/top 与页面滚动坐标（滚动 reposition 用 delta 增量更新）
 const createRepositionBaseline = (panel) => ({
   left: parseFloat(panel.style.left) || 0,
@@ -123,10 +131,7 @@ const reclampFromTrigger = (gridRef, panel, column, vw, vh, pw, ph, margin) => {
   left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
   // 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
   top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
-  panel.style.left = `${left}px`;
-  panel.style.top = `${top}px`;
-  panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
-  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+  finalizePanelPosition(panel, left, top, triggerCenterX, pw);
   return true;
 };
 
@@ -142,11 +147,8 @@ const clampFromCurrentPosition = (gridRef, panel, column, vw, vh, pw, ph, margin
   left = clampFilterPanelHorizontal(panel, left, vw, pw, margin);
   // 4. 垂直边界（视觉顶部 = top + ARROW_EXTRA，故边界内移 ARROW_EXTRA）
   top = clampFilterPanelVertical(top, vh, ph, margin, ARROW_EXTRA);
-  panel.style.left = `${left}px`;
-  panel.style.top = `${top}px`;
-  panel.style.transform = `translateY(${ARROW_EXTRA}px)`;
-  // 5. 箭头水平偏移
-  setFilterArrowOffset(panel, triggerCenterX, left, pw, ARROW_SIZE);
+  // 5. 写入坐标并同步箭头水平偏移
+  finalizePanelPosition(panel, left, top, triggerCenterX, pw);
 };
 
 // 同步执行面板定位的核心逻辑（供初次打开 clamp 与滚动重定位复用）
