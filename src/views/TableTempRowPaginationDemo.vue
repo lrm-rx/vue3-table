@@ -173,8 +173,9 @@ const onRemoteRemove = () => {
   remoteRef.value?.clearCheckboxRow?.();
   syncRemote();
 };
-// 保存：先调真实新增/更新接口，成功后再 markSaved + 重新请求（临时行落地为服务端数据）
-const onRemoteSave = async () => {
+// 保存：先调真实新增/更新接口，成功后 markSaved + 重新请求（临时行落地为服务端数据）
+// refreshFirst=true 用于回归「接口数据先刷新、保存状态后收尾」的时序
+const saveRemoteChanges = async (refreshFirst) => {
   const { insertRecords = [], updateRecords = [] } =
     remoteRef.value?.getChangeState?.() || {};
   if (!insertRecords.length && !updateRecords.length) {
@@ -189,15 +190,20 @@ const onRemoteSave = async () => {
     for (const row of updateRecords) {
       await updateUserApi(row.id, row);
     }
+    if (refreshFirst) await remoteRef.value?.getTableList?.();
     await remoteRef.value?.markSaved?.();
-    await remoteRef.value?.getTableList?.();
+    if (!refreshFirst) await remoteRef.value?.getTableList?.();
     remoteSeq = 0;
-    ElMessage.success(`已保存 ${insertRecords.length} 条新增`);
+    ElMessage.success(
+      `已保存 ${insertRecords.length} 条新增${refreshFirst ? "（先刷新再收尾）" : ""}`,
+    );
   } catch (error) {
     ElMessage.error(`保存失败：${error?.message || error}`);
   }
   syncRemote();
 };
+const onRemoteSave = () => saveRemoteChanges(false);
+const onRemoteRefreshBeforeSave = () => saveRemoteChanges(true);
 const onRemoteCancel = async () => {
   const ok = await remoteRef.value?.revertChanges?.();
   ElMessage[ok ? "success" : "info"](ok ? "已取消变更，临时行已丢弃" : "当前没有可取消的变更");
@@ -292,6 +298,14 @@ const onRequestError = (error) => {
               <el-button v-if="remoteChanged" type="success" @click="onRemoteSave">
                 保存
               </el-button>
+              <el-button
+                v-if="remoteChanged"
+                type="success"
+                plain
+                @click="onRemoteRefreshBeforeSave"
+              >
+                保存并刷新（先刷新）
+              </el-button>
               <el-button v-if="remoteChanged" @click="onRemoteCancel">取消</el-button>
             </template>
           </TablePro>
@@ -310,6 +324,13 @@ const onRequestError = (error) => {
             <div class="demo-panel__item">
               <span class="demo-panel__label">切换页码后：</span>
               <span>回到新增时所在页，临时行按原位置重插；其他页不显示</span>
+            </div>
+            <div class="demo-panel__item">
+              <span class="demo-panel__label">保存刷新回归：</span>
+              <span>
+                新增后点击「保存并刷新（先刷新）」，应只显示一条服务端正式数据，不残留
+                row_xxx 临时行，cellChanged 归零且 total 与服务端一致
+              </span>
             </div>
           </div>
         </el-card>

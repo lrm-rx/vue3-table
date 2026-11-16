@@ -162,4 +162,47 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     await t.reload(makeData([1, 2]));
     expect(t.fullData()).toHaveLength(2);
   });
+
+  it("远程先刷新再完成保存，旧临时行不与服务端新行重复", async () => {
+    let serverData = makeData([1]);
+    const state = { changed: false };
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns,
+        requestApi: async () => ({ list: serverData, total: serverData.length }),
+        showToolbar: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (v) => {
+          state.changed = v;
+          wrapper.setProps({ cellChanged: v });
+        },
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+    const grid = wrapper.findComponent({ name: "VxeGrid" }).vm;
+
+    wrapper.vm.insertRow({ name: "saved" });
+    await flushPromises();
+    await nextFrame();
+    expect(state.changed).toBe(true);
+
+    // 模拟保存接口已落库：服务端返回带正式 id 的新行
+    serverData = [{ id: 1, name: "n1" }, { id: 2, name: "saved" }];
+    // 模拟父组件保存流程：先重新请求，再回写 cellChanged=false 触发保存收尾
+    await wrapper.vm.getTableList();
+    await wrapper.setProps({ cellChanged: false });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    expect(grid.getTableData().fullData.map((r) => r.id)).toEqual([1, 2]);
+    expect(grid.getTableData().fullData.filter((r) => r.name === "saved")).toHaveLength(1);
+    expect(wrapper.vm.currentPager.total).toBe(2);
+    expect(state.changed).toBe(false);
+    wrapper.unmount();
+  });
 });

@@ -637,9 +637,12 @@ const restoreTempRows = () => {
       if (row && row[keyField] != null) rowByKey.set(row[keyField], row);
     });
   }
-  list.forEach(({ row, anchorId }) => {
+  list.forEach((item) => {
+    const { row, anchorId } = item;
     const anchor = anchorId != null ? rowByKey.get(anchorId) : null;
     grid.insertAt(row, anchor || -1);
+    // 标记此行来自数据重载后的重插；远程保存收尾时不能把它误当成服务端新数据
+    item.restored = true;
     // 逐个登记，支持「后插的行以前一条临时行为锚点」的链式顺序
     const key = keyField ? row?.[keyField] : null;
     if (key != null) rowByKey.set(key, row);
@@ -855,7 +858,26 @@ const markSaved = async () => {
   resetAlwaysEditValues();
   // 保存即落地：临时新增行纳入基线，不再随数据重载重插
   const fullData = gridRef.value?.getTableData?.()?.fullData;
-  await resetChangeTracking(fullData ? fullData.slice(0) : []);
+  let nextData = fullData ? fullData.slice(0) : [];
+  if (isRemoteMode.value && tempRowsByPage.size) {
+    // 若保存流程已经先刷新过接口数据，renderData watcher 会把旧临时行重插回来。
+    // 这些行不是本次接口返回的数据，不能再随 markSaved 并入新基线，否则旧 row_xxx
+    // 会与已落库的正式行并存，直到下一次整页刷新才消失。
+    const restoredRows = [...tempRowsByPage.values()]
+      .flat()
+      .filter((item) => item.restored);
+    nextData = nextData.filter(
+      (candidate) =>
+        !restoredRows.some(
+          (item) =>
+            candidate === item.row ||
+            (item.key != null &&
+              item.keyField &&
+              candidate?.[item.keyField] === item.key),
+        ),
+    );
+  }
+  await resetChangeTracking(nextData);
 };
 
 // 取消：还原到最近一次干净基线（编辑值/新增行/移除行的位置与内容全部还原）
