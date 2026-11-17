@@ -242,6 +242,26 @@ $table-toolbar-gap: 12px;
     font-weight: 600;
   }
 
+  .table-pro__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .table-pro__empty-action {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--el-color-primary, #409eff);
+    font: inherit;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   // ========== header-wrap：表头标题过长换行完整显示 ==========
   // 开启（根节点带 is--header-wrap）：取消省略三件套，标题换行完整显示；
   // 关闭（默认）：沿用上方基础规则，单行截断并显示省略号

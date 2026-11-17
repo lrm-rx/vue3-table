@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { VxeGrid } from "vxe-table";
 import TablePro from "../../src/components/tablePro/index.vue";
+import Pagination from "../../src/components/tablePro/pagination/Pagination.vue";
 
 // jsdom 缺失的浏览器 API（vxe 依赖）
 if (!global.ResizeObserver) {
@@ -35,7 +36,7 @@ const makeData = (ids) => ids.map((id) => ({ id, name: `n${id}` }));
  * 静态数据模式挂载（数据替换 = 翻页/切页大小/刷新 时的 loadData 路径），
  * 通过替换 data 模拟分页重载，验证临时新增行是否被重插。
  */
-const mountTable = async (data) => {
+const mountTable = async (data, extraProps = {}) => {
   const state = { changed: false };
   const wrapper = mount(TablePro, {
     attachTo: document.body,
@@ -44,6 +45,7 @@ const mountTable = async (data) => {
       data,
       showToolbar: false,
       pagination: false,
+      ...extraProps,
       editable: true,
       cellChanged: false,
       "onUpdate:cellChanged": (v) => {
@@ -204,5 +206,114 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     expect(wrapper.vm.currentPager.total).toBe(2);
     expect(state.changed).toBe(false);
     wrapper.unmount();
+  });
+
+  it("静态空白页提示临时行所属页，点击按钮后返回", async () => {
+    const data = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
+    const t = await mountTable(data, { pagination: true });
+    const records = Array.from({ length: 22 }, (_, i) => ({ name: `batch-${i}` }));
+    t.wrapper.vm.insertRowAt(records, -1);
+    await flushPromises();
+    await nextFrame();
+    expect(t.wrapper.vm.currentPager.total).toBe(58);
+
+    t.wrapper.findComponent(Pagination).vm.$emit("change", {
+      ...t.wrapper.vm.currentPager,
+      currentPage: 6,
+    });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    expect(t.wrapper.vm.currentPager.currentPage).toBe(6);
+    expect(t.wrapper.find(".table-pro__empty").text()).toContain(
+      "当前页暂无数据，未保存新增行在第 1 页",
+    );
+    const backButton = t.wrapper.find(".table-pro__empty-action");
+    expect(backButton.text()).toBe("返回第 1 页");
+
+    await backButton.trigger("click");
+    await flushPromises();
+    await nextFrame();
+    expect(t.wrapper.vm.currentPager.currentPage).toBe(1);
+    expect(t.fullData()).toHaveLength(32);
+    expect(t.fullData().filter((r) => String(r.id).startsWith("row_"))).toHaveLength(22);
+    expect(t.wrapper.vm.currentPager.total).toBe(58);
+    t.wrapper.unmount();
+  });
+
+  it("远程空白页提示临时行所属页，点击按钮后重新请求该页", async () => {
+    const serverData = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
+    const requestedPages = [];
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns,
+        requestApi: async ({ pageNum = 1, pageSize = 10 }) => {
+          requestedPages.push(pageNum);
+          const start = (pageNum - 1) * pageSize;
+          return {
+            list: serverData.slice(start, start + pageSize),
+            total: serverData.length,
+          };
+        },
+        showToolbar: false,
+        editable: true,
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+    const grid = wrapper.findComponent({ name: "VxeGrid" }).vm;
+    const records = Array.from({ length: 22 }, (_, i) => ({ name: `remote-${i}` }));
+    wrapper.vm.insertRowAt(records, -1);
+    await flushPromises();
+    await nextFrame();
+    expect(wrapper.vm.currentPager.total).toBe(58);
+
+    wrapper.findComponent(Pagination).vm.$emit("change", {
+      ...wrapper.vm.currentPager,
+      currentPage: 6,
+    });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    expect(wrapper.vm.currentPager.currentPage).toBe(6);
+    expect(requestedPages.at(-1)).toBe(6);
+    expect(wrapper.find(".table-pro__empty").text()).toContain(
+      "当前页暂无数据，未保存新增行在第 1 页",
+    );
+
+    await wrapper.find(".table-pro__empty-action").trigger("click");
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    expect(wrapper.vm.currentPager.currentPage).toBe(1);
+    expect(requestedPages.at(-1)).toBe(1);
+    expect(grid.getTableData().fullData).toHaveLength(32);
+    expect(
+      grid.getTableData().fullData.filter((r) => String(r.id).startsWith("row_")),
+    ).toHaveLength(22);
+    wrapper.unmount();
+  });
+
+  it("普通空数据没有临时行时，仅显示暂无数据且不显示返回按钮", async () => {
+    const data = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
+    const t = await mountTable(data, { pagination: true });
+
+    t.wrapper.findComponent(Pagination).vm.$emit("change", {
+      ...t.wrapper.vm.currentPager,
+      currentPage: 6,
+    });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    expect(t.wrapper.vm.currentPager.currentPage).toBe(6);
+    expect(t.wrapper.find(".table-pro__empty").text()).toBe("暂无数据");
+    expect(t.wrapper.find(".table-pro__empty-action").exists()).toBe(false);
+    t.wrapper.unmount();
   });
 });

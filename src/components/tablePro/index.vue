@@ -1232,6 +1232,25 @@ const currentPager = computed(() => {
   return props.pagerConfig;
 });
 
+// 当前页为空时，提示最近的未保存临时行所属页；不自动跳页，由用户点击返回。
+const emptyTempPage = computed(() => {
+  if (!props.pagination || renderData.value?.length) return null;
+  const currentPage = Number(currentPager.value?.currentPage) || 1;
+  const pages = [...tempRowsByPage.keys()].filter(
+    (pageNum) => pageNum !== currentPage && tempRowsByPage.get(pageNum)?.length,
+  );
+  if (!pages.length) return null;
+  pages.sort(
+    (a, b) => Math.abs(a - currentPage) - Math.abs(b - currentPage) || a - b,
+  );
+  return pages[0];
+});
+const emptyText = computed(() =>
+  emptyTempPage.value
+    ? `当前页暂无数据，未保存新增行在第 ${emptyTempPage.value} 页`
+    : "暂无数据",
+);
+
 // ========== 默认参数同步 ==========
 // 把 initParam 默认值同步到 useTable 与 vxe-grid UI（分页/排序/过滤），首屏请求前调用
 // 按步骤拆分（步骤1~4），保持原有逻辑不变
@@ -2188,6 +2207,14 @@ const onPagerChange = (newPager) => {
   emit("page-change", newPager);
 };
 
+const goToEmptyTempPage = () => {
+  if (!emptyTempPage.value) return;
+  onPagerChange({
+    ...currentPager.value,
+    currentPage: emptyTempPage.value,
+  });
+};
+
 // ========== 校验失败提示兜底（height 为空 + 单行数据 + validConfig.autoPos=false 场景）==========
 // gridProps 已将 validConfig.message 缺省补为 'default'（智能模式）：该场景下 vxe 内联
 // 错误提示不渲染（body.js 要求 height 存在或数据 >1 行），原生应改走 tooltip 浮层提示，
@@ -2496,6 +2523,20 @@ defineExpose({
             class="table-pro__reset-filter-btn"
             @click="onResetAllFilter"
           />
+        </template>
+
+        <template #empty>
+          <div class="table-pro__empty">
+            <span>{{ emptyText }}</span>
+            <button
+              v-if="emptyTempPage"
+              type="button"
+              class="table-pro__empty-action"
+              @click="goToEmptyTempPage"
+            >
+              返回第 {{ emptyTempPage }} 页
+            </button>
+          </div>
         </template>
 
         <!-- 外部 cell_xxx / edit_xxx / header_xxx 具名插槽透传（详细用法见 README） -->
