@@ -1203,7 +1203,6 @@ watch(
       // 数据装载完成后恢复「当前页」的临时新增行（翻页/切页大小/刷新/过滤后不丢失）
       restoreTempRows();
       recomputeChanged();
-      redirectEmptyPage();
     });
   },
   { immediate: true },
@@ -1232,35 +1231,6 @@ const currentPager = computed(() => {
   }
   return props.pagerConfig;
 });
-
-// 临时行计入 total 后会产生额外页码，但现有登记语义是「回到所属页才显示」。
-// 翻到没有任何基础数据/临时行的页时，自动返回最近的临时行所在页；没有临时行则回退到最后页。
-const redirectEmptyPage = () => {
-  if (!props.pagination) return;
-  const rows = gridRef.value?.getTableData?.()?.fullData || [];
-  const pager = currentPager.value || {};
-  const currentPage = Number(pager.currentPage) || 1;
-  const total = Number(pager.total) || 0;
-  if (rows.length || !total) return;
-
-  const tempPages = [...tempRowsByPage.keys()].filter(
-    (pageNum) => pageNum !== currentPage && tempRowsByPage.get(pageNum)?.length,
-  );
-  let targetPage = null;
-  if (tempPages.length) {
-    tempPages.sort(
-      (a, b) => Math.abs(a - currentPage) - Math.abs(b - currentPage) || a - b,
-    );
-    [targetPage] = tempPages;
-  } else {
-    const pageSize = Number(pager.pageSize) || 10;
-    const lastPage = Math.max(1, Math.ceil(total / pageSize));
-    if (currentPage > lastPage) targetPage = lastPage;
-  }
-  if (targetPage && targetPage !== currentPage) {
-    onPagerChange({ ...pager, currentPage: targetPage });
-  }
-};
 
 // ========== 默认参数同步 ==========
 // 把 initParam 默认值同步到 useTable 与 vxe-grid UI（分页/排序/过滤），首屏请求前调用

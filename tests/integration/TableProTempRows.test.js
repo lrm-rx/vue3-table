@@ -3,7 +3,6 @@ import { describe, it, expect } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { VxeGrid } from "vxe-table";
 import TablePro from "../../src/components/tablePro/index.vue";
-import Pagination from "../../src/components/tablePro/pagination/Pagination.vue";
 
 // jsdom 缺失的浏览器 API（vxe 依赖）
 if (!global.ResizeObserver) {
@@ -36,7 +35,7 @@ const makeData = (ids) => ids.map((id) => ({ id, name: `n${id}` }));
  * 静态数据模式挂载（数据替换 = 翻页/切页大小/刷新 时的 loadData 路径），
  * 通过替换 data 模拟分页重载，验证临时新增行是否被重插。
  */
-const mountTable = async (data, extraProps = {}) => {
+const mountTable = async (data) => {
   const state = { changed: false };
   const wrapper = mount(TablePro, {
     attachTo: document.body,
@@ -45,7 +44,6 @@ const mountTable = async (data, extraProps = {}) => {
       data,
       showToolbar: false,
       pagination: false,
-      ...extraProps,
       editable: true,
       cellChanged: false,
       "onUpdate:cellChanged": (v) => {
@@ -206,93 +204,5 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     expect(wrapper.vm.currentPager.total).toBe(2);
     expect(state.changed).toBe(false);
     wrapper.unmount();
-  });
-
-  it("静态批量新增后进入空白页，自动返回临时行所属页", async () => {
-    const data = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
-    const t = await mountTable(data, { pagination: true });
-    const records = Array.from({ length: 22 }, (_, i) => ({ name: `batch-${i}` }));
-    t.wrapper.vm.insertRowAt(records, -1);
-    await flushPromises();
-    await nextFrame();
-    expect(t.wrapper.vm.currentPager.total).toBe(58);
-
-    t.wrapper.findComponent(Pagination).vm.$emit("change", {
-      ...t.wrapper.vm.currentPager,
-      currentPage: 6,
-    });
-    await flushPromises();
-    await nextFrame();
-    await flushPromises();
-
-    expect(t.wrapper.vm.currentPager.currentPage).toBe(1);
-    expect(t.fullData()).toHaveLength(32);
-    expect(t.fullData().filter((r) => String(r.id).startsWith("row_"))).toHaveLength(22);
-    expect(t.wrapper.vm.currentPager.total).toBe(58);
-    t.wrapper.unmount();
-  });
-
-  it("远程批量新增后请求到空白页，自动重新请求临时行所属页", async () => {
-    const serverData = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
-    const requestedPages = [];
-    const wrapper = mount(TablePro, {
-      attachTo: document.body,
-      props: {
-        columns,
-        requestApi: async ({ pageNum = 1, pageSize = 10 }) => {
-          requestedPages.push(pageNum);
-          const start = (pageNum - 1) * pageSize;
-          return {
-            list: serverData.slice(start, start + pageSize),
-            total: serverData.length,
-          };
-        },
-        showToolbar: false,
-        editable: true,
-      },
-      global: { plugins: [VxeGrid] },
-    });
-    await flushPromises();
-    await nextFrame();
-    const grid = wrapper.findComponent({ name: "VxeGrid" }).vm;
-    const records = Array.from({ length: 22 }, (_, i) => ({ name: `remote-${i}` }));
-    wrapper.vm.insertRowAt(records, -1);
-    await flushPromises();
-    await nextFrame();
-    expect(wrapper.vm.currentPager.total).toBe(58);
-
-    wrapper.findComponent(Pagination).vm.$emit("change", {
-      ...wrapper.vm.currentPager,
-      currentPage: 6,
-    });
-    await flushPromises();
-    await nextFrame();
-    await flushPromises();
-
-    expect(wrapper.vm.currentPager.currentPage).toBe(1);
-    expect(requestedPages).toContain(6);
-    expect(requestedPages.at(-1)).toBe(1);
-    expect(grid.getTableData().fullData).toHaveLength(32);
-    expect(
-      grid.getTableData().fullData.filter((r) => String(r.id).startsWith("row_")),
-    ).toHaveLength(22);
-    wrapper.unmount();
-  });
-
-  it("没有临时行时进入越界页，自动回退到正式数据末页", async () => {
-    const data = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
-    const t = await mountTable(data, { pagination: true });
-
-    t.wrapper.findComponent(Pagination).vm.$emit("change", {
-      ...t.wrapper.vm.currentPager,
-      currentPage: 6,
-    });
-    await flushPromises();
-    await nextFrame();
-    await flushPromises();
-
-    expect(t.wrapper.vm.currentPager.currentPage).toBe(4);
-    expect(t.fullData().map((r) => r.id)).toEqual([31, 32, 33, 34, 35, 36]);
-    t.wrapper.unmount();
   });
 });
