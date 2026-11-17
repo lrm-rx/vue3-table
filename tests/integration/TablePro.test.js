@@ -830,8 +830,9 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
     })("dev");
     expect(getChanged()).toBe(true);
 
-    // 插入撤销（recordset 清空）后关闭编辑态走 recompute 通道 → 归净
+    // 通过公开 removeRows 撤销插入，同步注销跨页登记并清空 recordset → 归净
     grid.mock.recordset = emptyRecordset();
+    wrapper.vm.removeRows({ id: "new-1" });
     callAttrsHandler(attrs, "onEditClosed", {
       row: rows[0],
       column: { field: "dept" },

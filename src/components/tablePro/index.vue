@@ -652,12 +652,24 @@ const restoreTempRows = () => {
 // （与 editingDirty 同理：避免每次按键都跑全表深 diff，同时保证 cellChanged 即时翻转）
 const alwaysEditDirty = ref(false);
 
-// 变更摘要：changed + vxe getRecordset 三类记录（供父组件展示/收集）
+// 变更摘要：当前页删改记录 + 所有页登记的临时新增行（供父组件展示/收集）
 const getChangeState = () => {
   const rs = gridRef.value?.getRecordset?.() || {};
-  const insertRecords = rs.insertRecords || [];
+  const insertRecords = [...(rs.insertRecords || [])];
   const removeRecords = rs.removeRecords || [];
   const updateRecords = rs.updateRecords || [];
+  // loadData 只保留当前页的 recordset，需合并其他页登记的临时行，
+  // 否则切到无临时行的页后 cellChanged 会被错误归净，保存也会漏掉其他页新增行。
+  const keyField = tempRowKeyField();
+  const trackedRows = [...tempRowsByPage.values()].flat().map((item) => item.row);
+  trackedRows.forEach((row) => {
+    const key = keyField ? row?.[keyField] : null;
+    const exists = insertRecords.some(
+      (item) =>
+        item === row || (key != null && keyField && item?.[keyField] === key),
+    );
+    if (!exists) insertRecords.push(row);
+  });
   return {
     changed: !!(insertRecords.length || removeRecords.length || updateRecords.length),
     insertRecords,
@@ -2399,6 +2411,27 @@ defineExpose({
   getFullData: () => {
     flushAlwaysEdit();
     return gridRef.value?.getFullData?.() || [];
+  },
+  // 静态模式：返回本地过滤/排序后的完整数据，排除当前已删除正式行，
+  // 并合并所有页登记的未保存临时行；远程模式仍返回当前已加载页。
+  getAllData: () => {
+    flushAlwaysEdit();
+    if (isRemoteMode.value) return gridRef.value?.getFullData?.() || [];
+    const removeRecords = gridRef.value?.getRecordset?.()?.removeRecords || [];
+    const keyField = tempRowKeyField();
+    const removedKeys = new Set(
+      removeRecords
+        .map((row) => (keyField ? row?.[keyField] : null))
+        .filter((key) => key != null),
+    );
+    const allData = localProcessedData.value.filter((row) => {
+      const key = keyField ? row?.[keyField] : null;
+      return !removeRecords.includes(row) && (key == null || !removedKeys.has(key));
+    });
+    tempRowsByPage.forEach((list) => {
+      list.forEach(({ row }) => allData.push(row));
+    });
+    return allData;
   },
   // 强制写回常驻编辑器（alwaysEdit）尚未落地的输入（如父组件自定义保存流程前调用）
   flushAlwaysEdit,

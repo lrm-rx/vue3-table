@@ -13,7 +13,7 @@
  * 注意：只有通过组件暴露的 insertRow / insertRowAt / removeRows 才纳入跟踪，
  * 直接调用 gridRef 的 insert / insertAt / remove 不会登记归属页。
  */
-import { nextTick, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import TablePro from "@/components/tablePro/index.vue";
 import { getUserListApi, addUserApi, updateUserApi } from "@/api";
@@ -45,6 +45,7 @@ const staticColumns = [
 const staticRef = ref();
 const staticChanged = ref(false);
 const staticTotal = ref(0);
+const staticAllDataSummary = ref("尚未读取");
 let staticSeq = 0;
 
 // 稳定引用（避免模板内联对象在每次渲染时重建，触发 pagerConfig 深度 watch 把页大小重置）
@@ -56,6 +57,14 @@ const syncStatic = async () => {
   await nextTick();
   await nextTick();
   staticTotal.value = staticRef.value?.currentPager?.total ?? 0;
+};
+onMounted(syncStatic);
+
+const onStaticGetAllData = () => {
+  const pageRows = staticRef.value?.getFullData?.() || [];
+  const allRows = staticRef.value?.getAllData?.() || [];
+  staticAllDataSummary.value = `当前页 ${pageRows.length} 条；全量 ${allRows.length} 条；原始 data ${staticData.value.length} 条`;
+  ElMessage.success(`已获取全量数据，共 ${allRows.length} 条`);
 };
 
 const onStaticInsert = () => {
@@ -98,13 +107,13 @@ const onStaticRemove = () => {
   staticRef.value?.clearCheckboxRow?.();
   syncStatic();
 };
-// 保存：把临时行合并进 data 作为新基线（真实项目替换为保存接口调用后再 markSaved）
+// 保存：把全量正式数据与所有页临时行合并进 data 作为新基线
 const onStaticSave = async () => {
-  const full = staticRef.value?.getFullData?.() || [];
+  const full = staticRef.value?.getAllData?.() || [];
   await staticRef.value?.markSaved?.();
   staticData.value = full.map((row) => ({ ...row }));
   staticSeq = 0;
-  ElMessage.success("已保存：临时行已合并进 data");
+  ElMessage.success("已保存：全量数据及所有页临时行已合并进 data");
   syncStatic();
 };
 const onStaticCancel = async () => {
@@ -245,6 +254,7 @@ const onRequestError = (error) => {
               <el-button type="primary" @click="onStaticInsert">新增临时行（首行）</el-button>
               <el-button type="primary" plain @click="onStaticAppend">追加临时行（末行）</el-button>
               <el-button type="primary" plain @click="onStaticBatchInsert">批量新增 22 条</el-button>
+              <el-button type="info" plain @click="onStaticGetAllData">读取全量数据</el-button>
               <el-button type="warning" plain @click="onStaticRemove">删除勾选行</el-button>
               <el-button v-if="staticChanged" type="success" @click="onStaticSave">
                 保存
@@ -265,8 +275,12 @@ const onRequestError = (error) => {
               <span>{{ staticTotal }}</span>
             </div>
             <div class="demo-panel__item">
+              <span class="demo-panel__label">getAllData 读取结果：</span>
+              <span>{{ staticAllDataSummary }}</span>
+            </div>
+            <div class="demo-panel__item">
               <span class="demo-panel__label">保存后：</span>
-              <span>临时行合并进 data，切换分页不再丢失</span>
+              <span>全量数据与所有页临时行合并进 data，切换分页不再丢失</span>
             </div>
           </div>
         </el-card>

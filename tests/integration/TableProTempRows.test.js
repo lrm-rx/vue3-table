@@ -316,4 +316,77 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     expect(t.wrapper.find(".table-pro__empty-action").exists()).toBe(false);
     t.wrapper.unmount();
   });
+
+  it("静态分页 getAllData 返回全量正式数据及所有页临时行", async () => {
+    const data = makeData(Array.from({ length: 25 }, (_, i) => i + 1));
+    const t = await mountTable(data, { pagination: true });
+
+    t.wrapper.vm.insertRow({ name: "page-1-temp" });
+    await flushPromises();
+    await nextFrame();
+
+    t.wrapper.findComponent(Pagination).vm.$emit("change", {
+      ...t.wrapper.vm.currentPager,
+      currentPage: 2,
+    });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+
+    // 当前页没有临时行时，其他页新增仍应保持脏状态并纳入变更摘要
+    expect(t.changed()).toBe(true);
+    expect(
+      t.wrapper.vm.getChangeState().insertRecords.map((row) => row.name),
+    ).toEqual(["page-1-temp"]);
+
+    t.wrapper.vm.insertRow({ name: "page-2-temp" });
+    await flushPromises();
+    await nextFrame();
+
+    expect(t.wrapper.vm.getChangeState().insertRecords).toHaveLength(2);
+    expect(t.wrapper.vm.getFullData()).toHaveLength(11);
+    const allData = t.wrapper.vm.getAllData();
+    expect(allData).toHaveLength(27);
+    expect(allData.slice(0, 25).map((row) => row.id)).toEqual(
+      Array.from({ length: 25 }, (_, i) => i + 1),
+    );
+    expect(
+      allData
+        .filter((row) => String(row.id).startsWith("row_"))
+        .map((row) => row.name)
+        .sort(),
+    ).toEqual(["page-1-temp", "page-2-temp"]);
+
+    // 返回新数组，调用方修改数组本身不会影响组件数据
+    allData.pop();
+    expect(t.wrapper.vm.getAllData()).toHaveLength(27);
+
+    // 模拟演示页保存：合并后的全量数据写回 data，翻页重载后仍不丢行
+    const savedData = t.wrapper.vm.getAllData().map((row) => ({ ...row }));
+    await t.wrapper.vm.markSaved();
+    await t.reload(savedData);
+    expect(t.wrapper.vm.getAllData()).toHaveLength(27);
+    expect(t.wrapper.vm.currentPager.total).toBe(27);
+    expect(t.changed()).toBe(false);
+    t.wrapper.unmount();
+  });
+
+  it("静态 getAllData 排除当前删除的正式行，取消后恢复原始全量", async () => {
+    const t = await mountTable(makeData([1, 2, 3]));
+    await t.wrapper.vm.removeRows(t.fullData()[0]);
+    t.wrapper.vm.insertRow({ name: "temp" });
+    await flushPromises();
+    await nextFrame();
+
+    const allData = t.wrapper.vm.getAllData();
+    expect(allData.map((row) => row.id)).not.toContain(1);
+    expect(allData).toHaveLength(3);
+    expect(allData.filter((row) => row.name === "temp")).toHaveLength(1);
+
+    await t.wrapper.vm.revertChanges();
+    await flushPromises();
+    await nextFrame();
+    expect(t.wrapper.vm.getAllData().map((row) => row.id)).toEqual([1, 2, 3]);
+    t.wrapper.unmount();
+  });
 });
