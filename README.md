@@ -628,7 +628,15 @@ const restoreColumnConfig = async () => {
 | 方法 | 说明 |
 | --- | --- |
 | `gridRef` | vxe-grid 实例（直接调用 vxe 原生方法） |
-| `getFullData()` | 获取当前全量数据（对齐 vxe 同名方法，额外保证 alwaysEdit 输入已落盘） |
+| `getFullData()` | 获取当前已装载数据，并保证 alwaysEdit 输入已落盘；静态本地分页时仅包含当前页 |
+| `getAllData()` | 静态模式返回本地过滤/排序后的完整正式数据、排除当前已删除正式行，并合并所有页登记的临时新增行；远程模式仅返回当前已加载页 |
+| `insertRow(record)` / `insertRowAt(records, target)` | 新增临时行并登记所属页，跨页或数据重载后按原位置恢复 |
+| `removeRows(rows)` | 移除行并同步注销临时行登记 |
+| `getChangeState()` | 获取 `{ changed, insertRecords, removeRecords, updateRecords }`，其中临时新增行包含所有已登记页面 |
+| `markSaved()` | 保存成功后调用：清空临时行登记及变更状态，以当前数据重建干净基线 |
+| `revertChanges()` | 取消变更：还原最近一次干净基线并丢弃临时新增行 |
+| `flushAlwaysEdit()` | 强制写回常驻编辑器尚未落盘的输入 |
+| `cellChanged` | 只读变更状态，等价于 `v-model:cellChanged` |
 | `getCheckboxRecords()` | 多选选中行 |
 | `getRadioRecord()` | 单选选中行 |
 | `setCheckboxRow(rows, checked)` | 设置多选 |
@@ -643,6 +651,34 @@ const restoreColumnConfig = async () => {
 | `currentPager` | 当前分页配置（computed） |
 | `getTableList()` / `search()` / `reset()` | 远程模式数据请求（useTable） |
 | `tableData` / `pageable` / `searchParam` | 远程模式响应式状态 |
+
+### 临时新增行与静态分页保存
+
+静态本地分页下，`getFullData()` 只能读取当前已装载页。保存所有正式数据及其他页的临时新增行时，应先调用 `getAllData()`，再执行 `markSaved()`，最后将全量数据写回父组件的 `data`：
+
+```js
+const onSave = async () => {
+  // 1. 必须在 markSaved 前读取，此时包含所有页的临时新增行
+  const fullData = tableProRef.value
+    .getAllData()
+    .map((row) => ({ ...row }));
+
+  // 2. 清空临时行登记、vxe 变更记录及 cellChanged，并重建干净基线
+  await tableProRef.value.markSaved();
+
+  // 3. 将新增行转换为正式数据，避免换页或刷新后丢失
+  data.value = fullData;
+};
+```
+
+注意事项：
+
+- **保存会清空临时状态，不会删除新增行数据**。上述流程将新增行合并进 `data`，使其成为正式数据；若要放弃新增及其他变更，应使用 `revertChanges()`。
+- 不要先替换 `data` 再调用 `markSaved()`，否则数据重载时可能先恢复旧临时行。仅修改一个未通过 `v-model:cellChanged` 绑定的布尔值也不会执行保存收尾，建议显式调用并等待 `markSaved()`。
+- 临时行跨页登记只对组件暴露的 `insertRow()`、`insertRowAt()`、`removeRows()` 生效；直接调用 `gridRef.insert()`、`gridRef.insertAt()` 或 `gridRef.remove()` 不会维护该登记。
+- 远程模式的 `getAllData()` 不代表服务端全量数据，只能返回当前已加载页；未加载页仍需通过远程接口获取。
+
+完整示例见 [src/views/TableTempRowPaginationDemo.vue](src/views/TableTempRowPaginationDemo.vue)。
 
 ---
 
