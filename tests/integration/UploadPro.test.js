@@ -277,6 +277,28 @@ describe("UploadPro 照片墙（picture-card）", () => {
     wrapper.unmount();
   });
 
+  it("本地 blob 图片不受 success 状态限制，无 URL 项不占预览索引", async () => {
+    const wrapper = mountUpload({
+      modelValue: [
+        { name: "empty.png", url: "", status: "success" },
+        { name: "ready.png", url: "blob:ready-local", status: "ready" },
+        { name: "failed.png", url: "blob:failed-local", status: "fail" },
+      ],
+    });
+    await flushPromises();
+    const thumbs = wrapper.findAll(".upload-pro__card-thumb");
+    expect(thumbs).toHaveLength(2);
+    await thumbs[1].trigger("click");
+    await flushPromises();
+    const img = wrapper.findComponent({ name: "ElImage" });
+    expect(img.props("previewSrcList")).toEqual([
+      "blob:ready-local",
+      "blob:failed-local",
+    ]);
+    expect(img.props("initialIndex")).toBe(1);
+    wrapper.unmount();
+  });
+
   it("点击 hover 操作层（透明覆盖层，真实点击落点）同样打开预览", async () => {
     const wrapper = mountUpload({
       modelValue: [{ name: "a.png", url: "https://example.com/a.png" }],

@@ -396,10 +396,11 @@ const buildFilePayload = (file) => {
   };
 };
 
-/** 打开图片预览：以当前所有成功图片为预览集，定位到被点击的张 */
+/** 打开图片预览：以所有具有有效地址的图片（含本地 blob:）为预览集 */
 const openImagePreview = async (file) => {
   const images = fileList.value.filter(
-    (f) => f.status === "success" && isImageFile(f),
+    (f) =>
+      isImageFile(f) && resolveFileDescriptor(f, resolveOpts.value).url,
   );
   const urls = images
     .map((f) => resolveFileDescriptor(f, resolveOpts.value).url)
