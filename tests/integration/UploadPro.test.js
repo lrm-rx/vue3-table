@@ -65,15 +65,20 @@ const dispatchImagePaste = (el, files = []) => {
 };
 
 describe("UploadPro 照片墙（picture-card）", () => {
-  it("默认渲染 + 号触发区，粘贴入口位于卡片内 + 号下方", () => {
+  it("默认渲染 + 号触发区，small 粘贴输入框位于卡片内底部", () => {
     const wrapper = mountUpload({ modelValue: [] });
     const card = wrapper.find(".el-upload--picture-card");
     expect(card.exists()).toBe(true);
     const paste = wrapper.find(".upload-pro__card-paste");
+    const input = paste.find("input");
     // 粘贴入口在触发卡片内部（而非外部兄弟节点）
     expect(card.element.contains(paste.element)).toBe(true);
-    expect(paste.text()).toBe("点击此处粘贴图片");
-    // 顺序：+ 号在前，粘贴文字在其后（下方）
+    expect(input.attributes("placeholder")).toBe("点击此处粘贴图片");
+    expect(input.attributes("readonly")).toBeUndefined();
+    expect(wrapper.findComponent({ name: "ElInput" }).props("size")).toBe(
+      "small",
+    );
+    // 顺序：+ 号在前，粘贴输入框在其后（下方）
     const inner = wrapper.find(".upload-pro__card-inner");
     expect(inner.exists()).toBe(true);
     expect(inner.element.firstElementChild).toBe(
@@ -101,7 +106,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     const wrapper = mountUpload({ modelValue: [] });
     const fileInput = wrapper.find('input.el-upload__input').element;
     const clickSpy = vi.spyOn(fileInput, "click");
-    const paste = wrapper.find(".upload-pro__card-paste");
+    const paste = wrapper.find(".upload-pro__card-paste input");
     const focusSpy = vi.spyOn(paste.element, "focus");
     await paste.trigger("click");
     // 关键：click 未冒泡到 el-upload 触发卡片 → 未调用 input.click() 选文件
@@ -110,6 +115,19 @@ describe("UploadPro 照片墙（picture-card）", () => {
     expect(focusSpy).toHaveBeenCalledTimes(1);
     clickSpy.mockRestore();
     focusSpy.mockRestore();
+  });
+
+  it("粘贴输入框禁止文字写入，但不使用 readonly 以保留右键粘贴菜单", async () => {
+    const wrapper = mountUpload({ modelValue: [] });
+    const input = wrapper.find(".upload-pro__card-paste input");
+    const event = new Event("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+    });
+    input.element.dispatchEvent(event);
+    await flushPromises();
+    expect(event.defaultPrevented).toBe(true);
+    expect(input.element.value).toBe("");
   });
 
   it("点击 + 号 / 卡片其他区域：正常冒泡触发文件选择", async () => {
@@ -129,7 +147,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     const wrapper = mountUpload({ modelValue: [], autoUpload: false });
     const file = new File(["abc"], "pasted.png", { type: "image/png" });
     const ev = dispatchImagePaste(
-      wrapper.find(".upload-pro__card-paste").element,
+      wrapper.find(".upload-pro__card-paste input").element,
       [file],
     );
     expect(ev.defaultPrevented).toBe(true);
@@ -165,7 +183,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     Object.defineProperty(ev, "clipboardData", {
       value: { items: [{ kind: "string", type: "text/plain" }], files: [] },
     });
-    wrapper.find(".upload-pro__card-paste").element.dispatchEvent(ev);
+    wrapper.find(".upload-pro__card-paste input").element.dispatchEvent(ev);
     await flushPromises();
     expect(ev.defaultPrevented).toBe(false);
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
@@ -186,7 +204,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
         files: [],
       },
     });
-    wrapper.find(".upload-pro__card-paste").element.dispatchEvent(ev);
+    wrapper.find(".upload-pro__card-paste input").element.dispatchEvent(ev);
     await flushPromises();
     expect(ev.defaultPrevented).toBe(false);
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
@@ -200,7 +218,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     });
     const f1 = new File(["1"], "a.png", { type: "image/png" });
     const f2 = new File(["2"], "b.png", { type: "image/png" });
-    dispatchImagePaste(wrapper.find(".upload-pro__card-paste").element, [
+    dispatchImagePaste(wrapper.find(".upload-pro__card-paste input").element, [
       f1,
       f2,
     ]);
@@ -221,7 +239,7 @@ describe("UploadPro 照片墙（picture-card）", () => {
     });
     const wrapper = mount(Host, { global: globalConfig });
     const hosts = wrapper.findAllComponents(UploadPro);
-    const padA = hosts[0].find(".upload-pro__card-paste").element;
+    const padA = hosts[0].find(".upload-pro__card-paste input").element;
     dispatchImagePaste(padA, [
       new File(["x"], "x.png", { type: "image/png" }),
     ]);
@@ -316,7 +334,7 @@ describe("UploadPro 文件名特殊字符拦截", () => {
     const wrapper = mountUpload({ modelValue: [], httpRequest, autoUpload: true });
     const file = new File(["abc"], "a#b.png", { type: "image/png" });
     const ev = dispatchImagePaste(
-      wrapper.find(".upload-pro__card-paste").element,
+      wrapper.find(".upload-pro__card-paste input").element,
       [file],
     );
     expect(ev.defaultPrevented).toBe(true);
@@ -341,7 +359,7 @@ describe("UploadPro 文件名特殊字符拦截", () => {
     const file = new File(["%PDF"], "100%报告.pdf", {
       type: "application/pdf",
     });
-    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [file]);
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste input").element, [file]);
     await flushPromises();
     expect(httpRequest).not.toHaveBeenCalled();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
@@ -360,7 +378,7 @@ describe("UploadPro 文件名特殊字符拦截", () => {
     const file = new File(["%PDF"], "说明书 v2.pdf", {
       type: "application/pdf",
     });
-    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [file]);
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste input").element, [file]);
     await flushPromises();
     expect(httpRequest).toHaveBeenCalledTimes(1);
     expect(ElMessage.error).not.toHaveBeenCalled();
@@ -378,6 +396,8 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     const status = wrapper.find(".el-upload-list__item-status-label");
     expect(eye.exists()).toBe(true);
     expect(status.exists()).toBe(true);
+    expect(status.element.tagName).toBe("SPAN");
+    expect(wrapper.find("label").exists()).toBe(false);
     // 眼睛在状态图标之前（status 跟随 eye）
     expect(
       eye.element.compareDocumentPosition(status.element) &
@@ -583,7 +603,9 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     const btn = wrapper.findComponent({ name: "ElButton" });
     const paste = wrapper.find(".upload-pro__btn-paste");
     expect(paste.exists()).toBe(true);
-    expect(paste.text()).toBe("点击此处粘贴文件");
+    expect(paste.find("input").attributes("placeholder")).toBe(
+      "点击此处粘贴文件",
+    );
     // 顺序：按钮在前，粘贴入口在后（右侧）
     expect(
       btn.element.compareDocumentPosition(paste.element) &
@@ -602,7 +624,26 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     expect(wrapper.findComponent({ name: "ElButton" }).props("size")).toBe(
       "small",
     );
-    expect(wrapper.find(".upload-pro__btn-paste").text()).toBe("粘贴到此处");
+    expect(wrapper.findComponent({ name: "ElInput" }).props("size")).toBe(
+      "small",
+    );
+    expect(
+      wrapper.find(".upload-pro__btn-paste input").attributes("placeholder"),
+    ).toBe("粘贴到此处");
+  });
+
+  it("按钮旁粘贴输入框禁止文字写入，但不使用 readonly 以保留右键粘贴菜单", async () => {
+    const wrapper = mountUpload({ modelValue: [], listType: "text" });
+    const input = wrapper.find(".upload-pro__btn-paste input");
+    expect(input.attributes("readonly")).toBeUndefined();
+    const event = new Event("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+    });
+    input.element.dispatchEvent(event);
+    await flushPromises();
+    expect(event.defaultPrevented).toBe(true);
+    expect(input.element.value).toBe("");
   });
 
   it("pasteable=false / disabled 时按钮旁粘贴入口隐藏", async () => {
@@ -620,7 +661,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     const wrapper = mountUpload({ modelValue: [], listType: "text" });
     const fileInput = wrapper.find('input.el-upload__input').element;
     const clickSpy = vi.spyOn(fileInput, "click");
-    const paste = wrapper.find(".upload-pro__btn-paste");
+    const paste = wrapper.find(".upload-pro__btn-paste input");
     const focusSpy = vi.spyOn(paste.element, "focus");
     await paste.trigger("click");
     expect(clickSpy).not.toHaveBeenCalled();
@@ -637,7 +678,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     });
     const pdf = new File(["%PDF"], "说明书.pdf", { type: "application/pdf" });
     const ev = dispatchImagePaste(
-      wrapper.find(".upload-pro__btn-paste").element,
+      wrapper.find(".upload-pro__btn-paste input").element,
       [pdf],
     );
     expect(ev.defaultPrevented).toBe(true);
@@ -656,7 +697,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     });
     const f1 = new File(["1"], "a.pdf", { type: "application/pdf" });
     const f2 = new File(["2"], "b.doc", { type: "application/msword" });
-    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [f1, f2]);
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste input").element, [f1, f2]);
     await flushPromises();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
@@ -671,7 +712,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     });
     const f1 = new File(["1"], "a.pdf", { type: "application/pdf" });
     const f2 = new File(["2"], "b.doc", { type: "application/msword" });
-    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste").element, [f1, f2]);
+    dispatchImagePaste(wrapper.find(".upload-pro__btn-paste input").element, [f1, f2]);
     await flushPromises();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
@@ -686,7 +727,7 @@ describe("UploadPro 非图片文件列表（text / picture）", () => {
     Object.defineProperty(ev, "clipboardData", {
       value: { items: [{ kind: "string", type: "text/plain" }], files: [] },
     });
-    wrapper.find(".upload-pro__btn-paste").element.dispatchEvent(ev);
+    wrapper.find(".upload-pro__btn-paste input").element.dispatchEvent(ev);
     await flushPromises();
     expect(ev.defaultPrevented).toBe(false);
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(0);
@@ -750,7 +791,7 @@ describe("UploadPro 禁用态：item disabled 优先于 el-form disabled", () =>
     expect(up.findComponent({ name: "ElUpload" }).props("disabled")).toBe(false);
     // 粘贴正常入队
     const file = new File(["x"], "pasted.pdf", { type: "application/pdf" });
-    const ev = dispatchImagePaste(up.find(".upload-pro__btn-paste").element, [
+    const ev = dispatchImagePaste(up.find(".upload-pro__btn-paste input").element, [
       file,
     ]);
     expect(ev.defaultPrevented).toBe(true);
@@ -1117,41 +1158,45 @@ describe("UploadPro 对 el-upload API 的完整集成", () => {
     expect(wrapper.emitted("remove")).toBeTruthy();
   });
 
-  it("mutableModel：reactive 数组承载时原地 splice 同步，不 emit update:modelValue", async () => {
+  it("reactive 数组由父级监听 update:modelValue 后原地 splice 同步", async () => {
     const files = reactive([{ name: "a.png", url: "https://x/a.png" }]);
     const wrapper = mountUpload({
       modelValue: files,
-      mutableModel: true,
       listType: "text",
+      "onUpdate:modelValue": (val) =>
+        files.splice(0, files.length, ...val),
     });
     await flushPromises();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
-    // 清空内部列表 → 同一 reactive 数组被原地清空（引用不变），且不 emit
+    // 子组件只发事件；父级监听后清空同一 reactive 数组（引用不变）
     wrapper.vm.clearFiles();
     await flushPromises();
     expect(files).toHaveLength(0);
-    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted[emitted.length - 1][0]).toEqual([]);
     // 父级原地直写（push）仍能经深 watch 重建内部列表
     files.push({ name: "b.png", url: "https://x/b.png" });
     await flushPromises();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
   });
 
-  it("mutableModel + valueFormat=string：父级数组原地同步为 string[]", async () => {
+  it("reactive 父级监听 + valueFormat=string：数组原地同步为 string[]", async () => {
     const files = reactive(["https://x/a.png"]);
     const wrapper = mountUpload({
       modelValue: files,
-      mutableModel: true,
       valueFormat: "string",
       listType: "text",
+      "onUpdate:modelValue": (val) =>
+        files.splice(0, files.length, ...val),
     });
     await flushPromises();
     expect(wrapper.findAll(".el-upload-list__item").length).toBe(1);
-    // 清空 → 原地 splice：字符串元素按值同步，引用不变、不 emit
+    // 清空 → 父级事件监听器原地 splice：字符串元素按值同步，引用不变
     wrapper.vm.clearFiles();
     await flushPromises();
     expect(files).toHaveLength(0);
-    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted[emitted.length - 1][0]).toEqual([]);
   });
 
   it("clearFiles 代理：清空列表并经 v-model 回抛空数组", async () => {
@@ -1236,22 +1281,24 @@ describe("UploadPro 业务字段保真（id 等）", () => {
     expect(last[0].url).toBe("https://example.com/new.pdf");
   });
 
-  it("mutableModel 模式下业务字段同样保真", async () => {
+  it("reactive 父级监听模式下业务字段同样保真", async () => {
     const files = reactive([
       { id: 201, name: "a.pdf", url: "https://example.com/a.pdf" },
       { id: 202, name: "b.pdf", url: "https://example.com/b.pdf" },
     ]);
     const wrapper = mountUpload({
       modelValue: files,
-      mutableModel: true,
       listType: "text",
+      "onUpdate:modelValue": (val) =>
+        files.splice(0, files.length, ...val),
     });
     await flushPromises();
     await wrapper.findAll(".el-icon--close")[1].trigger("click");
     await flushPromises();
     expect(files).toHaveLength(1);
     expect(files[0].id).toBe(201);
-    expect(wrapper.emitted("update:modelValue")).toBeFalsy();
+    const emitted = wrapper.emitted("update:modelValue");
+    expect(emitted[emitted.length - 1][0][0].id).toBe(201);
   });
 
   it("valueFormat=url 时不受保真逻辑影响（仍为纯 URL 字符串）", async () => {

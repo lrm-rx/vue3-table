@@ -53,7 +53,7 @@ import {
   nextTick,
   useAttrs,
 } from "vue";
-import { ElUpload, ElButton, ElIcon, ElImage, ElProgress, ElMessage, ElMessageBox, useFormDisabled } from "element-plus";
+import { ElUpload, ElButton, ElInput, ElIcon, ElImage, ElProgress, ElMessage, ElMessageBox, useFormDisabled } from "element-plus";
 import {
   Plus,
   Upload as UploadIcon,
@@ -82,13 +82,9 @@ import {
 defineOptions({ name: "UploadPro", inheritAttrs: false });
 
 const props = defineProps({
-  // v-model：成功文件数组（string[] 或 {name,url}[]）
+  // v-model：成功文件数组（string[] 或 {name,url}[]）。
+  // reactive 数组承载时，由父级监听 update:modelValue 后自行原地 splice，避免子组件修改 prop
   modelValue: { type: Array, default: () => [] },
-  // 原地同步模式（兼容 reactive 承载，语义同 FormPro mutableModel）：
-  // 开启后列表变更原地 splice 写入 props.modelValue、不 emit update:modelValue——
-  // v-model 编译的 files = $event 赋值对 reactive 代理会抛错，故该模式下父级
-  // 改用 :model-value + mutable-model（勿写 v-model）。默认 false：emit 新数组整体替换
-  mutableModel: { type: Boolean, default: false },
   // —— el-upload 常用属性（显式声明给默认值/便于配置；其余属性走 $attrs 透传）——
   // 列表形态：text（文件列表）/ picture（缩略图列表）/ picture-card（照片墙）
   listType: { type: String, default: "picture-card" },
@@ -240,14 +236,6 @@ watch(
     const val = serializeValue(fileList.value, resolveOpts.value);
     if (valueSignature(val, props.fieldMap) === valueSignature(props.modelValue, props.fieldMap))
       return;
-    // mutableModel：原地 splice 写入父级数组、不 emit（兼容 reactive([]) 承载）；
-    // 写入触发上方 modelValue 深 watch，签名一致跳过重建，与 emit 路径同样收敛
-    if (props.mutableModel) {
-      if (Array.isArray(props.modelValue)) {
-        props.modelValue.splice(0, props.modelValue.length, ...val);
-      }
-      return;
-    }
     emit("update:modelValue", val);
   },
   { deep: true },
@@ -336,7 +324,7 @@ const onExceed = (files, oldFiles) => {
 const onPaste = (e) => {
   if (mergedDisabled.value) return;
   const files = extractClipboardFiles(e, isCard.value);
-  if (!files.length) return; // 无文件粘贴：不拦截，保持浏览器原生行为
+  if (!files.length) return; // 无文件：不拦截 paste，后续 beforeinput 阻止文字写入
   e.preventDefault();
   let queue = files;
   // 单文件模式（multiple=false）：粘贴多个时仅取第一个，与 el-upload 文件选择器
@@ -366,8 +354,8 @@ const onPaste = (e) => {
 /**
  * 粘贴入口点击：入口位于 el-upload 触发区内部（照片墙卡片 / 按钮行），而触发区
  * 自身的 click 会打开文件选择窗（handleClick → input.click()），故必须
- * stopPropagation 截断冒泡；点击后显式聚焦，随后 Ctrl+V 的 paste 事件冒泡到
- * 根节点统一走 onPaste。
+ * stopPropagation 截断冒泡；点击后显式聚焦，随后 Ctrl+V / 右键粘贴均由
+ * 输入框自身的 paste 监听器走 onPaste。
  */
 const onPasteEntryClick = (e) => {
   e.stopPropagation();
@@ -403,7 +391,7 @@ const buildFilePayload = (file) => {
     file,
     name: desc.name,
     url: desc.url,
-    index: index < 0 ? 0 : index,
+    index: Math.max(0, index),
     fileList: fileList.value,
   };
 };
@@ -423,7 +411,7 @@ const openImagePreview = async (file) => {
   }
   const idx = images.findIndex((f) => f.uid === file.uid);
   preview.urls = urls;
-  preview.index = idx < 0 ? 0 : idx;
+  preview.index = Math.max(0, idx);
   preview.key += 1;
   // 等隐藏 el-image 按新 previewSrcList / initialIndex 重渲染后唤起查看器。
   // 查看器由 ElImage 内部维护并 teleport 到 body，关闭（Esc / X / 点遮罩）
@@ -563,21 +551,20 @@ defineExpose({
             <ElIcon :size="24" class="upload-pro__card-plus">
               <Plus />
             </ElIcon>
-            <!-- 粘贴入口位于触发卡片内部：@click.stop 阻止冒泡到 el-upload
-                 触发区（否则会弹出系统选文件窗），仅聚焦等待 Ctrl+V；
-                 @paste 只挂在入口自身，避免实例内其他元素聚焦时误接收粘贴 -->
-            <span
+            <!-- 可编辑 input 才能使用浏览器右键“粘贴”；beforeinput 阻止文字写入，
+                 文件仍由 paste 事件接收入队。click.stop 避免冒泡触发系统选文件窗 -->
+            <ElInput
               v-if="pasteable && !mergedDisabled"
               class="upload-pro__card-paste"
-              tabindex="0"
-              role="button"
+              size="small"
+              model-value=""
+              :placeholder="pasteLabel"
               :aria-label="pasteLabel"
               :title="pasteLabel"
               @click.stop="onPasteEntryClick"
               @paste="onPaste"
-            >
-              {{ pasteLabel }}
-            </span>
+              @beforeinput.prevent
+            />
           </div>
         </template>
         <template v-else>
@@ -587,21 +574,20 @@ defineExpose({
               <ElIcon style="margin-right: 4px"><UploadIcon /></ElIcon>
               {{ buttonText }}
             </ElButton>
-            <!-- 粘贴入口位于 el-upload 触发区内部，点击必须 stopPropagation
-                 截断冒泡（否则弹出系统选文件窗），仅聚焦等待 Ctrl+V；
-                 @paste 只挂在入口自身，避免实例内其他元素聚焦时误接收粘贴 -->
-            <span
+            <!-- 与上传按钮同尺寸；不使用 readonly，以保留右键“粘贴”菜单。
+                 beforeinput 只阻止文字写入，不影响 paste 事件接收文件 -->
+            <ElInput
               v-if="pasteable && !mergedDisabled"
               class="upload-pro__btn-paste"
-              tabindex="0"
-              role="button"
+              :size="buttonSize"
+              model-value=""
+              :placeholder="pasteLabel"
               :aria-label="pasteLabel"
               :title="pasteLabel"
               @click.stop="onPasteEntryClick"
               @paste="onPaste"
-            >
-              {{ pasteLabel }}
-            </span>
+              @beforeinput.prevent
+            />
           </div>
         </template>
       </slot>
@@ -644,22 +630,22 @@ defineExpose({
         </span>
 
         <!-- 成功角标：打勾；失败：打叉 -->
-        <label
+        <span
           v-if="file.status === 'success'"
           class="el-upload-list__item-status-label"
         >
           <ElIcon class="el-icon--upload-success el-icon--check">
             <Check />
           </ElIcon>
-        </label>
-        <label
+        </span>
+        <span
           v-else-if="file.status === 'fail'"
           class="el-upload-list__item-status-label upload-pro__fail-label"
         >
           <ElIcon class="el-icon--circle-close">
             <CircleCloseFilled />
           </ElIcon>
-        </label>
+        </span>
         </template>
 
         <!-- 非图片/缩略图列表：自定义文件行，在打勾/打叉前插入眼睛图标 -->
@@ -703,23 +689,23 @@ defineExpose({
         </ElIcon>
 
         <!-- 成功：打勾（沿用 el-upload 原生类与显隐规则） -->
-        <label
+        <span
           v-if="file.status === 'success'"
           class="el-upload-list__item-status-label"
         >
           <ElIcon class="el-icon--upload-success el-icon--circle-check">
             <CircleCheckFilled />
           </ElIcon>
-        </label>
+        </span>
         <!-- 失败：打叉 -->
-        <label
+        <span
           v-else-if="file.status === 'fail'"
           class="el-upload-list__item-status-label upload-pro__fail-label"
         >
           <ElIcon class="el-icon--circle-close">
             <CircleCloseFilled />
           </ElIcon>
-        </label>
+        </span>
 
         <!-- 删除（沿用原生 el-icon--close：hover 行时显示；禁用态隐藏） -->
         <ElIcon
@@ -838,14 +824,13 @@ defineExpose({
   background-color: var(--el-color-danger);
 }
 
-// —— 照片墙触发卡片内部：+ 号 + 粘贴入口 垂直布局 ——
-// 卡片本体是 98×98 的 inline-flex（见上方尺寸覆盖），inner 占满后垂直居中排列
+// —— 照片墙触发卡片内部：+ 号居中，粘贴输入框固定在底边上方 ——
 .upload-pro__card-inner {
+  position: relative;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
   width: 100%;
   height: 100%;
   padding: 8px;
@@ -861,32 +846,21 @@ defineExpose({
 :deep(.el-upload--picture-card:focus .upload-pro__card-plus) {
   color: var(--el-color-primary);
 }
-// 粘贴入口：+ 号下方带虚线边框的文字。它位于触发卡片内部，点击由
-// @click.stop 截断，不会冒泡到卡片的选文件处理器；聚焦后 Ctrl+V 由根节点统一接收
 .upload-pro__card-paste {
-  font-size: 12px;
-  line-height: 1.3;
-  text-align: center;
-  color: var(--el-text-color-secondary);
-  border: 1px dashed var(--el-border-color);
-  border-radius: 4px;
-  padding: 2px 6px;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    color 0.2s,
-    border-color 0.2s;
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  // 与上方照片墙卡片固定外宽一致，居中后不受卡片边框宽度覆盖影响
+  width: 98px;
+  transform: translateX(-50%);
 
-  &:hover {
-    color: var(--el-color-primary);
-    border-color: var(--el-color-primary-light-5);
+  // 卡片宽度较窄，取消 wrapper 横向留白以完整展示默认提示
+  :deep(.el-input__wrapper) {
+    padding-right: 0;
+    padding-left: 0;
   }
-  // 点击聚焦后仅边框变主色（不改背景色），明确告知粘贴将投递到本上传项。
-  // 用 :focus 而非 :focus-visible：鼠标点击 tabindex 元素不一定匹配 focus-visible
-  &:focus {
-    outline: none;
-    color: var(--el-color-primary);
-    border-color: var(--el-color-primary);
+  :deep(.el-input__inner) {
+    text-align: center;
   }
 }
 
@@ -938,37 +912,18 @@ defineExpose({
   color: var(--el-color-danger);
 }
 
-// —— 按钮行：按钮 + 右侧粘贴入口水平排列，与按钮等高对齐 ——
+// —— 按钮行：按钮 + 同尺寸粘贴输入框水平排列 ——
 .upload-pro__trigger-row {
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
   gap: 8px;
 }
 .upload-pro__btn-paste {
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  // 显式行高：入口按 12px 字号收敛高度，避免随外部行高上下文变化而撑高按钮行
-  line-height: 1.4;
-  color: var(--el-text-color-secondary);
-  border: 1px dashed var(--el-border-color);
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  transition:
-    color 0.2s,
-    border-color 0.2s;
+  flex: 0 0 120px;
+  width: 120px;
 
-  &:hover {
-    color: var(--el-color-primary);
-    border-color: var(--el-color-primary-light-5);
-  }
-  &:focus {
-    outline: none;
-    color: var(--el-color-primary);
-    border-color: var(--el-color-primary);
+  :deep(.el-input__inner) {
+    text-align: center;
   }
 }
 

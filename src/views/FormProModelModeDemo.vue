@@ -11,7 +11,7 @@
  *     两种模式需按上方写法各自配对，不能混用
  *  4. 两种模式下「父级直写」均能同步进表单控件（既有深 watch 路径）
  *  5. 同款兼容已覆盖其余对象/数组值组件（下方第二行）：
- *     UploadPro（mutable-model）、TablePro 分页（mutable-pager-config）、
+ *     UploadPro（父级监听 update:modelValue 后原地 splice）、TablePro 分页（mutable-pager-config）、
  *     评论区（mutable-comments）
  */
 import { ref, reactive } from "vue";
@@ -111,8 +111,11 @@ const resetReactive = () => {
 };
 
 // —— 第二行：其余组件的 reactive 兼容模式 ——
-// UploadPro：:model-value + mutable-model（原地 splice，不 emit update:modelValue）
+// UploadPro 统一 emit；reactive 数组由父级监听事件后原地 splice，保持数组引用不变
 const upFiles = reactive([{ name: "已上传合同.pdf", url: "https://example.com/contract.pdf" }]);
+const onUploadFilesUpdate = (val) => {
+  upFiles.splice(0, upFiles.length, ...val);
+};
 const mockUpload = (option) =>
   new Promise((resolve) =>
     setTimeout(
@@ -229,13 +232,13 @@ const me = { id: "me", name: "我", avatar: "" };
     <el-row :gutter="16">
       <el-col :span="8">
         <el-card shadow="never">
-          <template #header>UploadPro：:model-value + mutable-model</template>
+          <template #header>UploadPro：reactive + 父级事件监听</template>
           <UploadPro
             :model-value="upFiles"
-            mutable-model
             list-type="text"
             button-size="small"
             :http-request="mockUpload"
+            @update:modelValue="onUploadFilesUpdate"
           />
           <pre style="background: #f5f7fa; padding: 8px; border-radius: 4px; margin-top: 8px; max-height: 140px; overflow: auto">{{ JSON.stringify(upFiles, null, 2) }}</pre>
         </el-card>
