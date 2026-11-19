@@ -19,6 +19,8 @@ import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqu
  *     group: true,            // 标记为分组头
  *     title: '基本信息',       // 分组标题
  *     fold: false,            // 是否默认折叠（true=收起）
+ *     children: [],           // 可选：树形子配置；仅分组头上的数组生效，支持任意层级，
+ *                              //   所有字段仍写入同一个平面 formData
  *     titleBold: true,        // 分组标题是否加粗：true→700，false→400，未设置→默认 600
  *     titleStyle: { color: '#409eff', fontSize: 15 },  // 分组标题自定义样式（颜色/字号等，
  *                                                      //   与标题加粗叠加；fontWeight 优先于此处布尔推导）
@@ -69,6 +71,26 @@ export const GRID_COLS = 24;
  * 判断一个 item 是否为分组头。
  */
 export const isGroupItem = (item) => !!item && item.group === true;
+
+/**
+ * 判断一个 item 是否为树形分组。只有分组头上的 children 才表示子配置，
+ * 普通字段或插入项上的同名业务属性不会被递归解析。
+ */
+export const isTreeGroupItem = (item) =>
+  isGroupItem(item) && Array.isArray(item.children);
+
+/**
+ * 深度优先展开配置，保留分组头及所有字段 / 插入项的原始引用和声明顺序。
+ * 旧扁平配置仅做浅拷贝；树形分组的 children 会递归展开。
+ */
+export const flattenFormItems = (items = []) => {
+  const out = [];
+  for (const item of items) {
+    out.push(item);
+    if (isTreeGroupItem(item)) out.push(...flattenFormItems(item.children));
+  }
+  return out;
+};
 
 /**
  * 判断一个 item 是否为「折叠触发节点」（vxe-form 的 collapseNode：渲染展开/收起按钮）。
@@ -158,7 +180,7 @@ export const collectHiddenValueOverrides = (
   hiddenValue = undefined,
 ) => {
   const map = new Map();
-  for (const item of items) {
+  for (const item of flattenFormItems(items)) {
     if (isGroupItem(item)) continue;
     if (!isHiddenByVisibility(item, data)) continue;
     const value = item.hiddenValue !== undefined ? item.hiddenValue : hiddenValue;
@@ -173,7 +195,7 @@ export const collectHiddenValueOverrides = (
  */
 export const collectFieldProps = (items = []) => {
   const set = new Set();
-  for (const item of items) {
+  for (const item of flattenFormItems(items)) {
     if (isFieldItem(item)) set.add(item.prop);
   }
   return [...set];
@@ -238,7 +260,7 @@ export const deriveDefaultValue = (item) => {
  */
 export const buildInitialData = (items = [], overrides = {}) => {
   const base = {};
-  for (const item of items) {
+  for (const item of flattenFormItems(items)) {
     if (!isFieldItem(item)) continue;
     base[item.prop] = deriveDefaultValue(item);
   }
@@ -296,6 +318,64 @@ export const splitIntoGroups = (items = []) => {
   blocks.push(current);
   // 丢弃完全空的匿名组
   return blocks.filter((b) => b.group || b.items.length > 0);
+};
+
+/**
+ * 将配置归一化为可递归渲染的分组块树。
+ *
+ * 旧扁平配置仍走 splitIntoGroups，返回结构与原来完全一致；只有当前层级出现
+ * group:true 且 children:Array 时才启用树形解析。树形分组是自闭合节点，
+ * 其后续同级普通项进入匿名块，不会被并入该分组；同层未声明 children 的
+ * 分组头仍保留旧语义（收集到下一个分组头之前的普通项）。
+ *
+ * 每个树形块带稳定的层级 path / depth；children 中的匿名块用于保留字段与
+ * 子分组的交错声明顺序，所有块均保留原始 item 引用。
+ */
+export const normalizeFormTree = (items = []) => {
+  if (!items.some(isTreeGroupItem)) return splitIntoGroups(items);
+
+  const normalizeLevel = (list, prefix = "", depth = 0) => {
+    const blocks = [];
+    let current = null;
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      const path = `${prefix}${i}`;
+      if (isTreeGroupItem(item)) {
+        current = null;
+        blocks.push({
+          group: item,
+          items: [],
+          children: normalizeLevel(item.children, `${path}.`, depth + 1),
+          path,
+          depth,
+        });
+        continue;
+      }
+      if (isGroupItem(item)) {
+        current = { group: item, items: [], children: [], path, depth };
+        blocks.push(current);
+        continue;
+      }
+      if (!current) {
+        current = { group: null, items: [], children: [], path, depth };
+        blocks.push(current);
+      }
+      current.items.push(item);
+    }
+    return blocks.filter((b) => b.group || b.items.length > 0 || b.children.length > 0);
+  };
+
+  return normalizeLevel(items);
+};
+
+/** 深度优先展开归一化块树，供折叠状态等按树路径统一处理。 */
+export const flattenFormBlocks = (blocks = []) => {
+  const out = [];
+  for (const block of blocks) {
+    out.push(block);
+    if (block.children?.length) out.push(...flattenFormBlocks(block.children));
+  }
+  return out;
 };
 
 /**
@@ -501,7 +581,7 @@ export const mergeModelValue = ({
     if (!(k in parent) && current[k] !== undefined) merged[k] = current[k];
   }
   if (autoFillDefaults) {
-    for (const item of items) {
+    for (const item of flattenFormItems(items)) {
       if (!isFieldItem(item)) continue;
       if (merged[item.prop] === undefined)
         merged[item.prop] = deriveDefaultValue(item);
@@ -577,6 +657,26 @@ export const addItems = (items, entries, position = "end") => {
   if (!Array.isArray(items)) return items;
   const list = castArray(entries).filter((it) => it != null);
   if (!list.length) return items;
+
+  // before / after 深度优先查找锚点，并插入锚点所在的同级 children；
+  // start / end / number 仍只操作顶层，保持旧 API 语义不变。
+  if (isPlainObject(position) && ("before" in position || "after" in position)) {
+    const after = position.after !== undefined;
+    const anchor = position.before !== undefined ? position.before : position.after;
+    const insertAtAnchor = (level) => {
+      for (let i = 0; i < level.length; i++) {
+        const item = level[i];
+        if (item?.prop === anchor) {
+          level.splice(after ? i + 1 : i, 0, ...list);
+          return true;
+        }
+        if (isTreeGroupItem(item) && insertAtAnchor(item.children)) return true;
+      }
+      return false;
+    };
+    if (insertAtAnchor(items)) return items;
+  }
+
   items.splice(resolveInsertIndex(items, position), 0, ...list);
   return items;
 };
@@ -596,13 +696,21 @@ export const addItems = (items, entries, position = "end") => {
 export const removeItems = (items, target) => {
   if (!Array.isArray(items) || target == null) return [];
   const match = toItemMatcher(target);
-  const hitIndexes = [];
-  for (let i = 0; i < items.length; i++) {
-    if (match(items[i])) hitIndexes.push(i);
-  }
-  const removed = hitIndexes.map((i) => items[i]);
-  // 倒序删除：splice 的索引位移只影响更大的未处理索引，一次循环完成
-  for (let k = hitIndexes.length - 1; k >= 0; k--) items.splice(hitIndexes[k], 1);
+  const removed = [];
+  const removeFromLevel = (level) => {
+    for (let i = 0; i < level.length; i++) {
+      const item = level[i];
+      if (match(item)) {
+        level.splice(i, 1);
+        i -= 1;
+        // 删除分组时一并返回全部后代，调用方据此清理所有后代字段值。
+        removed.push(...flattenFormItems([item]));
+      } else if (isTreeGroupItem(item)) {
+        removeFromLevel(item.children);
+      }
+    }
+  };
+  removeFromLevel(items);
   return removed;
 };
 
@@ -638,7 +746,7 @@ export const updateItems = (items, target, patch) => {
   if (!Array.isArray(items) || target == null || patch == null) return [];
   const match = toItemMatcher(target);
   const touched = [];
-  for (const item of items) {
+  for (const item of flattenFormItems(items)) {
     if (!match(item)) continue;
     applyItemPatch(item, isFunction(patch) ? patch(item) : patch);
     touched.push(item);

@@ -2494,3 +2494,389 @@ describe("FormPro 配置式表单", () => {
     });
   });
 });
+
+describe("FormPro 树形嵌套分组", () => {
+  const labels = (w) =>
+    w.findAllComponents({ name: "ElFormItem" }).map((i) => i.props("label"));
+  const groupAt = (w, path) => w.find(`[data-group-path="${path}"]`);
+  const ownBody = (group) => group.findAll(".form-pro__group-body")[0];
+  const ownHeader = (group) => group.findAll(".form-pro__group-header-main")[0];
+
+  it("三层分组共用一个 el-form，字段保持平面并支持默认值、v-model 与校验", async () => {
+    const formData = ref({ name: "张三", city: "" });
+    const items = [
+      {
+        group: true,
+        title: "根分组",
+        children: [
+          { prop: "name", label: "姓名", required: true, itemRender: { name: "ElInput" } },
+          {
+            group: true,
+            title: "二级分组",
+            children: [
+              { prop: "enabled", label: "启用", itemRender: { name: "ElSwitch" } },
+              {
+                group: true,
+                title: "三级分组",
+                children: [
+                  {
+                    prop: "city",
+                    label: "城市",
+                    required: true,
+                    rules: [{ required: true, message: "请输入城市", trigger: "blur" }],
+                    itemRender: { name: "ElInput" },
+                  },
+                ],
+              },
+            ],
+          },
+          { prop: "note", label: "备注", defaultValue: "默认备注", itemRender: { name: "ElInput" } },
+        ],
+      },
+    ];
+    const wrapper = mount(
+      {
+        components: { FormPro },
+        setup: () => ({ formData, items }),
+        template: '<FormPro ref="fp" v-model="formData" :items="items" />',
+      },
+      { global: globalConfig },
+    );
+    await flushPromises();
+    const fp = wrapper.findComponent({ name: "FormPro" });
+    expect(wrapper.findAllComponents({ name: "ElForm" })).toHaveLength(1);
+    expect(labels(wrapper)).toEqual(["姓名", "启用", "城市", "备注"]);
+    expect(groupAt(wrapper, "0").attributes("data-group-depth")).toBe("0");
+    expect(groupAt(wrapper, "0.1").attributes("data-group-depth")).toBe("1");
+    expect(groupAt(wrapper, "0.1.1").attributes("data-group-depth")).toBe("2");
+    expect(fp.vm.formData).toMatchObject({
+      name: "张三",
+      city: "",
+      enabled: false,
+      note: "默认备注",
+    });
+    expect(fp.vm.getFormItem("city")).toBeTruthy();
+    expect(fp.vm.formRef.fields.map((f) => f.prop)).toContain("city");
+    // 当前 jsdom 下 async-validator 的失败链路会停在 validating（裸 ElForm 亦如此）。
+    // 桩掉字段校验器，专注验证深层字段已注册、整表校验会调用它并透传失败结果。
+    const cityField = fp.vm.formRef.getField("city");
+    const cityValidation = vi
+      .spyOn(cityField, "validate")
+      .mockRejectedValue({ city: [{ message: "请输入城市" }] });
+    await expect(fp.vm.validate()).rejects.toEqual({
+      city: [{ message: "请输入城市" }],
+    });
+    expect(cityValidation).toHaveBeenCalledWith("");
+    cityValidation.mockResolvedValue(true);
+
+    const cityItem = wrapper
+      .findAllComponents({ name: "ElFormItem" })
+      .find((i) => i.props("label") === "城市");
+    await cityItem.find("input").setValue("上海");
+    await flushPromises();
+    expect(formData.value.city).toBe("上海");
+    expect(formData.value).not.toHaveProperty("children");
+    expect(await fp.vm.validate()).toBe(true);
+  });
+
+  it("字段和子分组交错时保持顺序，并透传嵌套插槽、border 与 compact", async () => {
+    const wrapper = mountFormPro(
+      {
+        modelValue: { a: "A值" },
+        border: true,
+        compact: true,
+        items: [
+          {
+            group: true,
+            title: "根",
+            slot: "rootExtra",
+            children: [
+              { prop: "a", label: "A", slot: "customA" },
+              { slot: "nestedDivider" },
+              {
+                group: true,
+                title: "子",
+                slot: "childExtra",
+                children: [
+                  {
+                    prop: "b",
+                    label: "B",
+                    tip: "B提示",
+                    render: (ctx, h) => h("span", { class: "render-b" }, ctx.value),
+                  },
+                ],
+              },
+              { prop: "c", label: "C", itemRender: { name: "ElInput" } },
+            ],
+          },
+        ],
+      },
+      {
+        slots: {
+          customA: ({ value }) => h("span", { class: "custom-a" }, value),
+          nestedDivider: () => h("div", { class: "nested-divider" }, "嵌套分隔"),
+          rootExtra: () => h("span", { class: "root-extra" }, "根扩展"),
+          childExtra: () => h("span", { class: "child-extra" }, "子扩展"),
+        },
+      },
+    );
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A", "B", "C"]);
+    expect(wrapper.find(".custom-a").text()).toBe("A值");
+    expect(wrapper.find(".nested-divider").text()).toBe("嵌套分隔");
+    expect(wrapper.find(".root-extra").text()).toBe("根扩展");
+    expect(wrapper.find(".child-extra").text()).toBe("子扩展");
+    expect(wrapper.find(".form-pro--border.form-pro--compact").exists()).toBe(true);
+    expect(wrapper.find(".form-pro__field-tip").text()).toBe("B提示");
+    expect(wrapper.findAll(".form-pro__col--tight").length).toBeGreaterThan(0);
+  });
+
+  it("父子折叠互不改状态，父折叠不卸载字段也不触发 hiddenValue", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { a: "A", b: "B", c: "C" },
+      hiddenValue: "",
+      items: [
+        {
+          group: true,
+          title: "根",
+          children: [
+            { prop: "a", label: "A", itemRender: { name: "ElInput" } },
+            {
+              group: true,
+              title: "子",
+              fold: true,
+              children: [
+                { prop: "b", label: "B", itemRender: { name: "ElInput" } },
+                {
+                  group: true,
+                  title: "孙",
+                  children: [{ prop: "c", label: "C", itemRender: { name: "ElInput" } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+    const root = () => groupAt(wrapper, "0");
+    const child = () => groupAt(wrapper, "0.1");
+    const grand = () => groupAt(wrapper, "0.1.1");
+    const submit = () => wrapper.vm.getSubmitData();
+    const initialSubmit = submit();
+    expect(ownBody(root()).classes()).not.toContain("is-collapsed");
+    expect(ownBody(child()).classes()).toContain("is-collapsed");
+
+    await ownHeader(root()).trigger("click");
+    await flushPromises();
+    expect(ownBody(root()).classes()).toContain("is-collapsed");
+    expect(ownBody(child()).classes()).toContain("is-collapsed");
+    expect(ownBody(grand()).classes()).not.toContain("is-collapsed");
+    expect(labels(wrapper)).toEqual(["A", "B", "C"]);
+    expect(submit()).toEqual(initialSubmit);
+
+    await ownHeader(root()).trigger("click");
+    await ownHeader(child()).trigger("click");
+    await flushPromises();
+    expect(ownBody(root()).classes()).not.toContain("is-collapsed");
+    expect(ownBody(child()).classes()).not.toContain("is-collapsed");
+
+    wrapper.vm.collapseAllGroups();
+    await flushPromises();
+    expect(wrapper.vm.allGroupsCollapsed).toBe(true);
+    for (const path of ["0", "0.1", "0.1.1"]) {
+      expect(ownBody(groupAt(wrapper, path)).classes()).toContain("is-collapsed");
+    }
+    wrapper.vm.expandAllGroups();
+    await flushPromises();
+    expect(wrapper.vm.allGroupsCollapsed).toBe(false);
+    expect(wrapper.findAll(".form-pro__group-body.is-collapsed")).toHaveLength(0);
+    expect(submit()).toEqual(initialSubmit);
+  });
+
+  it("父子重名分组按 DFS 首个标题操作，点击子分组不影响父分组", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "重名",
+          children: [
+            {
+              group: true,
+              title: "重名",
+              children: [{ prop: "a", label: "A", itemRender: { name: "ElInput" } }],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+    wrapper.vm.toggleGroup("重名");
+    await flushPromises();
+    expect(ownBody(groupAt(wrapper, "0")).classes()).toContain("is-collapsed");
+    expect(ownBody(groupAt(wrapper, "0.0")).classes()).not.toContain("is-collapsed");
+
+    wrapper.vm.expandAllGroups();
+    await ownHeader(groupAt(wrapper, "0.0")).trigger("click");
+    await flushPromises();
+    expect(ownBody(groupAt(wrapper, "0")).classes()).not.toContain("is-collapsed");
+    expect(ownBody(groupAt(wrapper, "0.0")).classes()).toContain("is-collapsed");
+  });
+
+  it("嵌套字段遵循 hiddenValue 与 onlyRequired，恢复可见后保留内部原值", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { a: "A", b: "B", c: "C" },
+      hiddenValue: "",
+      onlyRequired: false,
+      items: [
+        {
+          group: true,
+          title: "根",
+          children: [
+            { prop: "a", label: "A", required: true, itemRender: { name: "ElInput" } },
+            {
+              group: true,
+              title: "子",
+              children: [
+                { prop: "b", label: "B", itemRender: { name: "ElInput" } },
+                {
+                  group: true,
+                  title: "孙",
+                  children: [
+                    { prop: "c", label: "C", required: true, visible: false, itemRender: { name: "ElInput" } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+    expect(wrapper.vm.getSubmitData()).toMatchObject({ a: "A", b: "B", c: "" });
+    await wrapper.setProps({ onlyRequired: true });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A"]);
+    expect(wrapper.vm.getSubmitData()).toMatchObject({ a: "A", b: "B", c: "" });
+
+    wrapper.vm.updateItems("c", { visible: true });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A", "C"]);
+    expect(wrapper.vm.getSubmitData()).toMatchObject({ a: "A", b: "B", c: "C" });
+  });
+
+  it("嵌套 optionsSource 首次加载及依赖变化均生效", async () => {
+    const fetch = vi.fn(async ({ deps }) => [{ label: `选项${deps[0]}`, value: deps[0] }]);
+    const resource = {
+      prop: "resource",
+      label: "资源",
+      itemRender: { name: "ElSelect", options: [] },
+      optionsSource: { deps: ["kind"], fetch },
+    };
+    const wrapper = mountFormPro({
+      modelValue: { kind: "A", resource: "A" },
+      items: [
+        {
+          group: true,
+          title: "根",
+          children: [
+            { prop: "kind", label: "类型", itemRender: { name: "ElInput" } },
+            { group: true, title: "子", children: [resource] },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+    await flushPromises();
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ deps: ["A"] }));
+    expect(resource.itemRender.options).toEqual([{ label: "选项A", value: "A" }]);
+    expect(resource.itemRender.props.loading).toBe(false);
+
+    wrapper.vm.formData.kind = "B";
+    await flushPromises();
+    await flushPromises();
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ deps: ["B"] }));
+    expect(wrapper.vm.formData.resource).toBe("");
+    expect(resource.itemRender.options).toEqual([{ label: "选项B", value: "B" }]);
+  });
+
+  it("动态增删改递归生效，删除分组会清理全部后代字段值", async () => {
+    const items = [
+      {
+        group: true,
+        title: "根",
+        children: [
+          { prop: "a", label: "A", itemRender: { name: "ElInput" } },
+          {
+            group: true,
+            title: "子",
+            children: [
+              { prop: "b", label: "B", itemRender: { name: "ElInput" } },
+              {
+                group: true,
+                title: "孙",
+                children: [{ prop: "c", label: "C", itemRender: { name: "ElInput" } }],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const wrapper = mountFormPro({ modelValue: {}, items });
+    await flushPromises();
+    wrapper.vm.addItems({ prop: "x", label: "X", itemRender: { name: "ElInput" } }, { after: "a" });
+    wrapper.vm.addItems({ prop: "y", label: "Y", itemRender: { name: "ElSwitch" } }, { before: "b" });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A", "X", "Y", "B", "C"]);
+    expect(wrapper.vm.formData.x).toBe("");
+    expect(wrapper.vm.formData.y).toBe(false);
+
+    wrapper.vm.updateItems("c", { visible: false });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A", "X", "Y", "B"]);
+    const removed = wrapper.vm.removeItems((i) => i.group === true && i.title === "子");
+    expect(removed.map((i) => i.prop || i.title)).toEqual(["子", "y", "b", "孙", "c"]);
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["A", "X"]);
+    expect(wrapper.vm.formData).not.toHaveProperty("y");
+    expect(wrapper.vm.formData).not.toHaveProperty("b");
+    expect(wrapper.vm.formData).not.toHaveProperty("c");
+    expect(wrapper.vm.formData).toHaveProperty("a");
+    expect(wrapper.vm.formData).toHaveProperty("x");
+  });
+
+  it("每个嵌套分组的 folding 状态独立", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "根",
+          children: [
+            { prop: "rootFold", label: "根折叠项", folding: true, itemRender: { name: "ElInput" } },
+            { collapseNode: true },
+            {
+              group: true,
+              title: "子",
+              children: [
+                { prop: "childFold", label: "子折叠项", folding: true, itemRender: { name: "ElInput" } },
+                { collapseNode: true },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+    expect(labels(wrapper)).toEqual([]);
+    const buttons = wrapper.findAll(".form-pro__collapse-btn");
+    expect(buttons).toHaveLength(2);
+    await buttons[1].trigger("click");
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["子折叠项"]);
+    await wrapper.findAll(".form-pro__collapse-btn")[0].trigger("click");
+    await flushPromises();
+    expect(labels(wrapper)).toEqual(["根折叠项", "子折叠项"]);
+  });
+});

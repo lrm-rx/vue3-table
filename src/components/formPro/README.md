@@ -92,9 +92,32 @@ const items = ref([
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
 | `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示；提示有值且未配置图标时，默认使用 `QuestionFilled` |
 
-**分组头**：`{ group: true, title, fold, collapsible, render, slot, titleBold, titleStyle }`。
+**分组头**：`{ group: true, title, fold, collapsible, render, slot, titleBold, titleStyle, children? }`。
 - `titleBold`：标题是否加粗（`true` → 700，`false` → 400，未设置 → 默认 600）；
-- `titleStyle`：标题自定义内联样式（颜色/字号等，如 `{ color: '#409eff', fontSize: 15 }`），与 `titleBold` 叠加，`fontWeight` 显式指定时优先于 `titleBold`。
+- `titleStyle`：标题自定义内联样式（颜色/字号等，如 `{ color: '#409eff', fontSize: 15 }`），与 `titleBold` 叠加，`fontWeight` 显式指定时优先于 `titleBold`；
+- `children`：子级配置数组，可继续包含字段、插入项和分组，支持任意层级嵌套。**只有 `group: true` 且 `children` 为数组时才按树形分组解析**，普通字段或插入项上的同名业务属性不会被误判。
+
+```js
+const items = [
+  {
+    group: true,
+    title: "基本信息",
+    children: [
+      { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
+      {
+        group: true,
+        title: "地址信息",
+        children: [
+          { prop: "city", label: "城市", itemRender: { name: "ElInput" } },
+        ],
+      },
+    ],
+  },
+];
+// 数据始终是平面的：{ name: "", city: "" }，不会按分组生成嵌套对象。
+```
+
+无论嵌套多少层，内部仍只有一个 `el-form`，所有字段共享同一个平面 `formData`；默认值、校验、插槽、条件显隐、`hiddenValue`、`onlyRequired`、`optionsSource` 和动态增删改均适用于深层字段。树形分组是**自闭合节点**，其后的同级普通项不会自动并入该分组；旧扁平配置及未声明 `children` 的旧分组头保持原有解析和布局不变。
 
 > 「折叠全部 / 展开全部」操作不提供分组头内按钮（表单出现垂直滚动条后按钮随内容滚走不可见），
 > 请使用配套的 `FormGroupToggle` 组件——可放置在任意固定位置（fixed 悬浮条 / 顶部工具栏），
@@ -150,6 +173,8 @@ formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
 - `getSubmitData()` —— 返回已按 `hiddenValue` 规则改写隐藏字段值的提交数据（见 §6）
 - `toFormData(source?, options?)` —— 对象 → `FormData`（multipart 提交）。不传 `source` 时取 `getSubmitData()`；`File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }`）始终以二进制 append，不会变成 `"[object File]"` 或 `{}`；嵌套对象展开为 `a[b]`，对象数组为 `a[0][b]`；标量/文件数组默认重复同名键（`arrayFormat: 'bracket'` 时用 `a[]`）；`Date` → ISO，布尔 → `'true'/'false'`，`null` / `undefined` 跳过
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`；响应式只读状态 `allGroupsCollapsed`（所有可折叠分组是否均已折叠，供外部按钮驱动文案，如 FormGroupToggle）
+  - 按标题操作时按**深度优先顺序命中第一个**匹配分组；各分组状态按树路径隔离，重复标题互不影响。
+  - 全部折叠 / 展开会递归处理所有层级；父分组折叠只隐藏整个子树，不卸载字段、不修改子分组自身状态，也不触发 `hiddenValue`。
 - 运行时动态配置：`addItems(entries, position?)` / `removeItems(target)` / `updateItems(target, patch)` —— 增删改 items（联动禁用/显隐、异步 options，详见 §13）
 - `formData` —— 内部完整数据（含隐藏字段值）
 
@@ -658,10 +683,10 @@ photos: ["https://example.com/a.png"]; // 文件名按 URL 末段自动推导
 | 方法 | 签名 | 说明 |
 |---|---|---|
 | `addItems(entries, position?)` | `entries: Object \| Object[]`；`position` 见下 | 新增一项或多项，返回 items 引用。新增字段的 formData 默认值**立即自动补全**（§5） |
-| `removeItems(target)` | `target: prop \| prop[] \| (item)=>boolean` | 删除一项或多项，返回被删除项数组；被删字段的 **formData 键同步清理**，提交不留孤儿值 |
-| `updateItems(target, patch)` | `patch: Object \| (item)=>Object` | 更新一项或多项，返回命中项数组。顶层键整体赋值；键含 `.` 时按路径深设（lodash `set`） |
+| `removeItems(target)` | `target: prop \| prop[] \| (item)=>boolean` | 递归删除任意深度的一项或多项；被删字段的 **formData 键同步清理**。删除分组头时删除整个子树，返回分组及全部后代并清理所有后代字段值 |
+| `updateItems(target, patch)` | `patch: Object \| (item)=>Object` | 递归更新任意深度的一项或多项，返回命中项数组。顶层键整体赋值；键含 `.` 时按路径深设（lodash `set`） |
 
-**target 选择器**（三个方法统一）：
+**target 选择器**（`removeItems / updateItems` 统一，均会递归遍历树形 `children`）：
 
 ```js
 "email"                       // 单个：按 item.prop 精确匹配
@@ -673,10 +698,10 @@ photos: ["https://example.com/a.png"]; // 文件名按 URL 末段自动推导
 
 | 取值 | 含义 |
 |---|---|
-| `'end'`（默认） | 追加到末尾 |
-| `'start'` | 插入开头 |
-| `number` | 插入到该索引（越界自动钳制到 `[0, length]`） |
-| `{ before: 'prop' }` / `{ after: 'prop' }` | 插到某字段前/后；锚点不存在时回退追加末尾 |
+| `'end'`（默认） | 追加到顶层末尾 |
+| `'start'` | 插入顶层开头 |
+| `number` | 插入到顶层该索引（越界自动钳制到 `[0, length]`） |
+| `{ before: 'prop' }` / `{ after: 'prop' }` | 深度优先查找锚点，插到锚点所在的同级数组（嵌套字段即对应 `children`）；锚点不存在时回退追加顶层末尾 |
 
 ### 场景一：未满足条件时禁用 / 显示其他字段
 
@@ -768,14 +793,23 @@ formRef.value.addItems(
 // 批量：一次插入多项（保持数组顺序）
 formRef.value.addItems([fieldA, fieldB], { before: "address" });
 
+// 嵌套字段：插到其所在分组的同级 children 中
+formRef.value.addItems(
+  { prop: "district", label: "区县", itemRender: { name: "ElInput" } },
+  { after: "city" },
+);
+
 // 批量删除：formData 中对应键一并清理
 formRef.value.removeItems(["emergency", "favColor", "notify"]);
+
+// 也可通过谓词删除临时分组；其所有后代字段值会一并清理
+formRef.value.removeItems((it) => it.group === true && it.temporary === true);
 ```
 
 ### 性能与实现说明
 
-- 三个方法均为**单次 O(n) 遍历**：批量操作先一次性建立 `prop → 索引` 映射（`Map`），批量删除收集索引后倒序 `splice`，不存在逐项 `find` 的 O(n·k) 开销。
-- 原地修改（`splice` / 属性赋值），不产生新数组引用，Vue 响应式只触发一次相关更新。
+- 三个方法均通过**单次深度优先遍历**处理整棵配置树，批量 target 使用 `Set` 匹配，不存在逐项 `find` 的 O(n·k) 开销。
+- 原地修改（`splice` / 属性赋值），不产生新的顶层 items 数组引用；树路径和声明顺序由内部归一化统一维护。
 - 纯函数实现与 Vue/EP 解耦（基于 lodash-es 的 `castArray / isFunction / isPlainObject / isNumber / set`），可在工具脚本、单测中直接复用。
 
 ---

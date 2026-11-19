@@ -319,6 +319,34 @@ describe("mergeModelValue（v-model 三方合并）", () => {
     expect(merged).toEqual({ name: "张三", enabled: false, level: "p6" });
   });
 
+  it("树形 children：深层字段参与三方合并与默认值补全", () => {
+    const items = [
+      {
+        group: true,
+        title: "根",
+        children: [
+          { prop: "name", itemRender: { name: "ElInput" } },
+          {
+            group: true,
+            title: "子",
+            children: [
+              { prop: "resource", itemRender: { name: "ElInput" } },
+              { prop: "enabled", itemRender: { name: "ElSwitch" } },
+            ],
+          },
+        ],
+      },
+    ];
+    const merged = mergeModelValue({
+      current: { name: "张三", resource: "old" },
+      incoming: { name: "", resource: "" },
+      base: { name: "", resource: "old" },
+      items,
+      autoFillDefaults: true,
+    });
+    expect(merged).toEqual({ name: "张三", resource: "", enabled: false });
+  });
+
   it("autoFillDefaults 关闭：不补默认值", () => {
     const items = [{ prop: "enabled", itemRender: { name: "ElSwitch" } }];
     const merged = mergeModelValue({

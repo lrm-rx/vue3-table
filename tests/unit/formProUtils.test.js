@@ -11,6 +11,9 @@ import {
   collectHiddenValueOverrides,
   resolveSpan,
   splitIntoGroups,
+  normalizeFormTree,
+  flattenFormItems,
+  flattenFormBlocks,
   resolveVisibleEntries,
   collectFieldProps,
   deriveDefaultValue,
@@ -185,6 +188,104 @@ describe("formPro utils", () => {
       const blocks = splitIntoGroups(items);
       expect(blocks).toHaveLength(1);
       expect(blocks[0].group.title).toBe("G");
+    });
+  });
+
+  describe("树形分组归一化", () => {
+    const treeItems = () => [
+      { prop: "pre" },
+      {
+        group: true,
+        title: "root",
+        children: [
+          { prop: "a" },
+          {
+            group: true,
+            title: "child",
+            children: [
+              { prop: "b" },
+              { group: true, title: "grand", children: [{ prop: "c" }] },
+              { prop: "d" },
+            ],
+          },
+        ],
+      },
+      { prop: "post" },
+    ];
+
+    it("旧扁平配置仍返回原 splitIntoGroups 结构", () => {
+      const items = [
+        { prop: "pre" },
+        { group: true, title: "G" },
+        { prop: "a" },
+      ];
+      expect(normalizeFormTree(items)).toEqual(splitIntoGroups(items));
+      expect(normalizeFormTree(items)[1]).not.toHaveProperty("children");
+    });
+
+    it("三层分组按 DFS 展开，保留声明顺序、原引用与路径", () => {
+      const items = treeItems();
+      const blocks = normalizeFormTree(items);
+      const groups = flattenFormBlocks(blocks).filter((b) => b.group);
+      expect(groups.map((b) => b.group.title)).toEqual(["root", "child", "grand"]);
+      expect(groups.map((b) => b.path)).toEqual(["1", "1.1", "1.1.1"]);
+      expect(groups.map((b) => b.depth)).toEqual([0, 1, 2]);
+      expect(groups[0].children.map((b) => b.group?.title || b.items[0]?.prop)).toEqual([
+        "a",
+        "child",
+      ]);
+      expect(groups[1].children.map((b) => b.group?.title || b.items[0]?.prop)).toEqual([
+        "b",
+        "grand",
+        "d",
+      ]);
+      const flat = flattenFormItems(items);
+      expect(flat.map((i) => i.group ? i.title : i.prop)).toEqual([
+        "pre",
+        "root",
+        "a",
+        "child",
+        "b",
+        "grand",
+        "c",
+        "d",
+        "post",
+      ]);
+      expect(flat[0]).toBe(items[0]);
+      expect(flat[3]).toBe(items[1].children[1]);
+    });
+
+    it("普通字段的 children 业务属性不参与树解析", () => {
+      const field = { prop: "a", children: [{ prop: "not-a-form-field" }] };
+      expect(flattenFormItems([field])).toEqual([field]);
+      const blocks = normalizeFormTree([field]);
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].items).toEqual([field]);
+    });
+
+    it("嵌套字段同样参与默认值、隐藏值及字段 prop 收集", () => {
+      const items = [
+        {
+          group: true,
+          title: "G",
+          children: [
+            { prop: "a", visible: false },
+            {
+              group: true,
+              title: "sub",
+              children: [
+                { prop: "b", defaultValue: "B" },
+                { prop: "enabled", itemRender: { name: "ElSwitch" } },
+              ],
+            },
+          ],
+        },
+      ];
+      expect(collectFieldProps(items)).toEqual(["a", "b", "enabled"]);
+      expect(buildInitialData(items)).toEqual({ a: "", b: "B", enabled: false });
+      expect([...collectHiddenValueOverrides(items, {}, null).entries()]).toEqual([
+        ["a", null],
+      ]);
     });
   });
 
@@ -588,6 +689,56 @@ describe("formPro utils", () => {
       expect(updateItems(items, "a", null)).toEqual([]);
       expect(updateItems(items, null, { x: 1 })).toEqual([]);
       expect(items[1].label).toBe("a");
+    });
+  });
+
+  describe("树形配置的运行时增删改", () => {
+    const nestedItems = () => [
+      {
+        group: true,
+        title: "root",
+        children: [
+          field("a"),
+          { group: true, title: "child", children: [field("b")] },
+        ],
+      },
+    ];
+
+    it("before / after 插入锚点所在 children，start / end 仍操作顶层", () => {
+      const items = nestedItems();
+      addItems(items, field("x"), { after: "a" });
+      addItems(items, field("y"), { before: "b" });
+      expect(items[0].children.map((i) => i.prop || i.title)).toEqual([
+        "a",
+        "x",
+        "child",
+      ]);
+      expect(items[0].children[2].children.map((i) => i.prop)).toEqual(["y", "b"]);
+      addItems(items, field("top"), "start");
+      expect(items[0].prop).toBe("top");
+      addItems(items, field("last"));
+      expect(items.at(-1).prop).toBe("last");
+    });
+
+    it("updateItems 递归更新任意深度字段", () => {
+      const items = nestedItems();
+      const touched = updateItems(items, "b", { visible: false, "itemRender.props.disabled": true });
+      expect(touched).toHaveLength(1);
+      expect(items[0].children[1].children[0]).toMatchObject({
+        prop: "b",
+        visible: false,
+        itemRender: { props: { disabled: true } },
+      });
+    });
+
+    it("删除字段只移除自身，删除分组则返回并移除整个后代子树", () => {
+      const items = nestedItems();
+      expect(removeItems(items, "b").map((i) => i.prop)).toEqual(["b"]);
+      expect(items[0].children[1].children).toEqual([]);
+
+      const removed = removeItems(items, (i) => i.group === true && i.title === "root");
+      expect(removed.map((i) => i.prop || i.title)).toEqual(["root", "a", "child"]);
+      expect(items).toEqual([]);
     });
   });
 

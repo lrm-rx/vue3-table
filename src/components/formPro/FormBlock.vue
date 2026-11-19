@@ -1,12 +1,13 @@
 <script setup lang="jsx">
 /**
- * FormPro 内部：渲染单个「分组块」（匿名组或具名分组）。
+ * FormPro 内部：递归渲染单个「分组块」（匿名组或具名分组）及其子块。
  * 拆分为子组件，使 index.vue 模板保持简洁，同时 JSX 渲染逻辑独立可测。
  */
 import {
   computed,
   ref,
   useSlots,
+  getCurrentInstance,
   h,
   resolveComponent,
   mergeProps,
@@ -54,6 +55,8 @@ const resolveItemRenderComponent = (name) => {
 
 const props = defineProps({
   block: { type: Object, required: true },
+  // 当前树深度；旧扁平配置恒为 0，不增加嵌套修饰类或 data 属性
+  depth: { type: Number, default: 0 },
   formData: { type: Object, required: true },
   onlyRequired: { type: Boolean, default: false },
   formRules: { type: Object, default: () => ({}) },
@@ -81,10 +84,14 @@ const props = defineProps({
   // >0 时，带单位的后缀固定为该宽度、不带单位的字段右侧渲染等宽占位符，
   // 使上下各 item 的控件右边缘对齐；0 表示表单内无静态单位后缀（原样式不变）。
   unitSlotWidth: { type: Number, default: 0 },
+  // 由 FormPro 按树路径解析任意深度的分组状态
+  getGroupCollapsed: { type: Function, default: null },
+  getGroupCollapsible: { type: Function, default: null },
 });
 
 const emit = defineEmits(["toggle-group", "register-upload-ref"]);
 const slots = useSlots();
+const currentInstance = getCurrentInstance();
 
 // item 级折叠（vxe-form folding）：默认收起，collapseNode 按钮切换
 const foldingCollapsed = ref(true);
@@ -485,6 +492,44 @@ const renderInsertEntry = (entry) => {
 // 展开/折叠时长统一由 CSS 变量 --form-pro-group-duration 控制（默认 300ms）。
 // （动画由 CSS 实现，render 中始终渲染 body，仅切换 is-collapsed 类）
 
+const renderNestedBlock = (block) => {
+  const group = block.group;
+  const collapsible = group
+    ? (props.getGroupCollapsible?.(group) ?? true)
+    : true;
+  const collapsed = group
+    ? collapsible && (props.getGroupCollapsed?.(group) ?? !!group.fold)
+    : false;
+  return h(
+    currentInstance.type,
+    {
+      key: block.path,
+      block,
+      depth: block.depth ?? props.depth + 1,
+      formData: props.formData,
+      onlyRequired: props.onlyRequired,
+      formRules: props.formRules,
+      formSpan: props.formSpan,
+      gutter: props.gutter,
+      titleColon: props.titleColon,
+      titleBold: props.titleBold,
+      fieldErrors: props.fieldErrors,
+      border: props.border,
+      compact: props.compact,
+      unitSlotWidth: props.unitSlotWidth,
+      errorTipVisible: props.errorTipVisible,
+      collapsible,
+      collapsed,
+      formItemRefs: props.formItemRefs,
+      getGroupCollapsed: props.getGroupCollapsed,
+      getGroupCollapsible: props.getGroupCollapsible,
+      onToggleGroup: (target) => emit("toggle-group", target),
+      onRegisterUploadRef: (prop, el) => emit("register-upload-ref", prop, el),
+    },
+    slots,
+  );
+};
+
 const render = () => {
   const { group } = props.block;
   const colNodes = entries.value.map((e, idx) => {
@@ -500,12 +545,19 @@ const render = () => {
       {colNodes}
     </ElRow>
   );
+  const nestedNodes = (props.block.children || []).map(renderNestedBlock);
+  const bodyContent = nestedNodes.length
+    ? h("div", { class: "form-pro__group-content" }, [
+        props.block.items.length ? row : null,
+        ...nestedNodes,
+      ])
+    : row;
   if (!group) return row;
   const canCollapse = props.collapsible !== false;
   const headerClass = canCollapse
     ? "form-pro__group-header"
     : "form-pro__group-header is-static";
-  const toggle = () => canCollapse && emit("toggle-group");
+  const toggle = () => canCollapse && emit("toggle-group", group);
   // 分组标题与右侧按钮之间的扩展区域：支持 group.render（JSX）/ group.slot（具名插槽）
   // 渲染提示信息等元素；该区域独立于可点击区，点击不会触发分组折叠。
   const renderGroupExtra = () => {
@@ -516,7 +568,15 @@ const render = () => {
   };
   const groupExtra = renderGroupExtra();
   return (
-    <div class="form-pro__group" data-collapsed={props.collapsed}>
+    <div
+      class={{
+        "form-pro__group": true,
+        "form-pro__group--nested": props.depth > 0,
+      }}
+      data-collapsed={props.collapsed}
+      data-group-path={props.block.path}
+      data-group-depth={props.block.path === undefined ? undefined : props.depth}
+    >
       <div class={headerClass}>
         {/* 可点击区：箭头 + 标题（独立命中区，点击切换分组折叠） */}
         <div
@@ -555,7 +615,7 @@ const render = () => {
           "is-collapsed": !!props.collapsed,
         }}
       >
-        {row}
+        {bodyContent}
       </div>
     </div>
   );

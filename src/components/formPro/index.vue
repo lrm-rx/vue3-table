@@ -9,7 +9,8 @@
  *     - 方法：defineExpose 暴露 formRef 及 validate/resetFields/clearValidate/scrollToField/validateField
  *     - 事件：透传 attrs 中的监听器到 <el-form>，自定义事件照常触发
  *  2. 24 栅格分列：表单级 columns（列数）推导默认 span（24/列数），或直接用 span 指定默认值；每项 span 覆盖（项级优先级更高）
- *  3. 分组可展开/折叠：items 中插入 { group:true, title, fold } 分组头
+ *  3. 分组可展开/折叠：支持旧扁平分组头及 { group:true, children:[...] } 任意层级树形分组，
+ *     全树仍共用一个 el-form 和一个平面 formData
  *  4. onlyRequired 动态切换：仅显示必填（item.required 或 rules 含 required）项
  *  5. JSX 渲染：item.render(ctx, h) 渲染控件（ctx 在前，h 极少使用时可省略）
  *  6. 表单项间插入组件/元素：无 field 的项即为插入项，用 slot 或 render 渲染
@@ -36,7 +37,9 @@ import {
 } from "vue";
 import { isEqual } from "lodash-es";
 import {
-  splitIntoGroups,
+  normalizeFormTree,
+  flattenFormItems,
+  flattenFormBlocks,
   GRID_COLS,
   collectHiddenValueOverrides,
   buildInitialData,
@@ -105,6 +108,10 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"]);
 
 const formRef = ref(null);
+
+// 渲染使用分组块树；数据、校验和联动统一使用 DFS 平面字段配置。
+const blocks = computed(() => normalizeFormTree(props.items));
+const flatItems = computed(() => flattenFormItems(props.items));
 
 // 内部表单数据：与 modelValue 双向同步（开启 autoFillDefaults 时按 items 配置补全缺失字段的默认值）
 const formData = reactive(
@@ -344,7 +351,7 @@ watch(
   formData,
   () => {
     const seen = new Set();
-    for (const item of props.items) {
+    for (const item of flatItems.value) {
       if (!isFieldItem(item) || !item.optionsSource) continue;
       seen.add(item.prop);
       const src = item.optionsSource;
@@ -400,7 +407,7 @@ let suppressEmit = false;
 const fillMissingDefaults = () => {
   if (!props.autoFillDefaults) return;
   let changed = false;
-  for (const item of props.items) {
+  for (const item of flatItems.value) {
     if (!isFieldItem(item)) continue;
     if (formData[item.prop] === undefined) {
       formData[item.prop] = deriveDefaultValue(item);
@@ -599,19 +606,22 @@ const formSpanComputed = computed(() => {
   return props.span;
 });
 
-// 分组折叠状态：以「分组在 blocks 中的索引」为 key（唯一），避免重复标题共享折叠态 / v-for key 碰撞。
+// 分组折叠状态以树路径为 key：重复标题互不影响，嵌套分组也各自独立。
 const collapsedMap = reactive({});
 const groupKey = (t) => t || "__default__";
-
-// 取某分组对象在 blocks 中的索引（唯一身份）；找不到返回 -1
-const groupIndexOf = (groupItem) =>
-  groupItem ? blocks.value.findIndex((b) => b.group === groupItem) : -1;
+const groupBlocks = computed(() =>
+  flattenFormBlocks(blocks.value).filter((b) => b.group),
+);
+const pathOfBlock = (block) => block.path ?? String(blocks.value.indexOf(block));
+const findGroupBlock = (groupItem) =>
+  groupBlocks.value.find((b) => b.group === groupItem);
 
 const isGroupCollapsed = (groupItem) => {
-  const idx = groupIndexOf(groupItem);
-  if (idx === -1) return !!groupItem?.fold;
-  if (collapsedMap[idx] === undefined) return !!groupItem?.fold;
-  return collapsedMap[idx];
+  const block = findGroupBlock(groupItem);
+  if (!block) return !!groupItem?.fold;
+  const path = pathOfBlock(block);
+  if (collapsedMap[path] === undefined) return !!groupItem?.fold;
+  return collapsedMap[path];
 };
 
 // 某分组是否可折叠：group.collapsible 优先，否则回退表单级 groupCollapsible（默认 true）
@@ -623,44 +633,41 @@ const isGroupCollapsible = (groupItem) => {
 
 const toggleGroup = (groupItem) => {
   if (!isGroupCollapsible(groupItem)) return;
-  const idx = groupIndexOf(groupItem);
-  if (idx === -1) return;
-  collapsedMap[idx] = !isGroupCollapsed(groupItem);
+  const block = findGroupBlock(groupItem);
+  if (!block) return;
+  collapsedMap[pathOfBlock(block)] = !isGroupCollapsed(groupItem);
 };
 
-// 对外暴露的动态折叠方法（按分组标题操作；标题重复时命中第一个匹配分组）——
-// 按标题取分组在 blocks 中的索引
-const findGroupIndex = (title) =>
-  blocks.value.findIndex((b) => b.group && groupKey(b.group.title) === groupKey(title));
+// 按标题操作时按深度优先顺序命中第一个匹配分组（父子重名也保持确定性）。
+const findGroupBlockByTitle = (title) =>
+  groupBlocks.value.find((b) => groupKey(b.group.title) === groupKey(title));
 
 /** 设置某个分组的折叠状态 */
 const setGroupCollapsed = (title, collapsed) => {
-  const idx = findGroupIndex(title);
-  if (idx === -1) return;
-  collapsedMap[idx] = !!collapsed;
+  const block = findGroupBlockByTitle(title);
+  if (block) collapsedMap[pathOfBlock(block)] = !!collapsed;
 };
 /** 切换某个分组 */
 const toggleGroupByTitle = (title) => {
-  const idx = findGroupIndex(title);
-  if (idx === -1) return;
-  const g = blocks.value[idx]?.group || { title };
-  collapsedMap[idx] = !isGroupCollapsed(g);
+  const block = findGroupBlockByTitle(title);
+  if (!block) return;
+  collapsedMap[pathOfBlock(block)] = !isGroupCollapsed(block.group);
 };
 /** 批量设置多个分组的折叠状态 */
 const setGroupsCollapsed = (titles, collapsed) => {
   (titles || []).forEach((t) => setGroupCollapsed(t, collapsed));
 };
-/** 折叠 / 展开全部分组 */
+/** 折叠 / 展开全部分组（含任意深度的嵌套分组） */
 const setAllGroupsCollapsed = (collapsed) => {
-  blocks.value.forEach((b, idx) => {
-    if (b.group) collapsedMap[idx] = !!collapsed;
+  groupBlocks.value.forEach((block) => {
+    collapsedMap[pathOfBlock(block)] = !!collapsed;
   });
 };
 const collapseAllGroups = () => setAllGroupsCollapsed(true);
 const expandAllGroups = () => setAllGroupsCollapsed(false);
 /** 是否所有「可折叠」分组都处于折叠态（用于「展开全部 / 折叠全部」按钮文案） */
 const allGroupsCollapsed = computed(() => {
-  const collapsible = blocks.value.filter((b) => b.group && isGroupCollapsible(b.group));
+  const collapsible = groupBlocks.value.filter((b) => isGroupCollapsible(b.group));
   return collapsible.length > 0 && collapsible.every((b) => isGroupCollapsed(b.group));
 });
 /** 一键切换全部分组：全部折叠时展开，否则全部折叠 */
@@ -675,8 +682,6 @@ watch(
     fillMissingDefaults();
   },
 );
-
-const blocks = computed(() => splitIntoGroups(props.items));
 
 // FormPro 自身暴露的成员（分组折叠、提交数据等）
 const ownExposed = {
@@ -791,8 +796,9 @@ defineExpose(ownExposed);
   >
     <FormBlock
       v-for="(block, idx) in blocks"
-      :key="idx"
+      :key="block.path ?? idx"
       :block="block"
+      :depth="block.depth ?? 0"
       :form-data="formData"
       :only-required="onlyRequired"
       :form-rules="formRules"
@@ -808,8 +814,10 @@ defineExpose(ownExposed);
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :form-item-refs="formItemRefs"
+      :get-group-collapsed="isGroupCollapsed"
+      :get-group-collapsible="isGroupCollapsible"
       @register-upload-ref="setUploadRef"
-      @toggle-group="block.group && isGroupCollapsible(block.group) && toggleGroup(block.group)"
+      @toggle-group="toggleGroup"
     >
       <!-- 透传所有插槽给 FormBlock（字段插槽 #field、插入项插槽、分组标题插槽 group-xxx）-->
       <template v-for="(_, name) in $slots" #[name]="scope">
