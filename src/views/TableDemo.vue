@@ -315,6 +315,25 @@ const columns = ref([
       props: {
         // 函数式 placeholder：接收 { row, column, field }，可按当前行数据定制
         placeholder: ({ row }) => `请输入${row?.username ?? "该行"}的备注`,
+        // 内部 ElInput 组件事件：input/change 回调参数为文本值，focus/blur 为 FocusEvent
+        onInput: (value) => {
+          const { row, column } = editingCell.value || {};
+          console.log("[remark input]", value, "行:", row, "列:", column?.title);
+        },
+        onChange: (value) => {
+          const { row, column } = editingCell.value || {};
+          console.log("[remark change]", value, "行:", row, "列:", column?.title);
+        },
+        onFocus: (event) => {
+          console.log("[remark focus]", event);
+        },
+        onBlur: (event) => {
+          console.log("[remark blur]", event);
+        },
+        // 未声明的原生事件经 $attrs 透传到内部 textarea，回调参数为 KeyboardEvent
+        onKeydown: (event) => {
+          console.log("[remark keydown]", event.key);
+        },
       },
     },
     params: { hideColumn: false },

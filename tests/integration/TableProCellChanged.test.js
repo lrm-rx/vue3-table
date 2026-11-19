@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { VxeGrid } from "vxe-table";
 import TablePro from "../../src/components/tablePro/index.vue";
@@ -34,7 +34,7 @@ const getCells = () =>
  * 挂载「alwaysEdit + TextareaPopoverEdit」的 look 回退列（与 TableDemo 备注列一致），
  * 返回操作句柄：点击单元格 / 在 popover 中输入并确定 / 读取外部状态。
  */
-const mountTable = async (initialRemark) => {
+const mountTable = async (initialRemark, editProps = {}) => {
   let rows = [];
   const state = { changed: false };
   const requestApi = async () => {
@@ -51,7 +51,7 @@ const mountTable = async (initialRemark) => {
           title: "备注",
           minWidth: 200,
           alwaysEdit: true,
-          editRender: { name: "TextareaPopoverEdit" },
+          editRender: { name: "TextareaPopoverEdit", props: editProps },
           params: { hideColumn: false },
         },
       ],
@@ -98,6 +98,7 @@ const mountTable = async (initialRemark) => {
     rows: () => rows,
     changed: () => state.changed,
     dirtyCount: () => document.querySelectorAll(".col--dirty").length,
+    clickCell,
     edit: async (text) => {
       await clickCell();
       await typeAndConfirm(text);
@@ -163,6 +164,39 @@ describe("TablePro cellChanged 与 vxe 修改标记一致性", () => {
     await t.edit("");
     expect(t.changed()).toBe(false);
     expect(t.dirtyCount()).toBe(0);
+    t.wrapper.unmount();
+  });
+
+  it("TextareaPopoverEdit：透传内部 ElInput 的组件事件与原生事件", async () => {
+    const listeners = {
+      onInput: vi.fn(),
+      onChange: vi.fn(),
+      onFocus: vi.fn(),
+      onBlur: vi.fn(),
+      onKeydown: vi.fn(),
+    };
+    const t = await mountTable("orig", listeners);
+    await t.clickCell();
+
+    const input = t.wrapper
+      .findComponent({ name: "TextareaPopoverEdit" })
+      .findComponent({ name: "ElInput" });
+    const focusEvent = new FocusEvent("focus");
+    const blurEvent = new FocusEvent("blur");
+    input.vm.$emit("input", "next");
+    input.vm.$emit("change", "next");
+    input.vm.$emit("focus", focusEvent);
+    input.vm.$emit("blur", blurEvent);
+
+    const textarea = document.querySelector(".textarea-popover-edit textarea");
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+
+    expect(listeners.onInput).toHaveBeenCalledWith("next");
+    expect(listeners.onChange).toHaveBeenCalledWith("next");
+    expect(listeners.onFocus).toHaveBeenCalledWith(focusEvent);
+    expect(listeners.onBlur).toHaveBeenCalledWith(blurEvent);
+    expect(listeners.onKeydown).toHaveBeenCalledTimes(1);
+    expect(listeners.onKeydown.mock.calls[0][0].key).toBe("a");
     t.wrapper.unmount();
   });
 });

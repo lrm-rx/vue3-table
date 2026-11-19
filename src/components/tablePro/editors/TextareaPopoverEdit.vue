@@ -30,6 +30,9 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from "vue";
 import { ElPopover, ElInput, ElButton } from "element-plus";
 
+// 未声明的 attrs/listeners 不落到根 ElPopover，统一透传给内部 ElInput
+defineOptions({ inheritAttrs: false });
+
 const props = defineProps({
   // 由 tablePro 对象式 editRender 注入的 v-model（绑到 editLocalState）
   modelValue: { type: [String, Number], default: "" },
@@ -311,6 +314,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <ElInput
+        v-bind="$attrs"
         ref="inputRef"
         v-model="text"
         type="textarea"
