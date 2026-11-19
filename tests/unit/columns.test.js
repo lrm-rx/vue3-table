@@ -421,6 +421,7 @@ describe("editRender 分流", () => {
     );
     const col = result[0];
     const row = { id: 5, remark: "old" };
+    expect(col.slots.edit({ ...scopeFor("remark", row, "old"), isHidden: true })).toBeNull();
     const vnode = col.slots.edit(scopeFor("remark", row, "old"));
     expect(vnode.type.name || vnode.type.__name).toBe("TextareaPopoverEdit");
     expect(typeof vnode.props.onClear).toBe("function");
@@ -589,6 +590,10 @@ describe("常驻编辑器（alwaysEdit）", () => {
     ]).result[0];
     expect(popover.editRender).toEqual({ name: "TextareaPopoverEdit" });
     expect(typeof popover.slots.edit).toBe("function");
+    expect(popover.className).toContain("table-pro__col--textarea-look");
+    expect(popover.showOverflow).toBe("tooltip");
+    const multiline = "第一行\n第二行";
+    expect(popover.slots.default(scopeFor("remark", { remark: multiline })).children).toBe(multiline);
 
     const explicit = run([
       {

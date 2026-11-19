@@ -252,6 +252,34 @@ $vxe-filter-panel-offset: $vxe-filter-arrow-size + $vxe-filter-arrow-gap;
   }
 }
 
+// 文本域模拟框：不换行时沿用上方单行省略；仅开启表格换行后切换为多行展示
+.table-pro.is--wrap-text .vxe-table {
+  .vxe-body--column.table-pro__col--input-look.table-pro__col--textarea-look:not(.col--active) {
+    > .vxe-cell {
+      // 覆盖 vxe 行高计算写入的内联高度，允许行随多行内容继续增长
+      height: auto !important;
+      overflow: visible;
+
+      > .vxe-cell--wrapper {
+        height: auto;
+        min-height: var(--el-component-size, 32px);
+        padding: 5px 11px;
+        line-height: calc(var(--el-component-size, 32px) - 12px);
+        overflow: visible;
+        text-overflow: clip;
+        white-space: pre-wrap !important;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+
+        // 换行模式的全局规则会把插槽根元素设为 normal，需同步保留显式换行符
+        > * {
+          white-space: pre-wrap !important;
+        }
+      }
+    }
+  }
+}
+
 // 表头编辑图标：alwaysEdit 但编辑器无法常驻的列（仅外观）与常驻列保持一致 ——
 // 常驻模式已移除 editRender，vxe 不会渲染表头图标，此处隐藏同样的图标避免不一致
 .vxe-header--column.table-pro__col--input-look .vxe-cell--edit-icon {

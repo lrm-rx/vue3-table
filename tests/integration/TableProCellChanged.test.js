@@ -167,6 +167,22 @@ describe("TablePro cellChanged 与 vxe 修改标记一致性", () => {
     t.wrapper.unmount();
   });
 
+  it("TextareaPopoverEdit：换行开关两种状态下单击均只出现一个弹层", async () => {
+    for (const wrap of [false, true]) {
+      const t = await mountTable("第一行\n第二行");
+      if (wrap) {
+        t.wrapper.vm.toggleWrapText();
+        await flushPromises();
+        await nextFrame();
+      }
+      await t.clickCell();
+      expect(t.wrapper.findAllComponents({ name: "TextareaPopoverEdit" })).toHaveLength(1);
+      expect(document.querySelectorAll(".textarea-popover-edit")).toHaveLength(1);
+      t.wrapper.unmount();
+      await flushPromises();
+    }
+  });
+
   it("TextareaPopoverEdit：透传内部 ElInput 的组件事件与原生事件", async () => {
     const listeners = {
       onInput: vi.fn(),

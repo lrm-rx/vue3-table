@@ -549,6 +549,8 @@ const buildObjectEditSlotFn = (ctx, col, field, Comp, wrapName) => markRaw((scop
   const stateKey = ctx.resolveEditStateKey(row, field)
   if (!(stateKey in ctx.editLocalState)) ctx.editLocalState[stateKey] = currentVal
   const erName = col.editRender && col.editRender.name
+  // 固定列隐藏副本会共享活动编辑态，但不能创建会自动弹出的编辑器
+  if (erName === 'TextareaPopoverEdit' && scope.isHidden) return null
   const extra = {
     modelValue: ctx.editLocalState[stateKey],
     'onUpdate:modelValue': (v) => { ctx.editLocalState[stateKey] = v },
@@ -632,6 +634,7 @@ const ALWAYS_EDIT_CLASS = 'table-pro__col--always-edit'
 //      由组件自动追加到列上；实际点击仍走普通编辑流程；
 //   2. 行级可编辑：列 className 传函数（或 JSX 渲染内容）按行数据判断后自行返回该类
 const INPUT_LOOK_CLASS = 'table-pro__col--input-look'
+const TEXTAREA_LOOK_CLASS = 'table-pro__col--textarea-look'
 const PLACEHOLDER_CLASS = 'table-pro__cell-placeholder'
 const ALWAYS_EDIT_EXCLUDED_NAMES = new Set(['TextareaPopoverEdit'])
 
@@ -841,6 +844,12 @@ const applyAlwaysEdit = (ctx, col, field, rawCol) => {
     // 空值时在模拟输入框内显示 placeholder（用户已配置 render/slots.default 时不接管展示）
     if (isAlwaysEditLookFallback(er)) {
       appendColumnClass(col, INPUT_LOOK_CLASS)
+      if (er.name === 'TextareaPopoverEdit') {
+        appendColumnClass(col, TEXTAREA_LOOK_CLASS)
+        // 固定保留 vxe 溢出模式，确保关闭换行时恢复单行省略；
+        // 多行展示由 .is--wrap-text 下的文本域外观样式接管
+        col.showOverflow = 'tooltip'
+      }
       // 仅外观列：表头同步标记，样式隐藏编辑图标（常驻列已移除 editRender，本就不显示）
       appendHeaderClass(col, INPUT_LOOK_CLASS)
       if (!col.slots.default) {
