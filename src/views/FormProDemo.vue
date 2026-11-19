@@ -605,6 +605,101 @@ const items = ref([
   },
 ]);
 
+// —— 树形嵌套分组示例：三层 children 共用一个 el-form，数据仍保持平面 ——
+const nestedFormRef = ref();
+const nestedFormData = ref({
+  employeeName: "张三",
+  department: "研发部",
+  phone: "13800000000",
+  province: "浙江",
+  city: "杭州",
+});
+const nestedItems = ref([
+  {
+    group: true,
+    title: "员工档案",
+    children: [
+      {
+        prop: "employeeName",
+        label: "姓名",
+        required: true,
+        itemRender: { name: "ElInput", props: { placeholder: "请输入姓名" } },
+      },
+      {
+        prop: "department",
+        label: "部门",
+        itemRender: {
+          name: "ElSelect",
+          props: { placeholder: "请选择部门" },
+          options: [
+            { label: "研发部", value: "研发部" },
+            { label: "产品部", value: "产品部" },
+            { label: "设计部", value: "设计部" },
+          ],
+        },
+      },
+      {
+        group: true,
+        title: "联系信息",
+        children: [
+          {
+            prop: "phone",
+            label: "手机号",
+            itemRender: { name: "ElInput", props: { placeholder: "请输入手机号" } },
+          },
+          {
+            prop: "email",
+            label: "邮箱",
+            itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
+          },
+          {
+            group: true,
+            title: "地址信息",
+            children: [
+              {
+                prop: "province",
+                label: "省份",
+                itemRender: {
+                  name: "ElSelect",
+                  props: { placeholder: "请选择省份", clearable: true },
+                  options: [
+                    { label: "浙江", value: "浙江" },
+                    { label: "江苏", value: "江苏" },
+                    { label: "广东", value: "广东" },
+                  ],
+                },
+              },
+              {
+                prop: "city",
+                label: "城市",
+                itemRender: { name: "ElInput", props: { placeholder: "请输入城市" } },
+              },
+              {
+                prop: "address",
+                label: "详细地址",
+                span: 24,
+                itemRender: {
+                  name: "ElInput",
+                  props: { type: "textarea", rows: 2, placeholder: "请输入详细地址" },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        prop: "note",
+        label: "备注",
+        span: 24,
+        tip: "该字段位于子分组之后，用于展示同级字段与子分组的声明顺序",
+        itemRender: { name: "ElInput", props: { placeholder: "请输入备注" } },
+      },
+    ],
+  },
+]);
+const expandNestedGroups = () => nestedFormRef.value?.expandAllGroups?.();
+const collapseNestedGroups = () => nestedFormRef.value?.collapseAllGroups?.();
+
 const formRef = ref();
 const onSubmit = async () => {
   try {
@@ -806,6 +901,35 @@ const toggleEmailRequired = () => {
     <el-divider>实时数据</el-divider>
     <pre style="background: #f5f7fa; padding: 12px; border-radius: 4px">{{
       formData
+    }}</pre>
+
+    <el-divider>树形嵌套分组（children）</el-divider>
+    <div
+      style="
+        margin-bottom: 12px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      "
+    >
+      <span style="font-size: 13px; color: #606266">
+        三层分组共用一个 el-form，所有字段仍写入同一个平面 formData。
+      </span>
+      <el-button size="small" @click="expandNestedGroups">展开全部层级</el-button>
+      <el-button size="small" @click="collapseNestedGroups">收起全部层级</el-button>
+    </div>
+    <FormPro
+      ref="nestedFormRef"
+      v-model="nestedFormData"
+      :items="nestedItems"
+      :columns="2"
+      :title-colon="true"
+      label-width="100px"
+    />
+    <el-divider>嵌套表单的平面数据</el-divider>
+    <pre style="background: #f5f7fa; padding: 12px; border-radius: 4px">{{
+      nestedFormData
     }}</pre>
   </div>
 </template>
