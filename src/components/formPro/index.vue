@@ -120,10 +120,14 @@ const formItemRefs = reactive({});
 // 按 prop 取单个 el-form-item 实例（拿不到时返回 undefined）
 const getFormItem = (prop) => formItemRefs[prop];
 
-// 「字段 prop → 内置 UploadPro 实例」映射：由各 FormBlock 渲染时回填，
+// 「字段 prop → 内置 UploadPro 实例」映射：由各 FormBlock 通过事件回填，
 // 用于对外暴露上传实例及其实例方法（abort / submit / clearFiles / handleStart /
 // handleRemove / pasteImages / getRawFiles / getRemovedFiles），多上传项按字段区分
 const uploadRefs = reactive({});
+const setUploadRef = (prop, el) => {
+  if (el) uploadRefs[prop] = el;
+  else delete uploadRefs[prop];
+};
 // 按 prop 取单个 UploadPro 实例（拿不到时返回 undefined）
 const getUpload = (prop) => uploadRefs[prop];
 
@@ -804,7 +808,7 @@ defineExpose(ownExposed);
       :collapsible="block.group ? isGroupCollapsible(block.group) : true"
       :collapsed="block.group ? (isGroupCollapsible(block.group) ? isGroupCollapsed(block.group) : false) : false"
       :form-item-refs="formItemRefs"
-      :upload-refs="uploadRefs"
+      @register-upload-ref="setUploadRef"
       @toggle-group="block.group && isGroupCollapsible(block.group) && toggleGroup(block.group)"
     >
       <!-- 透传所有插槽给 FormBlock（字段插槽 #field、插入项插槽、分组标题插槽 group-xxx）-->

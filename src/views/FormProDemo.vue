@@ -2,7 +2,7 @@
 /**
  * FormPro 配置式表单演示：覆盖分组 / 列数 / 条件显隐 / 插入项 / JSX / itemRender / 插槽 等特性。
  */
-import { ref, computed, onMounted, markRaw } from "vue";
+import { ref, computed, onMounted } from "vue";
 import {
   ElMessage,
   ElButton,
@@ -246,7 +246,6 @@ const items = ref([
     label: "姓名",
     required: true,
     titleBold: true,
-    titlePrefix: markRaw(InfoFilled),
     titlePrefixTip: "请输入真实姓名",
     tip: "请输入 2-20 位字符的真实姓名（modelModifiers.trim：回写自动去首尾空格）",
     // v-model 修饰符：配置式渲染无法写 v-model.trim，用 modelModifiers 声明
@@ -259,7 +258,6 @@ const items = ref([
   {
     prop: "age",
     label: "年龄",
-    titleSuffix: markRaw(InfoFilled),
     titleSuffixTip: "请输入真实年龄",
     tip: "取值范围 0-150，将用于年龄分布统计",
     itemRender: {

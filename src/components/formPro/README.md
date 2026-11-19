@@ -90,7 +90,7 @@ const items = ref([
 | `modelModifiers` | v-model 修饰符（配置式渲染无法写模板 `v-model.trim`，在此声明）：`{ trim?: true, number?: true }`——`trim` 回写时去除首尾空白；`number` 尽力转数字（可解析则转、否则保留原字符串，同 Vue `looseToNumber` 语义）；组合时先 trim 再转数字。仅作用于字符串值，非字符串原样透传。`lazy` 不支持（组件场景请改用 `itemRender.events.change` 自行监听） |
 | `folding` | 是否为折叠表单项（配合 `collapseNode`） |
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
-| `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示 |
+| `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示；提示有值且未配置图标时，默认使用 `QuestionFilled` |
 
 **分组头**：`{ group: true, title, fold, collapsible, render, slot, titleBold, titleStyle }`。
 - `titleBold`：标题是否加粗（`true` → 700，`false` → 400，未设置 → 默认 600）；

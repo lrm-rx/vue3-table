@@ -12,6 +12,7 @@ import {
   mergeProps,
   isRef,
   toRaw,
+  markRaw,
 } from "vue";
 import {
   ElRow,
@@ -20,7 +21,12 @@ import {
   ElIcon,
   ElTooltip,
 } from "element-plus";
-import { ArrowRight, ArrowDown, ArrowUp } from "@element-plus/icons-vue";
+import {
+  ArrowRight,
+  ArrowDown,
+  ArrowUp,
+  QuestionFilled,
+} from "@element-plus/icons-vue";
 import {
   GRID_COLS,
   resolveVisibleEntries,
@@ -38,6 +44,8 @@ import UploadPro from "./UploadPro.vue";
 const BUILTIN_ITEM_RENDERS = {
   uploadpro: UploadPro,
 };
+
+const DEFAULT_TITLE_TIP_ICON = markRaw(QuestionFilled);
 
 const resolveItemRenderComponent = (name) => {
   const hit = BUILTIN_ITEM_RENDERS[String(name || "").toLowerCase()];
@@ -62,9 +70,6 @@ const props = defineProps({
   fieldErrors: { type: Object, default: () => ({}) },
   // 由父级传入的「字段 prop → el-form-item 实例」映射，渲染时回填，供父级暴露
   formItemRefs: { type: Object, default: () => ({}) },
-  // 由父级传入的「字段 prop → 内置 UploadPro 实例」映射，渲染时回填，
-  // 供父级暴露上传实例及其方法（按字段区分）
-  uploadRefs: { type: Object, default: () => ({}) },
   // 边框表格样式开关：开启后在行/列单元格上追加修饰类，由 index.vue 的样式绘制边框
   border: { type: Boolean, default: false },
   // 紧凑型表单开关：控制「间隔收紧列」的修饰类，并在校验失败时以 el-tooltip 展示错误提示
@@ -78,7 +83,7 @@ const props = defineProps({
   unitSlotWidth: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["toggle-group"]);
+const emit = defineEmits(["toggle-group", "register-upload-ref"]);
 const slots = useSlots();
 
 // item 级折叠（vxe-form folding）：默认收起，collapseNode 按钮切换
@@ -154,16 +159,10 @@ const renderByItemRender = (ir, item, ctx) => {
     modelValue: ctx.value,
     "onUpdate:modelValue": (v) => setField(item.prop, v, item),
   };
-  // 内置 UploadPro：把组件实例回填到父级映射（按字段 prop 索引），
-  // 供 FormPro 暴露 uploadRefs / getUpload(prop) 及上传实例方法代理
+  // 内置 UploadPro：向父级上报组件实例（el=null 时清理），
+  // 供 FormPro 统一登记并暴露 uploadRefs / getUpload(prop) 及上传实例方法代理
   if (comp === UploadPro) {
-    bindProps.ref = (el) => {
-      if (el) {
-        props.uploadRefs[item.prop] = el;
-      } else {
-        delete props.uploadRefs[item.prop];
-      }
-    };
+    bindProps.ref = (el) => emit("register-upload-ref", item.prop, el);
   }
   // 动态禁用 / 只读：item.disabledWhen / item.readonlyWhen 依据当前表单数据求值（ctx 同 options 函数形态），
   // 与静态 itemRender.props.disabled / readonly 为「或」关系（静态 true 恒生效，动态侧只追加不覆盖）。
@@ -184,10 +183,10 @@ const renderByItemRender = (ir, item, ctx) => {
       const isOptionTag = /select/i.test(ir.name);
       for (const opt of optionsList) {
         // el-option：value 必填，label 为显示文本；
-        // el-radio / el-checkbox：label 即值，显示文本走默认插槽
+        // el-radio / el-checkbox：value 作为选中值，保留 label 兼容旧版本，显示文本走默认插槽
         const optProps = isOptionTag
           ? { value: opt.value, label: opt.label }
-          : { label: opt.value };
+          : { label: opt.value, value: opt.value };
         children.push(
           h(
             optComp,
@@ -236,11 +235,17 @@ const buildLabel = (item) => {
   const ellipsis =
     item.titleOverflow === "ellipsis" || item.titleOverflow === true;
   const prefixNode = withTip(
-    renderTitleIcon(item.titlePrefix),
+    renderTitleIcon(
+      item.titlePrefix ??
+        (item.titlePrefixTip ? DEFAULT_TITLE_TIP_ICON : null),
+    ),
     item.titlePrefixTip,
   );
   const suffixNode = withTip(
-    renderTitleIcon(item.titleSuffix),
+    renderTitleIcon(
+      item.titleSuffix ??
+        (item.titleSuffixTip ? DEFAULT_TITLE_TIP_ICON : null),
+    ),
     item.titleSuffixTip,
   );
   const contentStyle = {};

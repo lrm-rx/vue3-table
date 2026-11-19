@@ -6,6 +6,7 @@ import ElementPlus from "element-plus";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
 import zhCn from "element-plus/dist/locale/zh-cn";
 import FormPro from "../../src/components/formPro/index.vue";
+import FormBlock from "../../src/components/formPro/FormBlock.vue";
 
 const globalConfig = {
   plugins: [[ElementPlus, { locale: zhCn }]],
@@ -266,6 +267,59 @@ describe("FormPro 配置式表单", () => {
     expect(options.length).toBe(2);
     expect(options.map((o) => o.props("value"))).toEqual(["admin", "guest"]);
     expect(options.map((o) => o.props("label"))).toEqual(["管理员", "访客"]);
+  });
+
+  it("Radio / Checkbox 选项使用 value 作为选中值并保留默认回显", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { gender: "male", hobbies: ["read"] },
+      items: [
+        {
+          prop: "gender",
+          label: "性别",
+          itemRender: {
+            name: "ElRadioGroup",
+            options: [
+              { label: "男", value: "male" },
+              { label: "女", value: "female" },
+            ],
+          },
+        },
+        {
+          prop: "hobbies",
+          label: "爱好",
+          itemRender: {
+            name: "ElCheckboxGroup",
+            options: [
+              { label: "阅读", value: "read" },
+              { label: "运动", value: "sport" },
+            ],
+          },
+        },
+      ],
+    });
+    await flushPromises();
+    const radios = wrapper.findAllComponents({ name: "ElRadio" });
+    const checkboxes = wrapper.findAllComponents({ name: "ElCheckbox" });
+    expect(radios.map((item) => item.props("value"))).toEqual([
+      "male",
+      "female",
+    ]);
+    expect(checkboxes.map((item) => item.props("value"))).toEqual([
+      "read",
+      "sport",
+    ]);
+    expect(radios.map((item) => item.text())).toEqual(["男", "女"]);
+    expect(checkboxes.map((item) => item.text())).toEqual(["阅读", "运动"]);
+    const radioInputs = wrapper.findAll('input[type="radio"]');
+    const checkboxInputs = wrapper.findAll('input[type="checkbox"]');
+    expect(radioInputs.map((item) => item.element.checked)).toEqual([
+      true,
+      false,
+    ]);
+    expect(checkboxInputs.map((item) => item.element.checked)).toEqual([
+      true,
+      false,
+    ]);
   });
 
   it("暴露 el-form 实例方法：validate / resetFields / clearValidate", async () => {
@@ -610,6 +664,29 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.find(".form-pro__title-prefix").exists()).toBe(true);
     expect(wrapper.find(".form-pro__title-suffix").exists()).toBe(true);
     expect(wrapper.findAll(".form-pro__title-icon").length).toBe(2);
+  });
+
+  it("标题提示有值时默认渲染 QuestionFilled，显式图标仍可覆盖", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        { prop: "a", label: "A", titlePrefixTip: "前缀提示" },
+        { prop: "b", label: "B", titleSuffixTip: "后缀提示" },
+        { prop: "c", label: "C", titlePrefixTip: "", titleSuffixTip: "" },
+        {
+          prop: "d",
+          label: "D",
+          titlePrefix: ElementPlusIconsVue.InfoFilled,
+          titlePrefixTip: "自定义图标",
+        },
+      ],
+    });
+    await flushPromises();
+    expect(
+      wrapper.findAllComponents(ElementPlusIconsVue.QuestionFilled).length,
+    ).toBe(2);
+    expect(wrapper.findAllComponents(ElementPlusIconsVue.InfoFilled).length).toBe(1);
+    expect(wrapper.findAll(".form-pro__title-icon").length).toBe(3);
   });
 
   it("折叠表单 folding + collapseNode：默认收起，点击展开/收起切换", async () => {
@@ -1153,6 +1230,34 @@ describe("FormPro 配置式表单", () => {
       },
       { prop: "name", label: "名称", itemRender: { name: "ElInput" } },
     ];
+
+    it("register-upload-ref：子组件仅上报实例，父组件负责登记和卸载清理", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { attachments: [] },
+        items: uploadItems({ photos: false }),
+      });
+      await flushPromises();
+      const block = wrapper.findComponent(FormBlock);
+      expect(block.exists()).toBe(true);
+      // FormBlock 不再接收可变的 uploadRefs 映射，只通过事件上报实例
+      expect(block.props("uploadRefs")).toBeUndefined();
+      const events = () => block.emitted("register-upload-ref") || [];
+      expect(
+        events().some(([prop, instance]) => prop === "attachments" && instance),
+      ).toBe(true);
+      expect(events().every(([prop]) => prop === "attachments")).toBe(true);
+      expect(wrapper.vm.getUpload("attachments")).toBeTruthy();
+
+      const eventCount = events().length;
+      await wrapper.setProps({
+        items: uploadItems({ attachments: false, photos: false }),
+      });
+      await flushPromises();
+      // 字段卸载时必须由函数 ref 上报 null，驱动父级删除对应实例
+      expect(events().slice(eventCount)).toContainEqual(["attachments", null]);
+      expect(wrapper.vm.getUpload("attachments")).toBeUndefined();
+      expect(wrapper.vm.uploadRefs).not.toHaveProperty("attachments");
+    });
 
     it("uploadRefs / getUpload：按字段取实例；非上传、未渲染字段为 undefined，隐藏后清空", async () => {
       const wrapper = mountFormPro({
