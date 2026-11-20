@@ -58,6 +58,7 @@ const items = ref([
 | `titleColon` | Boolean | `false` | 标题是否带冒号（`item.titleColon` 可覆盖） |
 | `titleBold` | Boolean | `false` | label 是否统一加粗（`item.titleBold` 可覆盖，项级优先级更高） |
 | `groupCollapsible` | Boolean | `true` | 分组默认是否可折叠（`group.collapsible` 可覆盖） |
+| `groupIndent` | Number/String | `16` | 树形分组每层左缩进；数字按 px，字符串支持 `"1rem"` 等带单位值；旧扁平分组不生效 |
 | `hiddenValue` | 任意 | `undefined` | 隐藏字段（`visible`/`visibleMethod`）提交时改写为该值（如 `""`/`null`），`undefined` 表示不改写（见 §6） |
 | `autoFillDefaults` | Boolean | `true` | 按 items 自动补全缺失字段的默认值（见 §5） |
 | `border` | Boolean | `false` | 边框表格样式：外框 + 单元格网格线 + label 表头底色（见 §11） |
@@ -92,10 +93,11 @@ const items = ref([
 | `itemProps` | 透传给 `<el-form-item>` 的额外属性 |
 | `titlePrefix`/`titleSuffix`/`titlePrefixTip`/`titleSuffixTip`/`titleBold` | 标题前后缀图标与提示；提示有值且未配置图标时，默认使用 `QuestionFilled` |
 
-**分组头**：`{ group: true, title, fold, collapsible, render, slot, titleBold, titleStyle, children? }`。
+**分组头**：`{ group: true, title, fold, collapsible, allToggle, render, slot, titleBold, titleStyle, children? }`。
 - `titleBold`：标题是否加粗（`true` → 700，`false` → 400，未设置 → 默认 600）；
 - `titleStyle`：标题自定义内联样式（颜色/字号等，如 `{ color: '#409eff', fontSize: 15 }`），与 `titleBold` 叠加，`fontWeight` 显式指定时优先于 `titleBold`；
 - `children`：子级配置数组，可继续包含字段、插入项和分组，支持任意层级嵌套。**只有 `group: true` 且 `children` 为数组时才按树形分组解析**，普通字段或插入项上的同名业务属性不会被误判。
+- `allToggle`：设为 `true` 时在分组头右侧显示「展开全部 / 折叠全部」。树形分组只切换**当前分组及其全部后代**，同级和其他顶层分组互不影响；旧扁平配置保持原行为，切换整个表单的全部分组。
 
 ```js
 const items = [
@@ -119,9 +121,10 @@ const items = [
 
 无论嵌套多少层，内部仍只有一个 `el-form`，所有字段共享同一个平面 `formData`；默认值、校验、插槽、条件显隐、`hiddenValue`、`onlyRequired`、`optionsSource` 和动态增删改均适用于深层字段。树形分组是**自闭合节点**，其后的同级普通项不会自动并入该分组；旧扁平配置及未声明 `children` 的旧分组头保持原有解析和布局不变。
 
-> 「折叠全部 / 展开全部」操作不提供分组头内按钮（表单出现垂直滚动条后按钮随内容滚走不可见），
-> 请使用配套的 `FormGroupToggle` 组件——可放置在任意固定位置（fixed 悬浮条 / 顶部工具栏），
-> 仅绑定 FormPro 实例即可，父级零 JS 样板代码：
+树形分组从第二级开始应用 `groupIndent` 左缩进，每深入一级累计一次，默认每级 `16px`。例如二级为 `16px`、三级为 `32px`；可绑定响应式值动态调整，设为 `0` 可取消缩进。
+
+> 分组头的 `allToggle` 用于控制当前分组子树；配套的 `FormGroupToggle` 用于控制整个表单，
+> 可放置在任意固定位置（fixed 悬浮条 / 顶部工具栏），仅绑定 FormPro 实例即可，父级零 JS 样板代码：
 >
 > ```vue
 > <FormGroupToggle :form="formRef" />

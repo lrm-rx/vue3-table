@@ -78,11 +78,13 @@ const props = defineProps({
   titleBold: { type: Boolean, default: false },
   // 表单级：分组是否显示折叠/展开按钮（group.collapsible 可单独覆盖）；默认 true
   groupCollapsible: { type: Boolean, default: true },
+  // 树形分组每层左缩进：数字按 px，字符串可带 rem 等单位；旧扁平分组不生效
+  groupIndent: { type: [Number, String], default: 16 },
   // 提交时「因 visible / visibleMethod 隐藏」的字段统一改写为该值（如 "" 或 null），
   // 用于让后端清空对应字段（仅移除键不传时，后端通常保留旧值不清空）。
   // 默认 undefined：不改写，隐藏字段按原值提交。
   // 注意：onlyRequired 导致的隐藏不受影响（其值保留）；每项可用 item.hiddenValue 单独覆盖（项级优先）。
-  hiddenValue: { default: undefined },
+  hiddenValue: { type: null, default: undefined },
   // 自动补全初始值：根据 items 配置为未声明的字段填充合理默认值（Switch→false，CheckboxGroup→[]，其余→""），
   // 免去逐个声明 ""。item.defaultValue 可指定固定默认值；用户在 modelValue 中已提供的值始终优先。默认 true。
   autoFillDefaults: { type: Boolean, default: true },
@@ -117,15 +119,22 @@ const flatItems = computed(() => flattenFormItems(props.items));
 const formData = reactive(
   props.autoFillDefaults
     ? buildInitialData(props.items, props.modelValue)
-    : { ...(props.modelValue || {}) },
+    : { ...props.modelValue },
 );
+const setFieldValue = (field, value) => {
+  formData[field] = value;
+};
 
-// 「字段 prop → el-form-item 完整实例」映射：由各 FormBlock 渲染时回填，
+// 「字段 prop → el-form-item 完整实例」映射：由各 FormBlock 通过事件回填，
 // 用于对外暴露每个 form-item 的全部实例能力（size/validateMessage/validateState/
 // validate/clearValidate/resetField/setInitialValue）。
 const formItemRefs = reactive({});
 // 按 prop 取单个 el-form-item 实例（拿不到时返回 undefined）
 const getFormItem = (prop) => formItemRefs[prop];
+const setFormItemRef = (prop, el) => {
+  if (el) formItemRefs[prop] = el;
+  else delete formItemRefs[prop];
+};
 
 // 「字段 prop → 内置 UploadPro 实例」映射：由各 FormBlock 通过事件回填，
 // 用于对外暴露上传实例及其实例方法（abort / submit / clearFiles / handleStart /
@@ -173,7 +182,7 @@ const showErrorTip = (prop) => {
   errorTipVisible[prop] = true;
   clearErrorTipTimer(prop);
   const duration = Number(props.errorTipDuration);
-  if (!(duration > 0)) return; // <=0 / 非法值：不自动隐藏
+  if (duration <= 0 || Number.isNaN(duration)) return; // <=0 / NaN：不自动隐藏
   errorTipTimers[prop] = setTimeout(() => {
     clearErrorTipTimer(prop);
     delete errorTipVisible[prop];
@@ -234,6 +243,38 @@ const scheduleMeasureUnitSlot = () => {
 // 鼠标悬浮可查看完整错误文本。用 MutationObserver 监听错误元素的出现与文本变化，
 // 不依赖校验事件时机（初始校验、异步校验、重新校验均能覆盖）。
 // 同一观察器顺带在 DOM 结构变化后重新测量单位槽宽（分组展开/收起、动态增删 items 等）。
+const elementSubtreeMatches = (node, selector) =>
+  node.nodeType === 1 &&
+  (node.matches(selector) || Boolean(node.querySelector(selector)));
+
+const inspectCharacterDataMutation = (record) => {
+  const parent = record.target.parentElement;
+  return {
+    syncTitles: Boolean(parent?.closest?.(".el-form-item__error")),
+    measure: Boolean(parent?.closest?.(".form-pro__field-suffix--unit")),
+  };
+};
+
+const inspectChildListMutation = (record) => {
+  let syncTitles = false;
+  let measure = false;
+  for (const node of [...record.addedNodes, ...record.removedNodes]) {
+    if (node.nodeType !== 1) continue;
+    syncTitles ||= elementSubtreeMatches(node, ".el-form-item__error");
+    measure ||= elementSubtreeMatches(node, ".form-pro__field-suffix--unit");
+    if (syncTitles && measure) break;
+  }
+  return { syncTitles, measure };
+};
+
+const inspectMutationRecord = (record) => {
+  if (record.type === "characterData") {
+    return inspectCharacterDataMutation(record);
+  }
+  if (record.type === "childList") return inspectChildListMutation(record);
+  return { syncTitles: false, measure: false };
+};
+
 let errorTitleObserver = null;
 onMounted(() => {
   const root = formRef.value?.$el;
@@ -247,41 +288,13 @@ onMounted(() => {
   syncErrorTitles();
   measureUnitSlot();
   errorTitleObserver = new MutationObserver((records) => {
-    // 门控（单趟扫描，两个标志独立判定）：
-    // 1) needSyncTitles：仅当变更涉及错误提示元素（.el-form-item__error 子树增删，
-    //    或其内部文本变化）才重做全表单 title 同步——表单内嵌表格/富内容/
-    //    动态函数后缀的逐键更新不再触发全表单 querySelectorAll；
-    // 2) needMeasure：仅「涉及单位后缀的结构变化」才重测，避免频繁更新时
-    //    每次都做一次全表单查询 + 强制布局读取：
-    //    - 节点增删：新增/移除的子树中包含单位后缀（分组展开收起、items 增删、显隐切换）；
-    //    - 文本变化：变化节点位于单位后缀内部（updateItems 修改静态 suffix 文本）。
-    //    动态函数后缀逐键更新（不在 --unit 内）不触发测量。
+    // 单趟扫描并独立判定两个标志，避免无关 DOM 更新触发全表单查询或布局读取。
     let needSyncTitles = false;
     let needMeasure = false;
-    for (const r of records) {
-      if (r.type === "characterData") {
-        const parent = r.target.parentElement;
-        if (parent?.closest?.(".el-form-item__error")) needSyncTitles = true;
-        if (parent?.closest?.(".form-pro__field-suffix--unit")) {
-          needMeasure = true;
-        }
-      } else if (r.type === "childList") {
-        for (const node of [...r.addedNodes, ...r.removedNodes]) {
-          if (node.nodeType !== 1) continue;
-          if (
-            node.matches(".el-form-item__error") ||
-            node.querySelector(".el-form-item__error")
-          ) {
-            needSyncTitles = true;
-          }
-          if (
-            node.matches(".form-pro__field-suffix--unit") ||
-            node.querySelector(".form-pro__field-suffix--unit")
-          ) {
-            needMeasure = true;
-          }
-        }
-      }
+    for (const record of records) {
+      const effect = inspectMutationRecord(record);
+      needSyncTitles ||= effect.syncTitles;
+      needMeasure ||= effect.measure;
       if (needSyncTitles && needMeasure) break;
     }
     if (needSyncTitles) syncErrorTitles();
@@ -344,6 +357,45 @@ const execOptionsSource = async (item, st) => {
   }
 };
 
+const syncOptionsSourceItem = (item, seen) => {
+  if (!isFieldItem(item) || !item.optionsSource) return;
+  seen.add(item.prop);
+  const src = item.optionsSource;
+  const nextDeps = resolveOptionsSourceDeps(src.deps, formData);
+  let st = optionsSourceState.get(item.prop);
+  if (st && isEqual(st.deps, nextDeps)) return;
+  const isFirst = !st;
+  if (!st) {
+    st = { deps: nextDeps, token: 0, timer: null };
+    optionsSourceState.set(item.prop, st);
+  } else {
+    st.deps = nextDeps;
+  }
+  const trigger = resolveOptionsSourceTrigger(src, isFirst);
+  // 依赖变化（非首次登记）：清空本字段值（按控件类型推导空值）
+  if (trigger.clearValue) {
+    const cleared = deriveDefaultValue(item);
+    if (!isEqual(formData[item.prop], cleared)) {
+      formData[item.prop] = cleared;
+    }
+  }
+  if (trigger.delay > 0) {
+    clearTimeout(st.timer);
+    st.timer = setTimeout(() => execOptionsSource(item, st), trigger.delay);
+  } else {
+    execOptionsSource(item, st);
+  }
+};
+
+const pruneOptionsSourceState = (seen) => {
+  // 清理已被 removeItems 删除的字段状态（含未触发的防抖计时器）
+  for (const [prop, st] of optionsSourceState) {
+    if (seen.has(prop)) continue;
+    clearTimeout(st.timer);
+    optionsSourceState.delete(prop);
+  }
+};
+
 // 深监听 formData：逐项比对依赖快照，变化时先同步清空本字段值（联动父级），再拉取新选项；
 // immediate：挂载即对每项拉取一次（when 不满足则仅清空选项）。
 // 登记在回抛 watcher 之前：依赖变化引发的「清值」先于「回抛」执行，父级一次收敛。
@@ -351,42 +403,8 @@ watch(
   formData,
   () => {
     const seen = new Set();
-    for (const item of flatItems.value) {
-      if (!isFieldItem(item) || !item.optionsSource) continue;
-      seen.add(item.prop);
-      const src = item.optionsSource;
-      const nextDeps = resolveOptionsSourceDeps(src.deps, formData);
-      let st = optionsSourceState.get(item.prop);
-      if (st && isEqual(st.deps, nextDeps)) continue;
-      const isFirst = !st;
-      if (!st) {
-        st = { deps: nextDeps, token: 0, timer: null };
-        optionsSourceState.set(item.prop, st);
-      } else {
-        st.deps = nextDeps;
-      }
-      const trigger = resolveOptionsSourceTrigger(src, isFirst);
-      // 依赖变化（非首次登记）：清空本字段值（按控件类型推导空值）
-      if (trigger.clearValue) {
-        const cleared = deriveDefaultValue(item);
-        if (!isEqual(formData[item.prop], cleared)) {
-          formData[item.prop] = cleared;
-        }
-      }
-      if (trigger.delay > 0) {
-        clearTimeout(st.timer);
-        st.timer = setTimeout(() => execOptionsSource(item, st), trigger.delay);
-      } else {
-        execOptionsSource(item, st);
-      }
-    }
-    // 清理已被 removeItems 删除的字段状态（含未触发的防抖计时器）
-    for (const [prop, st] of optionsSourceState) {
-      if (!seen.has(prop)) {
-        clearTimeout(st.timer);
-        optionsSourceState.delete(prop);
-      }
-    }
+    for (const item of flatItems.value) syncOptionsSourceItem(item, seen);
+    pruneOptionsSourceState(seen);
   },
   { deep: true, immediate: true },
 );
@@ -449,7 +467,7 @@ const hiddenValueOverrides = computed(() =>
  * 不修改入参，返回新对象。无任何改写配置时原样返回浅拷贝。
  */
 const buildSubmitData = (source) => {
-  const base = { ...(source || {}) };
+  const base = { ...source };
   const overrides = hiddenValueOverrides.value;
   if (overrides.size === 0) return base;
   for (const [prop, value] of overrides) base[prop] = value;
@@ -586,12 +604,27 @@ const toFormData = (source = getSubmitData(), options = {}) =>
   objectToFormData(source, options);
 
 // el-form 透传属性：剥离已声明 props，其余（labelWidth/labelPosition/rules/inline...）透传
-const OWN_PROPS = ["modelValue", "items", "columns", "span", "gutter", "onlyRequired", "titleColon", "titleBold", "groupCollapsible", "hiddenValue", "autoFillDefaults", "border", "compact", "errorTipDuration"];
+const OWN_PROPS = new Set([
+  "modelValue",
+  "items",
+  "columns",
+  "span",
+  "gutter",
+  "onlyRequired",
+  "titleColon",
+  "titleBold",
+  "groupCollapsible",
+  "hiddenValue",
+  "autoFillDefaults",
+  "border",
+  "compact",
+  "errorTipDuration",
+]);
 const attrs = useAttrs();
 const formPropsComputed = computed(() => {
   const out = { model: formData };
   for (const [k, v] of Object.entries(attrs)) {
-    if (!OWN_PROPS.includes(k)) out[k] = v;
+    if (!OWN_PROPS.has(k)) out[k] = v;
   }
   return out;
 });
@@ -673,6 +706,31 @@ const allGroupsCollapsed = computed(() => {
 /** 一键切换全部分组：全部折叠时展开，否则全部折叠 */
 const toggleAllGroups = () =>
   allGroupsCollapsed.value ? expandAllGroups() : collapseAllGroups();
+
+// 分组头 allToggle：旧扁平配置保持全局切换；树形配置只切换当前分组及其后代。
+const getToggleAllBlocks = (block) =>
+  block.path === undefined
+    ? groupBlocks.value
+    : flattenFormBlocks([block]).filter((b) => b.group);
+const isGroupAllCollapsed = (groupItem) => {
+  const block = findGroupBlock(groupItem);
+  if (!block) return false;
+  const collapsible = getToggleAllBlocks(block).filter((b) =>
+    isGroupCollapsible(b.group),
+  );
+  return (
+    collapsible.length > 0 &&
+    collapsible.every((b) => isGroupCollapsed(b.group))
+  );
+};
+const toggleGroupAll = (groupItem) => {
+  const block = findGroupBlock(groupItem);
+  if (!block) return;
+  const collapsed = !isGroupAllCollapsed(groupItem);
+  getToggleAllBlocks(block).forEach((b) => {
+    collapsedMap[pathOfBlock(b)] = collapsed;
+  });
+};
 
 watch(
   () => props.items,
@@ -799,6 +857,7 @@ defineExpose(ownExposed);
       :key="block.path ?? idx"
       :block="block"
       :depth="block.depth ?? 0"
+      :group-indent="groupIndent"
       :form-data="formData"
       :only-required="onlyRequired"
       :form-rules="formRules"
@@ -816,8 +875,12 @@ defineExpose(ownExposed);
       :form-item-refs="formItemRefs"
       :get-group-collapsed="isGroupCollapsed"
       :get-group-collapsible="isGroupCollapsible"
+      :get-group-all-collapsed="isGroupAllCollapsed"
+      @update-field="setFieldValue"
+      @register-form-item-ref="setFormItemRef"
       @register-upload-ref="setUploadRef"
       @toggle-group="toggleGroup"
+      @toggle-all="toggleGroupAll"
     >
       <!-- 透传所有插槽给 FormBlock（字段插槽 #field、插入项插槽、分组标题插槽 group-xxx）-->
       <template v-for="(_, name) in $slots" #[name]="scope">

@@ -2579,6 +2579,319 @@ describe("FormPro 树形嵌套分组", () => {
     expect(await fp.vm.validate()).toBe(true);
   });
 
+  it("嵌套分组默认每层缩进 16px，支持动态修改且不影响旧扁平分组", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "一级",
+          children: [
+            {
+              group: true,
+              title: "二级",
+              children: [
+                {
+                  group: true,
+                  title: "三级",
+                  children: [{ prop: "deep", label: "深层字段" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+
+    const nestedGroups = () => wrapper.findAll(".form-pro__group--nested");
+    expect(nestedGroups().map((g) => g.attributes("data-group-depth"))).toEqual([
+      "1",
+      "2",
+    ]);
+    expect(nestedGroups().map((g) => g.element.style.paddingLeft)).toEqual([
+      "16px",
+      "16px",
+    ]);
+    expect(groupAt(wrapper, "0").element.style.paddingLeft).toBe("");
+
+    await wrapper.setProps({ groupIndent: 24 });
+    await flushPromises();
+    expect(nestedGroups().map((g) => g.element.style.paddingLeft)).toEqual([
+      "24px",
+      "24px",
+    ]);
+
+    await wrapper.setProps({ groupIndent: "1.5rem" });
+    await flushPromises();
+    expect(nestedGroups().map((g) => g.element.style.paddingLeft)).toEqual([
+      "1.5rem",
+      "1.5rem",
+    ]);
+
+    await wrapper.setProps({ groupIndent: 0 });
+    await flushPromises();
+    expect(nestedGroups().map((g) => g.element.style.paddingLeft)).toEqual([
+      "0px",
+      "0px",
+    ]);
+
+    await wrapper.setProps({
+      items: [{ group: true, title: "旧分组" }, { prop: "legacy", label: "旧字段" }],
+    });
+    await flushPromises();
+    expect(wrapper.find(".form-pro__group--nested").exists()).toBe(false);
+    expect(wrapper.find(".form-pro__group").element.style.paddingLeft).toBe("");
+  });
+
+  it("树形 allToggle 只切换当前分组子树，同级及其他顶层分组不受影响", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "根分组",
+          allToggle: true,
+          children: [
+            {
+              group: true,
+              title: "左分组",
+              allToggle: true,
+              children: [
+                {
+                  group: true,
+                  title: "左子分组",
+                  children: [{ prop: "left", label: "左字段" }],
+                },
+              ],
+            },
+            {
+              group: true,
+              title: "右分组",
+              allToggle: true,
+              children: [{ prop: "right", label: "右字段" }],
+            },
+          ],
+        },
+        {
+          group: true,
+          title: "另一顶层",
+          children: [{ prop: "other", label: "其他字段" }],
+        },
+      ],
+    });
+    await flushPromises();
+
+    const root = () => groupAt(wrapper, "0");
+    const left = () => groupAt(wrapper, "0.0");
+    const grandchild = () => groupAt(wrapper, "0.0.0");
+    const right = () => groupAt(wrapper, "0.1");
+    const other = () => groupAt(wrapper, "1");
+    const ownToggle = (group) =>
+      group.findAll(".form-pro__group-toggle-all")[0];
+    expect(wrapper.findAll(".form-pro__group-toggle-all").length).toBe(3);
+
+    await ownToggle(left()).trigger("click");
+    await flushPromises();
+    expect(left().attributes("data-collapsed")).toBe("true");
+    expect(grandchild().attributes("data-collapsed")).toBe("true");
+    expect(root().attributes("data-collapsed")).toBe("false");
+    expect(right().attributes("data-collapsed")).toBe("false");
+    expect(other().attributes("data-collapsed")).toBe("false");
+    expect(ownToggle(left()).text()).toContain("展开全部");
+    expect(ownToggle(root()).text()).toContain("折叠全部");
+
+    await ownToggle(left()).trigger("click");
+    await flushPromises();
+    expect(left().attributes("data-collapsed")).toBe("false");
+    expect(grandchild().attributes("data-collapsed")).toBe("false");
+
+    await ownToggle(right()).trigger("click");
+    await flushPromises();
+    expect(right().attributes("data-collapsed")).toBe("true");
+    expect(left().attributes("data-collapsed")).toBe("false");
+    await ownToggle(right()).trigger("click");
+    await flushPromises();
+
+    await ownToggle(root()).trigger("click");
+    await flushPromises();
+    for (const group of [root(), left(), grandchild(), right()]) {
+      expect(group.attributes("data-collapsed")).toBe("true");
+    }
+    expect(other().attributes("data-collapsed")).toBe("false");
+    expect(ownToggle(root()).text()).toContain("展开全部");
+
+    await ownToggle(root()).trigger("click");
+    await flushPromises();
+    for (const group of [root(), left(), grandchild(), right()]) {
+      expect(group.attributes("data-collapsed")).toBe("false");
+    }
+  });
+
+  it("旧扁平 allToggle 保持切换整个表单的全部分组", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        { group: true, title: "G1", allToggle: true },
+        { prop: "a", label: "A" },
+        { group: true, title: "G2" },
+        { prop: "b", label: "B" },
+      ],
+    });
+    await flushPromises();
+
+    const toggle = wrapper.find(".form-pro__group-toggle-all");
+    const bodies = () => wrapper.findAll(".form-pro__group-body");
+    expect(toggle.text()).toContain("折叠全部");
+    await toggle.trigger("click");
+    await flushPromises();
+    expect(bodies().every((b) => b.classes().includes("is-collapsed"))).toBe(
+      true,
+    );
+    expect(toggle.text()).toContain("展开全部");
+
+    await toggle.trigger("click");
+    await flushPromises();
+    expect(bodies().every((b) => !b.classes().includes("is-collapsed"))).toBe(
+      true,
+    );
+  });
+
+  it("分组头与 allToggle 使用原生 button 并保留静态分组语义", async () => {
+    const wrapper = mountFormPro({
+      modelValue: {},
+      items: [
+        {
+          group: true,
+          title: "根分组",
+          allToggle: true,
+          children: [
+            {
+              group: true,
+              title: "子分组",
+              children: [{ prop: "name", label: "姓名" }],
+            },
+          ],
+        },
+        { group: true, title: "静态分组", collapsible: false, children: [] },
+      ],
+    });
+    await flushPromises();
+
+    const header = wrapper.find(".form-pro__group-header-main");
+    const body = () => wrapper.find(".form-pro__group-body");
+    expect(header.element.tagName).toBe("BUTTON");
+    expect(header.attributes("type")).toBe("button");
+    expect(header.attributes("aria-expanded")).toBe("true");
+    await header.trigger("click");
+    await flushPromises();
+    expect(body().classes()).toContain("is-collapsed");
+    expect(header.attributes("aria-expanded")).toBe("false");
+    await header.trigger("click");
+    await flushPromises();
+    expect(body().classes()).not.toContain("is-collapsed");
+
+    const allToggle = wrapper.find(".form-pro__group-toggle-all");
+    expect(allToggle.element.tagName).toBe("BUTTON");
+    expect(allToggle.attributes("type")).toBe("button");
+    await allToggle.trigger("click");
+    await flushPromises();
+    expect(
+      wrapper
+        .findAll(".form-pro__group-body")
+        .slice(0, 2)
+        .every((b) => b.classes().includes("is-collapsed")),
+    ).toBe(true);
+    await allToggle.trigger("click");
+    await flushPromises();
+    expect(body().classes()).not.toContain("is-collapsed");
+
+    const staticHeader = wrapper.findAll(".form-pro__group-header-main").at(-1);
+    expect(staticHeader.element.tagName).toBe("DIV");
+    expect(staticHeader.attributes("role")).toBeUndefined();
+    expect(staticHeader.attributes("tabindex")).toBeUndefined();
+  });
+
+  it("allToggle 兼容部分折叠、不可折叠分组、叶子分组及全局 API 联动", async () => {
+    const wrapper = mountFormPro({
+      modelValue: { staticField: "保留", leafField: "值" },
+      items: [
+        {
+          group: true,
+          title: "根分组",
+          allToggle: true,
+          children: [
+            {
+              group: true,
+              title: "固定展开",
+              collapsible: false,
+              allToggle: true,
+              fold: true,
+              children: [{ prop: "staticField", label: "固定字段" }],
+            },
+            {
+              group: true,
+              title: "叶子分组",
+              allToggle: true,
+              fold: true,
+              children: [{ prop: "leafField", label: "叶子字段" }],
+            },
+          ],
+        },
+      ],
+    });
+    await flushPromises();
+
+    const root = () => groupAt(wrapper, "0");
+    const staticGroup = () => groupAt(wrapper, "0.0");
+    const leaf = () => groupAt(wrapper, "0.1");
+    const rootToggle = () =>
+      root().findAll(".form-pro__group-toggle-all")[0];
+    const leafToggle = () =>
+      leaf().findAll(".form-pro__group-toggle-all")[0];
+
+    expect(wrapper.findAll(".form-pro__group-toggle-all").length).toBe(2);
+    expect(staticGroup().find(".form-pro__group-toggle-all").exists()).toBe(
+      false,
+    );
+    expect(root().attributes("data-collapsed")).toBe("false");
+    expect(staticGroup().attributes("data-collapsed")).toBe("false");
+    expect(leaf().attributes("data-collapsed")).toBe("true");
+    expect(rootToggle().text()).toContain("折叠全部");
+    expect(leafToggle().text()).toContain("展开全部");
+
+    await rootToggle().trigger("click");
+    await flushPromises();
+    expect(root().attributes("data-collapsed")).toBe("true");
+    expect(leaf().attributes("data-collapsed")).toBe("true");
+    expect(staticGroup().attributes("data-collapsed")).toBe("false");
+    expect(rootToggle().text()).toContain("展开全部");
+
+    await rootToggle().trigger("click");
+    await flushPromises();
+    expect(root().attributes("data-collapsed")).toBe("false");
+    expect(leaf().attributes("data-collapsed")).toBe("false");
+
+    await leafToggle().trigger("click");
+    await flushPromises();
+    expect(leaf().attributes("data-collapsed")).toBe("true");
+    expect(root().attributes("data-collapsed")).toBe("false");
+    expect(wrapper.vm.allGroupsCollapsed).toBe(false);
+
+    wrapper.vm.collapseAllGroups();
+    await flushPromises();
+    expect(wrapper.vm.allGroupsCollapsed).toBe(true);
+    expect(rootToggle().text()).toContain("展开全部");
+    expect(staticGroup().attributes("data-collapsed")).toBe("false");
+
+    wrapper.vm.toggleAllGroups();
+    await flushPromises();
+    expect(wrapper.vm.allGroupsCollapsed).toBe(false);
+    expect(root().attributes("data-collapsed")).toBe("false");
+    expect(leaf().attributes("data-collapsed")).toBe("false");
+    expect(staticGroup().attributes("data-collapsed")).toBe("false");
+  });
+
   it("字段和子分组交错时保持顺序，并透传嵌套插槽、border 与 compact", async () => {
     const wrapper = mountFormPro(
       {

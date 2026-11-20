@@ -21,6 +21,7 @@ import {
   ElFormItem,
   ElIcon,
   ElTooltip,
+  ElTag,
 } from "element-plus";
 import {
   ArrowRight,
@@ -57,6 +58,8 @@ const props = defineProps({
   block: { type: Object, required: true },
   // 当前树深度；旧扁平配置恒为 0，不增加嵌套修饰类或 data 属性
   depth: { type: Number, default: 0 },
+  // 树形分组每层左缩进：数字按 px，字符串可带 rem 等单位
+  groupIndent: { type: [Number, String], default: 16 },
   formData: { type: Object, required: true },
   onlyRequired: { type: Boolean, default: false },
   formRules: { type: Object, default: () => ({}) },
@@ -87,14 +90,31 @@ const props = defineProps({
   // 由 FormPro 按树路径解析任意深度的分组状态
   getGroupCollapsed: { type: Function, default: null },
   getGroupCollapsible: { type: Function, default: null },
+  getGroupAllCollapsed: { type: Function, default: null },
 });
 
-const emit = defineEmits(["toggle-group", "register-upload-ref"]);
+const emit = defineEmits([
+  "update-field",
+  "toggle-group",
+  "toggle-all",
+  "register-form-item-ref",
+  "register-upload-ref",
+]);
 const slots = useSlots();
 const currentInstance = getCurrentInstance();
 
 // item 级折叠（vxe-form folding）：默认收起，collapseNode 按钮切换
 const foldingCollapsed = ref(true);
+
+// 每个嵌套分组相对父级缩进一次；DOM 层层嵌套后自然形成 16、32、48px 的累计层次
+const groupIndentStyle = computed(() => {
+  if (props.depth <= 0) return undefined;
+  const indent =
+    typeof props.groupIndent === "number"
+      ? `${props.groupIndent}px`
+      : props.groupIndent;
+  return { paddingLeft: indent };
+});
 
 const entries = computed(() =>
   resolveVisibleEntries(props.block.items, {
@@ -115,14 +135,14 @@ const applyModelModifiers = (v, mods) => {
   let val = v;
   if (mods.trim) val = val.trim();
   if (mods.number) {
-    const n = parseFloat(val);
+    const n = Number.parseFloat(val);
     val = Number.isNaN(n) ? val : n;
   }
   return val;
 };
 
 const setField = (field, v, item) => {
-  props.formData[field] = applyModelModifiers(v, item?.modelModifiers);
+  emit("update-field", field, applyModelModifiers(v, item?.modelModifiers));
 };
 
 // —— 紧凑模式（compact）：可视行划分 ——
@@ -157,12 +177,33 @@ const pickOptionComponent = (name) => {
   return null;
 };
 
+const renderItemOptions = (ir, ctx) => {
+  // 支持静态数组、函数(ctx) 和响应式 ref；render 期间读取以追踪联动依赖。
+  const rawOptions = isRef(ir.options) ? ir.options.value : ir.options;
+  const optionsList = resolveFieldOptions(rawOptions, ctx);
+  if (!optionsList.length) return [];
+  const optComp = pickOptionComponent(ir.name);
+  if (!optComp) return [];
+  const isOptionTag = /select/i.test(ir.name);
+  return optionsList.map((opt) => {
+    // el-option 使用 value 作为值；radio/checkbox 保留 label 兼容旧版本。
+    const optProps = isOptionTag
+      ? { value: opt.value, label: opt.label }
+      : { label: opt.value, value: opt.value };
+    return h(
+      optComp,
+      { key: opt.value, ...optProps, ...opt.props },
+      () => (isOptionTag ? undefined : opt.label),
+    );
+  });
+};
+
 const renderByItemRender = (ir, item, ctx) => {
   const comp = resolveItemRenderComponent(ir.name);
   // 内部 v-model 绑定放在 ir.props 之后，确保用户在 itemRender.props 中误写
   // modelValue / onUpdate:modelValue 不会破坏组件的双向同步。
   const bindProps = {
-    ...(ir.props || {}),
+    ...ir.props,
     modelValue: ctx.value,
     "onUpdate:modelValue": (v) => setField(item.prop, v, item),
   };
@@ -177,33 +218,7 @@ const renderByItemRender = (ir, item, ctx) => {
   const dynState = resolveDynamicControlState(item, ctx);
   if (dynState.disabled) bindProps.disabled = true;
   if (dynState.readonly) bindProps.readonly = true;
-  const children = [];
-  // 解析 options：支持 静态数组 / 函数(ctx) / 响应式 ref 三种形态。
-  // 先解包 ref（Vue 耦合），再交给纯函数 resolveFieldOptions 处理数组/函数。
-  // 读取发生在 render 期间 → ref 与函数内读取的响应式数据都会被 Vue 追踪依赖，
-  // 后端数据到位或联动字段变化时自动重渲染。
-  const rawOptions = isRef(ir.options) ? ir.options.value : ir.options;
-  const optionsList = resolveFieldOptions(rawOptions, ctx);
-  if (optionsList.length) {
-    const optComp = pickOptionComponent(ir.name);
-    if (optComp) {
-      const isOptionTag = /select/i.test(ir.name);
-      for (const opt of optionsList) {
-        // el-option：value 必填，label 为显示文本；
-        // el-radio / el-checkbox：value 作为选中值，保留 label 兼容旧版本，显示文本走默认插槽
-        const optProps = isOptionTag
-          ? { value: opt.value, label: opt.label }
-          : { label: opt.value, value: opt.value };
-        children.push(
-          h(
-            optComp,
-            { key: opt.value, ...optProps, ...(opt.props || {}) },
-            () => (isOptionTag ? undefined : opt.label),
-          ),
-        );
-      }
-    }
-  }
+  const children = renderItemOptions(ir, ctx);
   let node = h(comp, bindProps, children.length ? () => children : undefined);
   if (ir.events && typeof ir.events === "object") {
     const ev = {};
@@ -312,28 +327,30 @@ const renderFieldContent = (item) => {
   const reserveSlot = !suffixNode && props.unitSlotWidth > 0;
   // 无前后缀且无需预留时直接返回控件，保持原有 DOM 结构不变（零侵入）
   if (!prefixNode && !suffixNode && !reserveSlot) return control;
+  let suffixContent = null;
+  if (suffixNode) {
+    suffixContent = h(
+      "span",
+      {
+        class: [
+          "form-pro__field-suffix",
+          isUnitSuffix && "form-pro__field-suffix--unit",
+        ],
+      },
+      [suffixNode],
+    );
+  } else if (reserveSlot) {
+    suffixContent = h("span", {
+      class: "form-pro__field-suffix form-pro__field-suffix--reserve",
+      "aria-hidden": "true",
+    });
+  }
   const children = [
     prefixNode
       ? h("span", { class: "form-pro__field-prefix" }, [prefixNode])
       : null,
     h("div", { class: "form-pro__field-control" }, [control]),
-    suffixNode
-      ? h(
-          "span",
-          {
-            class: [
-              "form-pro__field-suffix",
-              isUnitSuffix && "form-pro__field-suffix--unit",
-            ],
-          },
-          [suffixNode],
-        )
-      : reserveSlot
-        ? h("span", {
-            class: "form-pro__field-suffix form-pro__field-suffix--reserve",
-            "aria-hidden": "true",
-          })
-        : null,
+    suffixContent,
   ].filter(Boolean);
   return h("div", { class: "form-pro__field-control-wrap" }, children);
 };
@@ -396,17 +413,14 @@ const renderFieldEntry = (entry, idx) => {
   const formItem = h(
     ElFormItem,
     {
-      // 把该 el-form-item 的完整实例回填到父级传入的映射（按 prop 索引），
+      // 通过事件把该 el-form-item 的完整实例回填到根组件，
       // 供 FormPro 暴露 getFormItem(prop) / formItemRefs。
-      ref: (el) => {
-        if (el) props.formItemRefs[item.prop] = el;
-        else delete props.formItemRefs[item.prop];
-      },
+      ref: (el) => emit("register-form-item-ref", item.prop, el),
       label: item.label,
       prop: item.prop,
       required,
       rules: item.rules,
-      ...(item.itemProps || {}),
+      ...item.itemProps,
     },
     {
       label: () => buildLabel(item),
@@ -506,6 +520,7 @@ const renderNestedBlock = (block) => {
       key: block.path,
       block,
       depth: block.depth ?? props.depth + 1,
+      groupIndent: props.groupIndent,
       formData: props.formData,
       onlyRequired: props.onlyRequired,
       formRules: props.formRules,
@@ -523,10 +538,85 @@ const renderNestedBlock = (block) => {
       formItemRefs: props.formItemRefs,
       getGroupCollapsed: props.getGroupCollapsed,
       getGroupCollapsible: props.getGroupCollapsible,
+      getGroupAllCollapsed: props.getGroupAllCollapsed,
+      onUpdateField: (field, value) => emit("update-field", field, value),
       onToggleGroup: (target) => emit("toggle-group", target),
+      onToggleAll: (target) => emit("toggle-all", target),
+      onRegisterFormItemRef: (prop, el) =>
+        emit("register-form-item-ref", prop, el),
       onRegisterUploadRef: (prop, el) => emit("register-upload-ref", prop, el),
     },
     slots,
+  );
+};
+
+const renderGroupExtension = (group) => {
+  const ctx = { group, collapsed: props.collapsed, data: props.formData };
+  if (typeof group.render === "function") return group.render(ctx, h);
+  if (group.slot && slots[group.slot]) return slots[group.slot](ctx);
+  return null;
+};
+
+const renderGroupHeader = (group, canCollapse) => {
+  const headerClass = canCollapse
+    ? "form-pro__group-header"
+    : "form-pro__group-header is-static";
+  const toggle = () => emit("toggle-group", group);
+  const groupExtra = renderGroupExtension(group);
+  const allCollapsed = props.getGroupAllCollapsed?.(group) ?? false;
+  const titleContent = (
+    <>
+      {canCollapse ? (
+        <ElIcon class="form-pro__group-arrow">
+          {props.collapsed ? <ArrowRight /> : <ArrowDown />}
+        </ElIcon>
+      ) : null}
+      <span
+        class="form-pro__group-title"
+        style={resolveGroupTitleStyle(group)}
+      >
+        {group.title}
+      </span>
+      {slots[`group-${group.title}`]
+        ? slots[`group-${group.title}`]({
+            group,
+            collapsed: props.collapsed,
+          })
+        : null}
+    </>
+  );
+  const headerMain = canCollapse ? (
+    <button
+      type="button"
+      class="form-pro__group-header-main"
+      aria-expanded={!props.collapsed}
+      onClick={toggle}
+    >
+      {titleContent}
+    </button>
+  ) : (
+    <div class="form-pro__group-header-main">{titleContent}</div>
+  );
+  return (
+    <div class={headerClass}>
+      {headerMain}
+      {/* 扩展区独立于可点击区，点击不会触发分组折叠。 */}
+      {groupExtra ? (
+        <span class="form-pro__group-header-extra">{groupExtra}</span>
+      ) : null}
+      {/* allToggle：树形分组切换当前子树；旧扁平配置保持切换整个表单 */}
+      {canCollapse && group.allToggle ? (
+        <button
+          type="button"
+          class="form-pro__group-toggle form-pro__group-toggle-all"
+          onClick={() => emit("toggle-all", group)}
+        >
+          <ElTag type="primary" effect="plain" size="small">
+            {allCollapsed ? "展开全部" : "折叠全部"}
+          </ElTag>
+        </button>
+      ) : null}
+    </div>
   );
 };
 
@@ -554,19 +644,6 @@ const render = () => {
     : row;
   if (!group) return row;
   const canCollapse = props.collapsible !== false;
-  const headerClass = canCollapse
-    ? "form-pro__group-header"
-    : "form-pro__group-header is-static";
-  const toggle = () => canCollapse && emit("toggle-group", group);
-  // 分组标题与右侧按钮之间的扩展区域：支持 group.render（JSX）/ group.slot（具名插槽）
-  // 渲染提示信息等元素；该区域独立于可点击区，点击不会触发分组折叠。
-  const renderGroupExtra = () => {
-    const ctx = { group, collapsed: props.collapsed, data: props.formData };
-    if (typeof group.render === "function") return group.render(ctx, h);
-    if (group.slot && slots[group.slot]) return slots[group.slot](ctx);
-    return null;
-  };
-  const groupExtra = renderGroupExtra();
   return (
     <div
       class={{
@@ -576,39 +653,9 @@ const render = () => {
       data-collapsed={props.collapsed}
       data-group-path={props.block.path}
       data-group-depth={props.block.path === undefined ? undefined : props.depth}
+      style={groupIndentStyle.value}
     >
-      <div class={headerClass}>
-        {/* 可点击区：箭头 + 标题（独立命中区，点击切换分组折叠） */}
-        <div
-          class="form-pro__group-header-main"
-          onClick={canCollapse ? toggle : undefined}
-        >
-          {canCollapse ? (
-            <ElIcon class="form-pro__group-arrow">
-              {props.collapsed ? <ArrowRight /> : <ArrowDown />}
-            </ElIcon>
-          ) : null}
-          {/* 分组标题：titleStyle 自定义颜色/字号等；titleBold 控制加粗（true→700 / false→400 / 默认继承 600） */}
-          <span
-            class="form-pro__group-title"
-            style={resolveGroupTitleStyle(group)}
-          >
-            {group.title}
-          </span>
-          {slots[`group-${group.title}`]
-            ? slots[`group-${group.title}`]({
-                group,
-                collapsed: props.collapsed,
-              })
-            : null}
-        </div>
-        {/* 扩展区：标题与右侧按钮之间，渲染提示信息等（render / slot） */}
-        {groupExtra ? (
-          <span class="form-pro__group-header-extra">{groupExtra}</span>
-        ) : null}
-        {/* 右侧不再提供「展开全部 / 折叠全部」按钮：表单出现垂直滚动条后按钮随内容
-            滚走不可见，统一由外部 FormGroupToggle 组件承载（可放于 fixed 固定位置） */}
-      </div>
+      {renderGroupHeader(group, canCollapse)}
       <div
         class={{
           "form-pro__group-body": true,
@@ -769,9 +816,24 @@ defineExpose({ entries });
   cursor: pointer;
   user-select: none;
 }
+:deep(button.form-pro__group-header-main),
+:deep(button.form-pro__group-toggle) {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
 // 不可折叠：无手型
 :deep(.form-pro__group-header.is-static .form-pro__group-header-main) {
   cursor: default;
+}
+:deep(.form-pro__group-header-main:focus-visible),
+:deep(.form-pro__group-toggle-all:focus-visible) {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
 }
 // 分组标题前的折叠/展开图标：primary 主色调并视觉加粗。
 // Element 箭头图标为填充型 SVG（无描边），通过叠加同色细描边实现加粗观感
@@ -793,6 +855,16 @@ defineExpose({ entries });
 :deep(.form-pro__group-header-extra) {
   display: inline-flex;
   align-items: center;
+}
+// 分组头「展开全部 / 折叠全部」按钮靠右，扩展区位于标题与该按钮之间
+:deep(.form-pro__group-toggle) {
+  margin-left: auto;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+:deep(.form-pro__group-toggle-all) {
+  margin-left: 6px;
 }
 :deep(.form-pro__group-body) {
   // 展开/折叠高度动画：用 grid-template-rows 0fr → 1fr 实现

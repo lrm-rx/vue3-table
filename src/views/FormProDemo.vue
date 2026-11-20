@@ -607,6 +607,7 @@ const items = ref([
 
 // —— 树形嵌套分组示例：三层 children 共用一个 el-form，数据仍保持平面 ——
 const nestedFormRef = ref();
+const nestedGroupIndent = ref(16);
 const nestedFormData = ref({
   employeeName: "张三",
   department: "研发部",
@@ -618,6 +619,7 @@ const nestedItems = ref([
   {
     group: true,
     title: "员工档案",
+    allToggle: true,
     children: [
       {
         prop: "employeeName",
@@ -641,6 +643,7 @@ const nestedItems = ref([
       {
         group: true,
         title: "联系信息",
+        allToggle: true,
         children: [
           {
             prop: "phone",
@@ -655,6 +658,7 @@ const nestedItems = ref([
           {
             group: true,
             title: "地址信息",
+            allToggle: true,
             children: [
               {
                 prop: "province",
@@ -891,7 +895,7 @@ const toggleEmailRequired = () => {
 
     <!-- FormGroupToggle：与 FormPro 解耦的「折叠全部 / 展开全部」一键开关，
          仅绑定 form 实例（:form="formRef"）即可，父级零 JS 样板代码；
-         fixed 固定于右下角，页面滚动时始终可见（替代原分组头内 allToggle 按钮） -->
+         fixed 固定于右下角，页面滚动时始终可见；分组头 allToggle 则只控制当前子树 -->
     <FormGroupToggle
       :form="formRef"
       effect="plain"
@@ -916,6 +920,16 @@ const toggleEmailRequired = () => {
       <span style="font-size: 13px; color: #606266">
         三层分组共用一个 el-form，所有字段仍写入同一个平面 formData。
       </span>
+      <span style="display: inline-flex; gap: 6px; align-items: center">
+        <span style="font-size: 13px">层级距离(px)</span>
+        <el-input-number
+          v-model="nestedGroupIndent"
+          :min="0"
+          :max="64"
+          size="small"
+          style="width: 120px"
+        />
+      </span>
       <el-button size="small" @click="expandNestedGroups">展开全部层级</el-button>
       <el-button size="small" @click="collapseNestedGroups">收起全部层级</el-button>
     </div>
@@ -924,6 +938,7 @@ const toggleEmailRequired = () => {
       v-model="nestedFormData"
       :items="nestedItems"
       :columns="2"
+      :group-indent="nestedGroupIndent"
       :title-colon="true"
       label-width="100px"
     />
