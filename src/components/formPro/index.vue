@@ -11,7 +11,7 @@
  *  2. 24 栅格分列：表单级 columns（列数）推导默认 span（24/列数），或直接用 span 指定默认值；每项 span 覆盖（项级优先级更高）
  *  3. 分组可展开/折叠：支持旧扁平分组头及 { group:true, children:[...] } 任意层级树形分组，
  *     全树仍共用一个 el-form 和一个平面 formData
- *  4. onlyRequired 动态切换：仅显示必填（item.required 或 rules 含 required）项
+ *  4. onlyRequired 动态切换：仅显示 rules 含 required 的必填项
  *  5. JSX 渲染：item.render(ctx, h) 渲染控件（ctx 在前，h 极少使用时可省略）
  *  6. 表单项间插入组件/元素：无 field 的项即为插入项，用 slot 或 render 渲染
  *  7. 条件显隐自动回流：隐藏项不渲染，el-col 流式布局后续项自动前移

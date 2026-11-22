@@ -172,7 +172,6 @@ const items = ref([
     prop: "photos",
     label: "现场照片",
     span: 24,
-    required: true,
     tip: "点击 + 选图，或点击卡片内「点击此处粘贴图片」聚焦后 Ctrl+V 粘贴截图；点击图片可大图预览、左右切换",
     itemRender: {
       name: "UploadPro",
@@ -192,7 +191,6 @@ const items = ref([
     prop: "idPhoto",
     label: "证件照",
     span: 12,
-    required: true,
     tip: "limit=1 单图上传；粘贴区与现场照片相互独立",
     itemRender: {
       name: "UploadPro",
@@ -215,7 +213,6 @@ const items = ref([
     prop: "attachments",
     label: "附件材料",
     span: 24,
-    required: true,
     tip: "buttonSize=small 控制按钮尺寸；按钮右侧粘贴入口点击聚焦后 Ctrl+V 可粘贴任意文件；眼睛图标触发 preview 事件，文件名点击触发下载",
     itemRender: {
       name: "UploadPro",

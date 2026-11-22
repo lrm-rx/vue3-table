@@ -52,7 +52,6 @@ const items = ref([
   {
     prop: "name",
     label: "姓名",
-    required: true,
     itemRender: { name: "ElInput", props: { placeholder: "请输入姓名", clearable: true } },
   },
   {
@@ -104,7 +103,6 @@ const items = ref([
   {
     prop: "email",
     label: "邮箱",
-    required: true,
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
   },
   // 长 tip 提示：超出单元格宽度时单行省略为 …（悬浮 title 可见全文）

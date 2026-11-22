@@ -53,7 +53,6 @@ const items = ref([
   {
     prop: "name",
     label: "姓名",
-    required: true,
     itemRender: { name: "ElInput", props: { placeholder: "请输入姓名", clearable: true } },
   },
   {
@@ -64,7 +63,6 @@ const items = ref([
   {
     prop: "gender",
     label: "性别",
-    required: true,
     itemRender: {
       name: "ElSelect",
       props: { placeholder: "请选择性别" },
@@ -79,14 +77,12 @@ const items = ref([
   {
     prop: "phone",
     label: "手机号",
-    required: true,
     tip: "仅用于账号安全验证，不会对外展示",
     itemRender: { name: "ElInput", props: { placeholder: "请输入手机号" } },
   },
   {
     prop: "email",
     label: "邮箱",
-    required: true,
     itemRender: { name: "ElInput", props: { placeholder: "请输入邮箱" } },
   },
   {

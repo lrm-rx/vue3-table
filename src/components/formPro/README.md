@@ -26,7 +26,7 @@ const formData = ref({ name: "张三" }); // 只需声明有意义的默认值�
 const rules = { name: [{ required: true, message: "请输入姓名", trigger: "blur" }] };
 
 const items = ref([
-  { prop: "name", label: "姓名", required: true, itemRender: { name: "ElInput", props: { clearable: true } } },
+  { prop: "name", label: "姓名", itemRender: { name: "ElInput", props: { clearable: true } } },
   { prop: "age", label: "年龄", itemRender: { name: "ElInputNumber", props: { min: 0 } } },
   { prop: "hobbies", label: "爱好", itemRender: { name: "ElCheckboxGroup", options: [...] } },
 ]);
@@ -76,7 +76,6 @@ const items = ref([
 | `prop` | 绑定 formData 的字段名（无 prop 即为「插入项」） |
 | `label` | 标签 |
 | `span` | 栅格占位（覆盖表单级） |
-| `required` | 是否必填 |
 | `rules` | 单字段校验规则 |
 | `tip` | 填写/选择提示：位于「校验错误提示」同一位置（控件下方），颜色为 success 主色调；字段未校验不通过时一直显示，校验失败则隐藏、让位给错误提示 |
 | `defaultValue` | 该字段固定默认值（autoFill 时优先级最高） |
@@ -518,7 +517,6 @@ watch(formData, () => {
 {
   prop: "photos",
   label: "现场照片",
-  required: true,
   itemRender: {
     name: "UploadPro", // 内置控件，无需全局注册
     props: {

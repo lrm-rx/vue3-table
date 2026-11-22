@@ -58,7 +58,6 @@ const items = [
     prop: "attachments",
     label: "业务附件",
     span: 24,
-    required: true,
     tip: "文件及 bizType、bizId、source 参数将通过 multipart/form-data 提交",
     itemRender: {
       name: "UploadPro",

@@ -244,7 +244,6 @@ const items = ref([
   {
     prop: "name",
     label: "姓名",
-    required: true,
     titleBold: true,
     titlePrefixTip: "请输入真实姓名",
     tip: "请输入 2-20 位字符的真实姓名（modelModifiers.trim：回写自动去首尾空格）",
@@ -624,7 +623,6 @@ const nestedItems = ref([
       {
         prop: "employeeName",
         label: "姓名",
-        required: true,
         itemRender: { name: "ElInput", props: { placeholder: "请输入姓名" } },
       },
       {

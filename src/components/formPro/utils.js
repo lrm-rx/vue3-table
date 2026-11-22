@@ -28,7 +28,6 @@ import { castArray, isFunction, isNumber, isPlainObject, set as lodashSet, isEqu
  *     prop: 'username',       // 字段名（v-model 键，对应 el-form-item 的 prop）
  *     label: '用户名',         // el-form-item label
  *     span: 12,               // 该项栅格占位（优先级 > 表单级 span）
- *     required: true,         // 必填（驱动 onlyRequired 过滤 + 显示星号）
  *     rules: [],              // el-form-item 校验规则（也可由 el-form rules 统一提供）
  *     tip: '请输入真实姓名',    // 填写/选择提示：位于「校验错误提示」同一位置（控件下方），
  *                              //   颜色为 success 主色调；只要字段未校验不通过就一直显示，
@@ -117,12 +116,10 @@ export const isFieldItem = (item) =>
   !!item && !isGroupItem(item) && item.prop !== undefined;
 
 /**
- * 判定字段项是否必填：item.required 显式为 true，
- * 或其 rules（含 el-form 统一 rules[prop]）中存在 required:true。
+ * 判定字段项是否必填：其 rules（含 el-form 统一 rules[prop]）中存在 required:true。
  */
 export const isItemRequired = (item, formRules = {}) => {
   if (!item || item.prop === undefined) return false;
-  if (item.required === true) return true;
   const rules = [
     ...(Array.isArray(item.rules) ? item.rules : []),
     ...(Array.isArray(formRules[item.prop]) ? formRules[item.prop] : []),
@@ -732,7 +729,7 @@ const applyItemPatch = (item, patch) => {
  * @param {Array}                 items  配置数组（原地修改）
  * @param {string|number|Array|Function} target 目标选择器，见 toItemMatcher
  * @param {Object|Function}      patch  补丁对象，或 (item) => 补丁对象 的生成函数：
- *   - 顶层键整体赋值：{ visible: false }、{ required: true }
+ *   - 顶层键整体赋值：{ visible: false }、{ titleBold: true }
  *   - 点路径深设：{ 'itemRender.props.disabled': true }、
  *                 { 'itemRender.options': newOptions }（数组整体替换）
  * @returns {Array} 命中并被更新的项数组（引用即 items 内原对象）

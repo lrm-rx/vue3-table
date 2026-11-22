@@ -135,15 +135,15 @@ describe("FormPro 配置式表单", () => {
     expect(labels).toEqual(["A", "B", "C"]);
   });
 
-  it("onlyRequired：仅显示必填项（required:true 或 rules 含 required）", async () => {
+  it("onlyRequired：仅显示 rules 含 required 的必填项", async () => {
     const wrapper = mountFormPro({
       modelValue: {},
       onlyRequired: false,
       items: [
-        { prop: "a", label: "A", required: true },
+        { prop: "a", label: "A" },
         { prop: "b", label: "B" },
       ],
-      rules: {},
+      rules: { a: [{ required: true }] },
     });
     await flushPromises();
     expect(wrapper.findAllComponents({ name: "ElFormItem" }).length).toBe(2);
@@ -977,7 +977,7 @@ describe("FormPro 配置式表单", () => {
         components: { FormPro },
         setup: () => ({ formData }),
         template: `<FormPro v-model="formData" hidden-value="" :only-required="true" :items="[
-          { prop: 'a', label: 'A', required: true },
+          { prop: 'a', label: 'A', rules: [{ required: true }] },
           { prop: 'b', label: 'B' }
         ]" />`,
       },
@@ -1463,7 +1463,7 @@ describe("FormPro 配置式表单", () => {
         modelValue: { name: "" },
         border: true,
         items: [
-          { prop: "name", label: "姓名", required: true, itemRender: { name: "ElInput" } },
+          { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
         ],
       });
       await flushPromises();
@@ -2509,7 +2509,7 @@ describe("FormPro 树形嵌套分组", () => {
         group: true,
         title: "根分组",
         children: [
-          { prop: "name", label: "姓名", required: true, itemRender: { name: "ElInput" } },
+          { prop: "name", label: "姓名", itemRender: { name: "ElInput" } },
           {
             group: true,
             title: "二级分组",
@@ -2522,7 +2522,6 @@ describe("FormPro 树形嵌套分组", () => {
                   {
                     prop: "city",
                     label: "城市",
-                    required: true,
                     rules: [{ required: true, message: "请输入城市", trigger: "blur" }],
                     itemRender: { name: "ElInput" },
                   },
@@ -3047,7 +3046,7 @@ describe("FormPro 树形嵌套分组", () => {
           group: true,
           title: "根",
           children: [
-            { prop: "a", label: "A", required: true, itemRender: { name: "ElInput" } },
+            { prop: "a", label: "A", rules: [{ required: true }], itemRender: { name: "ElInput" } },
             {
               group: true,
               title: "子",
@@ -3057,7 +3056,7 @@ describe("FormPro 树形嵌套分组", () => {
                   group: true,
                   title: "孙",
                   children: [
-                    { prop: "c", label: "C", required: true, visible: false, itemRender: { name: "ElInput" } },
+                    { prop: "c", label: "C", rules: [{ required: true }], visible: false, itemRender: { name: "ElInput" } },
                   ],
                 },
               ],

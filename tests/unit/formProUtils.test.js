@@ -105,9 +105,6 @@ describe("formPro utils", () => {
   });
 
   describe("isItemRequired", () => {
-    it("item.required=true 即必填", () => {
-      expect(isItemRequired({ prop: "a", required: true })).toBe(true);
-    });
     it("rules 含 required:true 即必填（item.rules 与 formRules 合并）", () => {
       expect(
         isItemRequired({ prop: "a", rules: [{ required: true }] }),
@@ -303,7 +300,7 @@ describe("formPro utils", () => {
     });
     it("onlyRequired 只保留必填项，插入项始终保留", () => {
       const items = [
-        { prop: "a", required: true, span: 12 },
+        { prop: "a", rules: [{ required: true }], span: 12 },
         { prop: "b", span: 12 },
         { slot: "divider" },
       ];
@@ -328,7 +325,7 @@ describe("formPro utils", () => {
     });
     it("字段项携带 required 标记", () => {
       const entries = resolveVisibleEntries(
-        [{ prop: "a", required: true }, { prop: "b" }],
+        [{ prop: "a", rules: [{ required: true }] }, { prop: "b" }],
         { formSpan: 24 },
       );
       expect(entries[0].required).toBe(true);
@@ -604,9 +601,9 @@ describe("formPro utils", () => {
   describe("updateItems（更新：浅合并 / 点路径 / 函数补丁）", () => {
     it("单个 prop：顶层键整体赋值", () => {
       const items = baseItems();
-      const touched = updateItems(items, "a", { visible: false, required: true });
+      const touched = updateItems(items, "a", { visible: false, titleBold: true });
       expect(touched).toHaveLength(1);
-      expect(items[1]).toMatchObject({ prop: "a", visible: false, required: true });
+      expect(items[1]).toMatchObject({ prop: "a", visible: false, titleBold: true });
     });
     it("批量 prop 更新", () => {
       const items = baseItems();
