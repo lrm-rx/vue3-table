@@ -208,6 +208,52 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     wrapper.unmount();
   });
 
+  it("远程模式提交当前编辑后，返回并修剪编辑行和新增行", async () => {
+    const serverRow = { id: 1, name: "server" };
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns: [
+          { field: "id", title: "ID", width: 80 },
+          {
+            field: "name",
+            title: "名称",
+            editRender: { name: "ElInput" },
+          },
+        ],
+        requestApi: async () => ({ list: [serverRow], total: 1 }),
+        requestAuto: true,
+        showToolbar: false,
+        editable: true,
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+    const grid = wrapper.findComponent({ name: "VxeGrid" }).vm;
+    wrapper.vm.insertRow({ name: "  远程新增  " });
+    await flushPromises();
+    await nextFrame();
+    const inserted = wrapper.vm.getChangeState().insertRecords[0];
+
+    await grid.setEditCell(serverRow, "name");
+    await flushPromises();
+    await nextFrame();
+    wrapper
+      .findComponent({ name: "ElInput" })
+      .vm.$emit("update:modelValue", "  远程编辑  ");
+    await flushPromises();
+
+    const result = await wrapper.vm.trimCellValues();
+    await flushPromises();
+    expect(result.updateRecords).toHaveLength(1);
+    expect(result.updateRecords[0].name).toBe("远程编辑");
+    expect(result.insertRecords).toEqual([inserted]);
+    expect(result.insertRecords[0].name).toBe("远程新增");
+    expect(serverRow.name).toBe("远程编辑");
+    wrapper.unmount();
+  });
+
   it("静态空白页提示临时行所属页，点击按钮后返回", async () => {
     const data = makeData(Array.from({ length: 36 }, (_, i) => i + 1));
     const t = await mountTable(data, { pagination: true });
@@ -368,6 +414,40 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     expect(t.wrapper.vm.getAllData()).toHaveLength(27);
     expect(t.wrapper.vm.currentPager.total).toBe(27);
     expect(t.changed()).toBe(false);
+    t.wrapper.unmount();
+  });
+
+  it("trimCellValues 返回并修剪所有分页登记的新增行", async () => {
+    const data = makeData(Array.from({ length: 25 }, (_, i) => i + 1));
+    const t = await mountTable(data, { pagination: true });
+
+    t.wrapper.vm.insertRow({ name: "  page-1-temp  " });
+    await flushPromises();
+    await nextFrame();
+    t.wrapper.findComponent(Pagination).vm.$emit("change", {
+      ...t.wrapper.vm.currentPager,
+      currentPage: 2,
+    });
+    await flushPromises();
+    await nextFrame();
+    await flushPromises();
+    t.wrapper.vm.insertRow({ name: "  page-2-temp  " });
+    await flushPromises();
+    await nextFrame();
+
+    const result = await t.wrapper.vm.trimCellValues();
+    expect(result.updateRecords).toEqual([]);
+    expect(result.insertRecords.map((row) => row.name).sort()).toEqual([
+      "page-1-temp",
+      "page-2-temp",
+    ]);
+    const insertedNames = t.wrapper.vm
+      .getAllData()
+      .filter((row) => String(row.id).startsWith("row_"))
+      .map((row) => row.name)
+      .sort();
+    expect(insertedNames).toEqual(["page-1-temp", "page-2-temp"]);
+    expect(data[0].name).toBe("n1");
     t.wrapper.unmount();
   });
 

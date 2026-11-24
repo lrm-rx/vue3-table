@@ -19,7 +19,7 @@ import {
   camelize,
   mergeProps,
 } from "vue";
-import { cloneDeep, isEqual } from "lodash-es";
+import { cloneDeep, get, isEqual, set } from "lodash-es";
 import { nanoid } from "nanoid";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
@@ -2436,6 +2436,61 @@ const runValidate = async (method, args) => {
   return errMap;
 };
 
+// 静态模式返回全量本地数据及所有页临时行；远程模式仅包含当前已加载页。
+const getAllData = () => {
+  flushAlwaysEdit();
+  if (isRemoteMode.value) return gridRef.value?.getFullData?.() || [];
+  const removeRecords = gridRef.value?.getRecordset?.()?.removeRecords || [];
+  const keyField = tempRowKeyField();
+  const removedKeys = new Set(
+    removeRecords
+      .map((row) => (keyField ? row?.[keyField] : null))
+      .filter((key) => key != null),
+  );
+  const allData = localProcessedData.value.filter((row) => {
+    const key = keyField ? row?.[keyField] : null;
+    return !removeRecords.includes(row) && (key == null || !removedKeys.has(key));
+  });
+  tempRowsByPage.forEach((list) => {
+    list.forEach(({ row }) => allData.push(row));
+  });
+  return allData;
+};
+
+// 修剪编辑行和新增行的字符串首尾空格，返回处理后的待提交行数据。
+const trimCellValues = async () => {
+  const grid = gridRef.value;
+  if (!grid) return { updateRecords: [], insertRecords: [] };
+  // 与校验入口一致：先提交当前编辑值，并等待 vxe 延迟关闭流程结束。
+  await grid.clearEdit?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  flushAlwaysEdit();
+  const columns =
+    grid.getTableColumn?.()?.collectColumn || grid.getColumns?.() || [];
+  const fields = Array.from(
+    new Set(columns.map((column) => column.field).filter(Boolean)),
+  );
+  const { updateRecords, insertRecords } = getChangeState();
+  const rows = new Set([...updateRecords, ...insertRecords]);
+  let changed = false;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    for (const field of fields) {
+      const value = get(row, field);
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (trimmed === value) continue;
+      set(row, field, trimmed);
+      changed = true;
+    }
+  }
+  if (changed) {
+    bumpCheckboxOptionsCache();
+    recomputeChanged();
+  }
+  return { updateRecords, insertRecords };
+};
+
 // ========== 暴露常用方法 ==========
 defineExpose({
   gridRef,
@@ -2451,25 +2506,9 @@ defineExpose({
   },
   // 静态模式：返回本地过滤/排序后的完整数据，排除当前已删除正式行，
   // 并合并所有页登记的未保存临时行；远程模式仍返回当前已加载页。
-  getAllData: () => {
-    flushAlwaysEdit();
-    if (isRemoteMode.value) return gridRef.value?.getFullData?.() || [];
-    const removeRecords = gridRef.value?.getRecordset?.()?.removeRecords || [];
-    const keyField = tempRowKeyField();
-    const removedKeys = new Set(
-      removeRecords
-        .map((row) => (keyField ? row?.[keyField] : null))
-        .filter((key) => key != null),
-    );
-    const allData = localProcessedData.value.filter((row) => {
-      const key = keyField ? row?.[keyField] : null;
-      return !removeRecords.includes(row) && (key == null || !removedKeys.has(key));
-    });
-    tempRowsByPage.forEach((list) => {
-      list.forEach(({ row }) => allData.push(row));
-    });
-    return allData;
-  },
+  getAllData,
+  // 修剪编辑行和新增行的字符串首尾空格，返回处理后的待提交行数据。
+  trimCellValues,
   // 强制写回常驻编辑器（alwaysEdit）尚未落地的输入（如父组件自定义保存流程前调用）
   flushAlwaysEdit,
   getCheckboxRecords: () => gridRef.value?.getCheckboxRecords?.() || [],

@@ -630,6 +630,7 @@ const restoreColumnConfig = async () => {
 | `gridRef` | vxe-grid 实例（直接调用 vxe 原生方法） |
 | `getFullData()` | 获取当前已装载数据，并保证 alwaysEdit 输入已落盘；静态本地分页时仅包含当前页 |
 | `getAllData()` | 静态模式返回本地过滤/排序后的完整正式数据、排除当前已删除正式行，并合并所有页登记的临时新增行；远程模式仅返回当前已加载页 |
+| `await trimCellValues()` | 先提交当前编辑及常驻编辑输入，再去除编辑行和新增行各列字符串的首尾空格，返回 `{ updateRecords, insertRecords }`；包含所有页登记的新增行，不包含删除行和未修改行 |
 | `insertRow(record)` / `insertRowAt(records, target)` | 新增临时行并登记所属页，跨页或数据重载后按原位置恢复 |
 | `removeRows(rows)` | 移除行并同步注销临时行登记 |
 | `getChangeState()` | 获取 `{ changed, insertRecords, removeRecords, updateRecords }`，其中临时新增行包含所有已登记页面 |

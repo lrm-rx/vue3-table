@@ -1471,6 +1471,28 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
     wrapper.unmount();
   });
 
+  it("trimCellValues 先落盘当前输入，再修剪首尾空格", async () => {
+    const rows = makeRows(1);
+    const { wrapper, grid } = await mountAlways(rows, {
+      columns: ALWAYS_COLUMNS,
+      fullData: rows,
+    });
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [rows[0]],
+    };
+    const { row, render } = cellOf(wrapper, "name", 0);
+
+    render().props["onUpdate:modelValue"]("  最新输入  ");
+    expect(row.name).toBe("name-0");
+    const result = await wrapper.vm.trimCellValues();
+    expect(result).toEqual({ updateRecords: [row], insertRecords: [] });
+    expect(row.name).toBe("最新输入");
+    expect(row.age).toBe(0);
+    wrapper.unmount();
+  });
+
   it("markSaved：先落盘再重置，新基线包含最后一次输入", async () => {
     const rows = makeRows(2);
     const { wrapper, grid } = await mountAlways(rows, { fullData: rows });
@@ -1522,6 +1544,125 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
     wrapper.unmount();
     expect(row.name).toBe("U");
     expect(wrapper.emitted("cell-edit-change")).toHaveLength(1);
+  });
+});
+
+describe("单元格字符串首尾空格修剪", () => {
+  it("仅处理并返回编辑行和新增行，支持嵌套字段与跨页编辑行", async () => {
+    const columns = [
+      { field: "name", title: "姓名" },
+      { field: "age", title: "年龄" },
+      { field: "profile.remark", title: "备注" },
+    ];
+    const rows = Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      name: `  name-${index}  `,
+      age: index,
+      profile: { remark: index === 0 ? "  首行备注  " : "备注" },
+      ignored: "  不处理列外字段  ",
+    }));
+    const inserted = {
+      id: 13,
+      name: "  新增行  ",
+      age: 13,
+      profile: { remark: "  新增备注  " },
+      ignored: "  不处理列外字段  ",
+    };
+    const updateRecords = [rows[0], rows[10]];
+    const { wrapper, grid } = await mountTablePro(
+      { columns, data: rows, pagination: true },
+      { columns, fullData: rows.slice(0, 10) },
+    );
+    grid.mock.recordset = {
+      insertRecords: [inserted],
+      removeRecords: [],
+      updateRecords,
+    };
+
+    const result = await wrapper.vm.trimCellValues();
+    expect(result).toEqual({ updateRecords, insertRecords: [inserted] });
+    expect(result.updateRecords[0].name).toBe("name-0");
+    expect(result.updateRecords[1].name).toBe("name-10");
+    expect(result.updateRecords[0].profile.remark).toBe("首行备注");
+    expect(result.insertRecords[0].name).toBe("新增行");
+    expect(result.insertRecords[0].profile.remark).toBe("新增备注");
+    expect(rows[1].name).toBe("  name-1  ");
+    expect(rows[0].age).toBe(0);
+    expect(rows[0].ignored).toBe("  不处理列外字段  ");
+    await expect(wrapper.vm.trimCellValues()).resolves.toEqual(result);
+    wrapper.unmount();
+  });
+
+  it("没有编辑或新增时返回空数组，不处理普通行及删除行", async () => {
+    const columns = [{ field: "name", title: "姓名" }];
+    const rows = [
+      { id: 1, name: "  普通行  " },
+      { id: 2, name: "  删除行  " },
+    ];
+    const { wrapper, grid } = await mountTablePro(
+      { columns, data: rows, pagination: false },
+      { columns, fullData: [rows[0]] },
+    );
+    grid.mock.recordset = {
+      insertRecords: [],
+      removeRecords: [rows[1]],
+      updateRecords: [],
+    };
+
+    await expect(wrapper.vm.trimCellValues()).resolves.toEqual({
+      updateRecords: [],
+      insertRecords: [],
+    });
+    expect(rows.map((row) => row.name)).toEqual([
+      "  普通行  ",
+      "  删除行  ",
+    ]);
+    wrapper.unmount();
+  });
+
+  it("处理制表符、换行及 Unicode 空白，跳过非字符串并保留无空格编辑行", async () => {
+    const columns = [
+      { field: "name" },
+      { field: "blank" },
+      { field: "unicode" },
+      { field: "age" },
+      { field: "tags" },
+      { field: "profile.remark" },
+    ];
+    const updated = {
+      id: 1,
+      name: "\t  张 三  \n",
+      blank: " \t\n ",
+      unicode: "\u3000内容\u00a0",
+      age: 0,
+      tags: ["  数组不递归处理  "],
+    };
+    const unchanged = { id: 2, name: "已经干净" };
+    const inserted = { id: 3, name: " \u3000新增行\u3000 " };
+    const { wrapper, grid } = await mountTablePro(
+      { columns, data: [updated, unchanged], pagination: false },
+      { columns, fullData: [updated, unchanged] },
+    );
+    grid.mock.recordset = {
+      insertRecords: [inserted],
+      removeRecords: [],
+      updateRecords: [updated, unchanged],
+    };
+
+    const result = await wrapper.vm.trimCellValues();
+    expect(result.updateRecords).toEqual([updated, unchanged]);
+    expect(result.insertRecords).toEqual([inserted]);
+    expect(updated).toMatchObject({
+      name: "张 三",
+      blank: "",
+      unicode: "内容",
+      age: 0,
+      tags: ["  数组不递归处理  "],
+    });
+    expect(updated).not.toHaveProperty("profile");
+    expect(unchanged.name).toBe("已经干净");
+    expect(inserted.name).toBe("新增行");
+    wrapper.unmount();
   });
 });
 
