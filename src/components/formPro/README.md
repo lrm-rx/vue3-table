@@ -172,6 +172,7 @@ formRef.value.getUpload("avatar").clearFiles(); // 需要完整实例能力时
 ```
 
 **FormPro 自身方法**：
+- `trimFormValues()` —— 去除所有表单项字符串值的首尾空格（含嵌套分组及隐藏项），返回处理后的平铺表单数据快照；数字、布尔、数组、对象及未配置为表单项的数据保持原值，重复调用不会重复写回
 - `getSubmitData()` —— 返回已按 `hiddenValue` 规则改写隐藏字段值的提交数据（见 §6）
 - `toFormData(source?, options?)` —— 对象 → `FormData`（multipart 提交）。不传 `source` 时取 `getSubmitData()`；`File` / `Blob`（含 UploadPro 绑定值里的 `{ raw: File }`）始终以二进制 append，不会变成 `"[object File]"` 或 `{}`；嵌套对象展开为 `a[b]`，对象数组为 `a[0][b]`；标量/文件数组默认重复同名键（`arrayFormat: 'bracket'` 时用 `a[]`）；`Date` → ISO，布尔 → `'true'/'false'`，`null` / `undefined` 跳过
 - 分组折叠：`setGroupCollapsed(title, v)` / `toggleGroup(title)` / `setGroupsCollapsed(titles, v)` / `collapseAllGroups()` / `expandAllGroups()` / `toggleAllGroups()`；响应式只读状态 `allGroupsCollapsed`（所有可折叠分组是否均已折叠，供外部按钮驱动文案，如 FormGroupToggle）

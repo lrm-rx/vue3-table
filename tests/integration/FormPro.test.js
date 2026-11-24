@@ -79,6 +79,197 @@ describe("FormPro 配置式表单", () => {
     expect(wrapper.find("input").element.value).toBe("王五");
   });
 
+  describe("trimFormValues 表单字符串修剪", () => {
+    it("处理嵌套分组、隐藏项和点号 prop，同步 v-model 并跳过非字符串及表单项外数据", async () => {
+      const formData = ref({
+        name: "\u3000张 三\u00a0",
+        "profile.remark": "\t  备注内容  \n",
+        blank: " \t\n ",
+        hidden: "  隐藏字段  ",
+        age: 0,
+        tags: ["  数组不递归处理  "],
+        external: "  非表单项不处理  ",
+      });
+      const items = [
+        {
+          prop: "name",
+          label: "姓名",
+          itemRender: { name: "ElInput" },
+        },
+        {
+          group: true,
+          title: "资料",
+          children: [
+            {
+              prop: "profile.remark",
+              label: "备注",
+              itemRender: { name: "ElInput" },
+            },
+            { prop: "blank", label: "空白" },
+            { prop: "age", label: "年龄" },
+            { prop: "tags", label: "标签" },
+          ],
+        },
+        { prop: "hidden", label: "隐藏", visible: false },
+      ];
+      const formRef = ref();
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items, formRef }),
+          template:
+            '<FormPro ref="formRef" v-model="formData" :items="items" />',
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+
+      const result = formRef.value.trimFormValues();
+      await flushPromises();
+      expect(result).toEqual({
+        name: "张 三",
+        "profile.remark": "备注内容",
+        blank: "",
+        hidden: "隐藏字段",
+        age: 0,
+        tags: ["  数组不递归处理  "],
+        external: "  非表单项不处理  ",
+      });
+      expect(formData.value).toEqual(result);
+      expect(wrapper.find('input[type="text"]').element.value).toBe("张 三");
+      expect(result).not.toBe(formData.value);
+    });
+
+    it("mutableModel 原地同步修剪结果，不触发 update:modelValue", async () => {
+      const formData = reactive({ name: "  mutable  " });
+      const onUpdate = vi.fn();
+      const wrapper = mountFormPro({
+        modelValue: formData,
+        mutableModel: true,
+        "onUpdate:modelValue": onUpdate,
+        items: [
+          { prop: "name", label: "名称", itemRender: { name: "ElInput" } },
+        ],
+      });
+      await flushPromises();
+
+      expect(wrapper.vm.trimFormValues()).toEqual({ name: "mutable" });
+      await flushPromises();
+      expect(formData.name).toBe("mutable");
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(wrapper.find("input").element.value).toBe("mutable");
+      wrapper.unmount();
+    });
+
+    it("没有变化时不回抛，重复调用返回相同内容的新快照", async () => {
+      const wrapper = mountFormPro({
+        modelValue: { name: "clean" },
+        items: [{ prop: "name", label: "名称" }],
+      });
+      await flushPromises();
+
+      const first = wrapper.vm.trimFormValues();
+      const second = wrapper.vm.trimFormValues();
+      await flushPromises();
+      expect(first).toEqual({ name: "clean" });
+      expect(second).toEqual(first);
+      expect(second).not.toBe(first);
+      expect(wrapper.emitted("update:modelValue")).toBeUndefined();
+      wrapper.unmount();
+    });
+
+    it("运行时新增的表单项立即参与修剪，表单项外数据仍不处理", async () => {
+      const wrapper = mountFormPro({
+        modelValue: {
+          first: "  初始项  ",
+          later: "  动态项  ",
+          external: "  外部数据  ",
+        },
+        items: [{ prop: "first", label: "初始项" }],
+      });
+      await flushPromises();
+
+      wrapper.vm.addItems({ prop: "later", label: "动态项" });
+      await flushPromises();
+      const result = wrapper.vm.trimFormValues();
+      await flushPromises();
+      expect(result).toEqual({
+        first: "初始项",
+        later: "动态项",
+        external: "  外部数据  ",
+      });
+      expect(wrapper.emitted("update:modelValue").at(-1)[0]).toEqual(result);
+      wrapper.unmount();
+    });
+
+    it("隐藏项原始值被修剪，hiddenValue 提交规则及恢复显隐保持正确", async () => {
+      const formData = ref({ shown: "  显示项  ", secret: "  隐藏项  " });
+      const items = ref([
+        { prop: "shown", label: "显示项" },
+        {
+          prop: "secret",
+          label: "隐藏项",
+          visible: false,
+          hiddenValue: null,
+        },
+      ]);
+      const formRef = ref();
+      const wrapper = mount(
+        {
+          components: { FormPro },
+          setup: () => ({ formData, items, formRef }),
+          template:
+            '<FormPro ref="formRef" v-model="formData" :items="items" />',
+        },
+        { global: globalConfig },
+      );
+      await flushPromises();
+      expect(formData.value.secret).toBeNull();
+
+      const result = formRef.value.trimFormValues();
+      await flushPromises();
+      expect(result).toEqual({ shown: "显示项", secret: "隐藏项" });
+      expect(formRef.value.getSubmitData()).toEqual({
+        shown: "显示项",
+        secret: null,
+      });
+      expect(formData.value).toEqual({ shown: "显示项", secret: null });
+
+      items.value[1].visible = true;
+      await flushPromises();
+      expect(formData.value).toEqual({ shown: "显示项", secret: "隐藏项" });
+      wrapper.unmount();
+    });
+
+    it("批量字段一次收敛，重复调用不重复回抛", async () => {
+      const size = 300;
+      const modelValue = Object.fromEntries(
+        Array.from({ length: size }, (_, index) => [
+          `field${index}`,
+          `  value${index}  `,
+        ]),
+      );
+      const expected = Object.fromEntries(
+        Object.entries(modelValue).map(([key, value]) => [key, value.trim()]),
+      );
+      const items = Object.keys(modelValue).map((prop) => ({
+        prop,
+        visible: false,
+      }));
+      const wrapper = mountFormPro({ modelValue, items });
+      await flushPromises();
+
+      expect(wrapper.vm.trimFormValues()).toEqual(expected);
+      await flushPromises();
+      const emitCount = wrapper.emitted("update:modelValue")?.length || 0;
+      expect(emitCount).toBe(1);
+      expect(wrapper.vm.trimFormValues()).toEqual(expected);
+      await flushPromises();
+      expect(wrapper.emitted("update:modelValue")).toHaveLength(emitCount);
+      wrapper.unmount();
+    });
+  });
+
   it("24 栅格分列：item.span 优先级 > 表单级 span", async () => {
     const wrapper = mountFormPro({
       modelValue: {},

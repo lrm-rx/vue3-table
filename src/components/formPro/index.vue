@@ -42,6 +42,7 @@ import {
   flattenFormBlocks,
   GRID_COLS,
   collectHiddenValueOverrides,
+  collectFieldProps,
   buildInitialData,
   deriveDefaultValue,
   isFieldItem,
@@ -586,6 +587,22 @@ watch(
  */
 const getSubmitData = () => buildSubmitData(formData);
 
+// 修剪所有表单项的字符串首尾空格，仅批量写回发生变化的字段，返回当前数据快照。
+const trimFormValues = () => {
+  const trimmedValues = {};
+  let changed = false;
+  for (const field of collectFieldProps(props.items)) {
+    const value = formData[field];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed === value) continue;
+    trimmedValues[field] = trimmed;
+    changed = true;
+  }
+  if (changed) Object.assign(formData, trimmedValues);
+  return { ...formData };
+};
+
 /**
  * 对外暴露：对象 → FormData（multipart/form-data 提交）。
  * 不传 source 时默认取 getSubmitData()（已按 hiddenValue 规则改写隐藏字段值）。
@@ -766,6 +783,8 @@ const ownExposed = {
     uploadRefs[prop]?.getRemovedFiles?.(field, valuesOnly) ?? [],
   // 获取提交数据：按 hiddenValue / item.hiddenValue 规则改写隐藏字段值（保存/提交时使用）
   getSubmitData,
+  // 修剪所有表单项的字符串首尾空格，返回处理后的表单数据快照
+  trimFormValues,
   // 对象 → FormData（默认取提交数据；File/Blob 以二进制追加，用于 multipart 上传）
   toFormData,
   // —— 运行时动态增删改 items（配置项联动：禁用/显隐/异步 options 等）——
