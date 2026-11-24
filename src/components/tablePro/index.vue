@@ -2099,6 +2099,38 @@ const resolveValidConfig = (user) => {
   return { ...cfg, message: cfg.message || "default" };
 };
 
+// render/插槽的省略可能发生在 wrapper 的子元素上，而 vxe 原生只检测 wrapper。
+// 子元素确实以省略号截断时返回完整文本，让原生 Tooltip 继续负责展示与定位。
+const resolveTooltipConfig = (user) => {
+  const cfg = user || {};
+  const userContentMethod = cfg.contentMethod;
+  return {
+    ...cfg,
+    contentMethod: (params) => {
+      const customContent = userContentMethod?.(params);
+      if (customContent != null) return customContent;
+      const cell = params.cell;
+      const wrapper = cell?.querySelector?.(".vxe-cell--wrapper");
+      if (!wrapper || wrapper.scrollWidth > wrapper.clientWidth) {
+        return customContent;
+      }
+      const hasNestedEllipsis = Array.from(wrapper.querySelectorAll("*")).some(
+        (el) => {
+          if (!el.textContent?.trim() || el.scrollWidth <= el.clientWidth) {
+            return false;
+          }
+          const view = el.ownerDocument?.defaultView;
+          return view?.getComputedStyle(el).textOverflow === "ellipsis";
+        },
+      );
+      if (!hasNestedEllipsis) return customContent;
+      const text =
+        params.column?.type === "html" ? wrapper.innerText : wrapper.textContent;
+      return String(text ?? "").trim() || false;
+    },
+  };
+};
+
 const gridProps = computed(() => {
   // 剥离 class/style（绑定到根元素 .table-pro）
   // 剥离 virtualXConfig/virtualYConfig（camelCase + kebab-case）及已废弃的 scrollX/scrollY，
@@ -2114,6 +2146,8 @@ const gridProps = computed(() => {
     "edit-dirty-config": userEditDirtyKebab,
     validConfig: userValidConfigCamel,
     "valid-config": userValidConfigKebab,
+    tooltipConfig: userTooltipConfigCamel,
+    "tooltip-config": userTooltipConfigKebab,
     scrollX: userScrollXC,
     "scroll-x": userScrollXK,
     scrollY: userScrollYC,
@@ -2164,6 +2198,9 @@ const gridProps = computed(() => {
       expandConfig: props.expandConfig,
       columnConfig: { resizable: true, ...props.columnConfig },
       showOverflow: wrapText.value ? false : "tooltip",
+      tooltipConfig: resolveTooltipConfig(
+        userTooltipConfigCamel || userTooltipConfigKebab,
+      ),
       // 表头标题过长：headerWrap 关闭（默认）单行省略号 + 原生 title 悬停显示完整标题，开启则换行完整显示（列级配置可覆盖）
       showHeaderOverflow: props.headerWrap ? false : "title",
       columns: mergedColumns.value,

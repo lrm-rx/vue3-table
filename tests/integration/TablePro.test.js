@@ -1525,6 +1525,64 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
   });
 });
 
+describe("render 内容溢出 Tooltip", () => {
+  it("子元素省略且 wrapper 未溢出时提供完整文本，未省略时不强制显示", async () => {
+    const { wrapper } = await mountTablePro({
+      columns: [
+        {
+          field: "name",
+          render: ({ cellValue }) => h("span", cellValue),
+        },
+      ],
+      data: makeRows(1),
+      pagination: false,
+    });
+    const { contentMethod } = gridAttrs(wrapper).tooltipConfig;
+    const cell = document.createElement("td");
+    const cellWrapper = document.createElement("div");
+    const text = document.createElement("span");
+    cellWrapper.className = "vxe-cell--wrapper";
+    text.textContent = "完整的超长单元格文本";
+    text.style.textOverflow = "ellipsis";
+    cellWrapper.append(text);
+    cell.append(cellWrapper);
+    Object.defineProperties(cellWrapper, {
+      clientWidth: { value: 100 },
+      scrollWidth: { value: 100, configurable: true },
+    });
+    Object.defineProperties(text, {
+      clientWidth: { value: 40 },
+      scrollWidth: { value: 160, configurable: true },
+    });
+    const params = { cell, column: {}, row: {} };
+
+    expect(contentMethod(params)).toBe("完整的超长单元格文本");
+
+    Object.defineProperty(text, "scrollWidth", { value: 40 });
+    expect(contentMethod(params)).toBeUndefined();
+
+    Object.defineProperty(text, "scrollWidth", { value: 160 });
+    Object.defineProperty(cellWrapper, "scrollWidth", { value: 120 });
+    expect(contentMethod(params)).toBeUndefined();
+  });
+
+  it("用户自定义 contentMethod 与其他 tooltipConfig 配置保持优先", async () => {
+    const userContentMethod = vi.fn(() => "自定义提示");
+    const { wrapper } = await mountTablePro({
+      columns: STATIC_COLUMNS,
+      data: makeRows(1),
+      pagination: false,
+      tooltipConfig: { contentMethod: userContentMethod, theme: "dark" },
+    });
+    const tooltipConfig = gridAttrs(wrapper).tooltipConfig;
+    const params = { cell: null, column: {}, row: {} };
+
+    expect(tooltipConfig.theme).toBe("dark");
+    expect(tooltipConfig.contentMethod(params)).toBe("自定义提示");
+    expect(userContentMethod).toHaveBeenCalledWith(params);
+  });
+});
+
 function propsNotMutated(cols) {
   return cols.every((c) => {
     if (c.slots !== undefined) return false;

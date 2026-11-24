@@ -123,7 +123,8 @@ const columns = ref([
   },
   {
     field: "email",
-    title: "邮箱",
+    title: "邮箱（render 省略 Tooltip）",
+    width: 190,
     filterType: "FilterInput",
     sortable: true,
     editRender: "edit_email",
@@ -465,8 +466,13 @@ const pageSizes = [10, 20, 50, 100, 200, 500, 1000];
 
 const onDataCallback = (data) => {
   if (!data || !Array.isArray(data.list)) return data;
-  data.list = data.list.map((item) => ({
+  data.list = data.list.map((item, index) => ({
     ...item,
+    // render 溢出 Tooltip 示例：首行长邮箱在固定窄列中省略，悬停可查看完整内容
+    email:
+      index === 0
+        ? "render-overflow-tooltip-demo-with-a-very-long-email-address@example.com"
+        : item.email,
     roleText:
       { admin: "管理员", editor: "编辑", viewer: "访客", developer: "开发者" }[
         item.role
@@ -989,6 +995,9 @@ watch(accountVisible, (v) => setColsVisible(["account"], v));
       <el-button size="small" type="primary" @click="batchToggle">
         批量切换（创建时间 + 账号）
       </el-button>
+    </div>
+    <div style="margin-bottom: 8px; font-size: 13px; color: #606266">
+      render 溢出提示：邮箱列首行使用长文本和固定窄列，出现省略号后悬停单元格，可通过 Tooltip 查看完整内容。
     </div>
     <TablePro
       ref="tableProRef"
