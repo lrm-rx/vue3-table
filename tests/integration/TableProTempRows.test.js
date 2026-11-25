@@ -208,7 +208,7 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     wrapper.unmount();
   });
 
-  it("远程模式提交当前编辑后，返回并修剪编辑行和新增行", async () => {
+  it("远程模式由调用方提交编辑并传入行数组，纯函数不修改原行", async () => {
     const serverRow = { id: 1, name: "server" };
     const wrapper = mount(TablePro, {
       attachTo: document.body,
@@ -244,13 +244,19 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
       .vm.$emit("update:modelValue", "  远程编辑  ");
     await flushPromises();
 
-    const result = await wrapper.vm.trimCellValues();
+    await grid.clearEdit();
     await flushPromises();
-    expect(result.updateRecords).toHaveLength(1);
-    expect(result.updateRecords[0].name).toBe("远程编辑");
-    expect(result.insertRecords).toEqual([inserted]);
-    expect(result.insertRecords[0].name).toBe("远程新增");
-    expect(serverRow.name).toBe("远程编辑");
+    const { updateRecords, insertRecords } = wrapper.vm.getChangeState();
+    const rows = [...updateRecords, ...insertRecords];
+    const result = wrapper.vm.trimCellValues(rows);
+    expect(result.map((row) => row.name)).toEqual(["远程编辑", "远程新增"]);
+    expect(rows.map((row) => row.name)).toEqual([
+      "  远程编辑  ",
+      "  远程新增  ",
+    ]);
+    expect(result[0]).not.toBe(serverRow);
+    expect(result[1]).not.toBe(inserted);
+    expect(serverRow.name).toBe("  远程编辑  ");
     wrapper.unmount();
   });
 
@@ -417,7 +423,7 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     t.wrapper.unmount();
   });
 
-  it("trimCellValues 返回并修剪所有分页登记的新增行", async () => {
+  it("trimCellValues 接收所有分页登记的新增行并返回新数组", async () => {
     const data = makeData(Array.from({ length: 25 }, (_, i) => i + 1));
     const t = await mountTable(data, { pagination: true });
 
@@ -435,18 +441,25 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     await flushPromises();
     await nextFrame();
 
-    const result = await t.wrapper.vm.trimCellValues();
-    expect(result.updateRecords).toEqual([]);
-    expect(result.insertRecords.map((row) => row.name).sort()).toEqual([
+    const { updateRecords, insertRecords } = t.wrapper.vm.getChangeState();
+    expect(updateRecords).toEqual([]);
+    const rows = [...updateRecords, ...insertRecords];
+    const result = t.wrapper.vm.trimCellValues(rows);
+    expect(result.map((row) => row.name).sort()).toEqual([
       "page-1-temp",
       "page-2-temp",
     ]);
+    expect(rows.map((row) => row.name).sort()).toEqual([
+      "  page-1-temp  ",
+      "  page-2-temp  ",
+    ]);
+    result.forEach((row, index) => expect(row).not.toBe(rows[index]));
     const insertedNames = t.wrapper.vm
       .getAllData()
       .filter((row) => String(row.id).startsWith("row_"))
       .map((row) => row.name)
       .sort();
-    expect(insertedNames).toEqual(["page-1-temp", "page-2-temp"]);
+    expect(insertedNames).toEqual(["  page-1-temp  ", "  page-2-temp  "]);
     expect(data[0].name).toBe("n1");
     t.wrapper.unmount();
   });

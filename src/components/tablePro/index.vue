@@ -19,7 +19,7 @@ import {
   camelize,
   mergeProps,
 } from "vue";
-import { cloneDeep, get, isEqual, set } from "lodash-es";
+import { cloneDeep, isEqual, isPlainObject } from "lodash-es";
 import { nanoid } from "nanoid";
 // 注册表头过滤渲染器（高阶复用），作为模块副作用执行一次
 import "./renderers/renderers.js";
@@ -2457,38 +2457,18 @@ const getAllData = () => {
   return allData;
 };
 
-// 修剪编辑行和新增行的字符串首尾空格，返回处理后的待提交行数据。
-const trimCellValues = async () => {
-  const grid = gridRef.value;
-  if (!grid) return { updateRecords: [], insertRecords: [] };
-  // 与校验入口一致：先提交当前编辑值，并等待 vxe 延迟关闭流程结束。
-  await grid.clearEdit?.();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  flushAlwaysEdit();
-  const columns =
-    grid.getTableColumn?.()?.collectColumn || grid.getColumns?.() || [];
-  const fields = Array.from(
-    new Set(columns.map((column) => column.field).filter(Boolean)),
-  );
-  const { updateRecords, insertRecords } = getChangeState();
-  const rows = new Set([...updateRecords, ...insertRecords]);
-  let changed = false;
-  for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
-    for (const field of fields) {
-      const value = get(row, field);
-      if (typeof value !== "string") continue;
-      const trimmed = value.trim();
-      if (trimmed === value) continue;
-      set(row, field, trimmed);
-      changed = true;
-    }
-  }
-  if (changed) {
-    bumpCheckboxOptionsCache();
-    recomputeChanged();
-  }
-  return { updateRecords, insertRecords };
+// 纯函数：递归修剪行内普通对象和数组中的字符串，不修改传入数据或 Grid 状态。
+const trimCellValues = (rows) => {
+  if (!Array.isArray(rows)) return [];
+  const trimValue = (value) => {
+    if (typeof value === "string") return value.trim();
+    if (Array.isArray(value)) return value.map(trimValue);
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, trimValue(item)]),
+    );
+  };
+  return rows.map(trimValue);
 };
 
 // ========== 暴露常用方法 ==========
@@ -2507,7 +2487,7 @@ defineExpose({
   // 静态模式：返回本地过滤/排序后的完整数据，排除当前已删除正式行，
   // 并合并所有页登记的未保存临时行；远程模式仍返回当前已加载页。
   getAllData,
-  // 修剪编辑行和新增行的字符串首尾空格，返回处理后的待提交行数据。
+  // 纯函数：传入新增/编辑行数组，返回修剪字符串首尾空格后的新数组。
   trimCellValues,
   // 强制写回常驻编辑器（alwaysEdit）尚未落地的输入（如父组件自定义保存流程前调用）
   flushAlwaysEdit,

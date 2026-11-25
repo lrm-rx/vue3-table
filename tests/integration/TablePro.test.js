@@ -1471,28 +1471,6 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
     wrapper.unmount();
   });
 
-  it("trimCellValues 先落盘当前输入，再修剪首尾空格", async () => {
-    const rows = makeRows(1);
-    const { wrapper, grid } = await mountAlways(rows, {
-      columns: ALWAYS_COLUMNS,
-      fullData: rows,
-    });
-    grid.mock.recordset = {
-      insertRecords: [],
-      removeRecords: [],
-      updateRecords: [rows[0]],
-    };
-    const { row, render } = cellOf(wrapper, "name", 0);
-
-    render().props["onUpdate:modelValue"]("  最新输入  ");
-    expect(row.name).toBe("name-0");
-    const result = await wrapper.vm.trimCellValues();
-    expect(result).toEqual({ updateRecords: [row], insertRecords: [] });
-    expect(row.name).toBe("最新输入");
-    expect(row.age).toBe(0);
-    wrapper.unmount();
-  });
-
   it("markSaved：先落盘再重置，新基线包含最后一次输入", async () => {
     const rows = makeRows(2);
     const { wrapper, grid } = await mountAlways(rows, { fullData: rows });
@@ -1548,120 +1526,167 @@ describe("常驻编辑器（alwaysEdit）防抖写回", () => {
 });
 
 describe("单元格字符串首尾空格修剪", () => {
-  it("仅处理并返回编辑行和新增行，支持嵌套字段与跨页编辑行", async () => {
-    const columns = [
-      { field: "name", title: "姓名" },
-      { field: "age", title: "年龄" },
-      { field: "profile.remark", title: "备注" },
-    ];
-    const rows = Array.from({ length: 12 }, (_, index) => ({
-      id: index + 1,
-      name: `  name-${index}  `,
-      age: index,
-      profile: { remark: index === 0 ? "  首行备注  " : "备注" },
-      ignored: "  不处理列外字段  ",
-    }));
-    const inserted = {
-      id: 13,
-      name: "  新增行  ",
-      age: 13,
-      profile: { remark: "  新增备注  " },
-      ignored: "  不处理列外字段  ",
-    };
-    const updateRecords = [rows[0], rows[10]];
-    const { wrapper, grid } = await mountTablePro(
-      { columns, data: rows, pagination: true },
-      { columns, fullData: rows.slice(0, 10) },
-    );
-    grid.mock.recordset = {
-      insertRecords: [inserted],
-      removeRecords: [],
-      updateRecords,
-    };
-
-    const result = await wrapper.vm.trimCellValues();
-    expect(result).toEqual({ updateRecords, insertRecords: [inserted] });
-    expect(result.updateRecords[0].name).toBe("name-0");
-    expect(result.updateRecords[1].name).toBe("name-10");
-    expect(result.updateRecords[0].profile.remark).toBe("首行备注");
-    expect(result.insertRecords[0].name).toBe("新增行");
-    expect(result.insertRecords[0].profile.remark).toBe("新增备注");
-    expect(rows[1].name).toBe("  name-1  ");
-    expect(rows[0].age).toBe(0);
-    expect(rows[0].ignored).toBe("  不处理列外字段  ");
-    await expect(wrapper.vm.trimCellValues()).resolves.toEqual(result);
-    wrapper.unmount();
-  });
-
-  it("没有编辑或新增时返回空数组，不处理普通行及删除行", async () => {
+  it("接收新增/编辑行数组，返回完整的新数组且不修改原数据或 Grid", async () => {
     const columns = [{ field: "name", title: "姓名" }];
-    const rows = [
-      { id: 1, name: "  普通行  " },
-      { id: 2, name: "  删除行  " },
-    ];
+    const tableRows = [{ id: 99, name: "表格原行" }];
     const { wrapper, grid } = await mountTablePro(
-      { columns, data: rows, pagination: false },
-      { columns, fullData: [rows[0]] },
+      { columns, data: tableRows, pagination: false },
+      { columns, fullData: tableRows },
     );
-    grid.mock.recordset = {
-      insertRecords: [],
-      removeRecords: [rows[1]],
-      updateRecords: [],
-    };
+    const rows = [
+      {
+        id: 1,
+        name: "  编辑行  ",
+        profile: { remark: "  嵌套备注  " },
+        tags: ["  标签一  ", { label: "  标签二  " }],
+        extra: "  非列字段同样处理  ",
+      },
+      { id: 2, name: "  新增行  ", age: 0 },
+    ];
+    const original = JSON.parse(JSON.stringify(rows));
+    const gridCalls = JSON.parse(JSON.stringify(grid.mock.calls));
 
-    await expect(wrapper.vm.trimCellValues()).resolves.toEqual({
-      updateRecords: [],
-      insertRecords: [],
-    });
-    expect(rows.map((row) => row.name)).toEqual([
-      "  普通行  ",
-      "  删除行  ",
+    const result = wrapper.vm.trimCellValues(rows);
+    expect(result).toEqual([
+      {
+        id: 1,
+        name: "编辑行",
+        profile: { remark: "嵌套备注" },
+        tags: ["标签一", { label: "标签二" }],
+        extra: "非列字段同样处理",
+      },
+      { id: 2, name: "新增行", age: 0 },
     ]);
+    expect(rows).toEqual(original);
+    expect(result).not.toBe(rows);
+    expect(result[0]).not.toBe(rows[0]);
+    expect(result[0].profile).not.toBe(rows[0].profile);
+    expect(result[0].tags).not.toBe(rows[0].tags);
+    expect(grid.mock.calls).toEqual(gridCalls);
+    expect(tableRows[0].name).toBe("表格原行");
     wrapper.unmount();
   });
 
-  it("处理制表符、换行及 Unicode 空白，跳过非字符串并保留无空格编辑行", async () => {
-    const columns = [
-      { field: "name" },
-      { field: "blank" },
-      { field: "unicode" },
-      { field: "age" },
-      { field: "tags" },
-      { field: "profile.remark" },
+  it("处理 Unicode 空白并保留特殊原始值、Date、File 和类实例", async () => {
+    class Meta {
+      constructor() {
+        this.label = "  类实例不递归处理  ";
+      }
+    }
+    const date = new Date("2026-01-01T00:00:00.000Z");
+    const file = new File(["content"], "test.txt", { type: "text/plain" });
+    const meta = new Meta();
+    const callback = () => "callback";
+    const symbol = Symbol("key");
+    const rows = [
+      {
+        name: "\t  张 三  \n",
+        blank: " \t\n ",
+        unicode: "\u3000内容\u00a0",
+        age: 0,
+        active: false,
+        empty: null,
+        missing: undefined,
+        big: 123n,
+        symbol,
+        callback,
+        date,
+        file,
+        meta,
+        emptyObject: {},
+        emptyArray: [],
+      },
     ];
-    const updated = {
-      id: 1,
-      name: "\t  张 三  \n",
-      blank: " \t\n ",
-      unicode: "\u3000内容\u00a0",
-      age: 0,
-      tags: ["  数组不递归处理  "],
-    };
-    const unchanged = { id: 2, name: "已经干净" };
-    const inserted = { id: 3, name: " \u3000新增行\u3000 " };
-    const { wrapper, grid } = await mountTablePro(
-      { columns, data: [updated, unchanged], pagination: false },
-      { columns, fullData: [updated, unchanged] },
-    );
-    grid.mock.recordset = {
-      insertRecords: [inserted],
-      removeRecords: [],
-      updateRecords: [updated, unchanged],
-    };
+    const { wrapper } = await mountTablePro({
+      columns: [{ field: "name" }],
+      data: [],
+      pagination: false,
+    });
 
-    const result = await wrapper.vm.trimCellValues();
-    expect(result.updateRecords).toEqual([updated, unchanged]);
-    expect(result.insertRecords).toEqual([inserted]);
-    expect(updated).toMatchObject({
+    const result = wrapper.vm.trimCellValues(rows);
+    expect(result[0]).toMatchObject({
       name: "张 三",
       blank: "",
       unicode: "内容",
       age: 0,
-      tags: ["  数组不递归处理  "],
+      active: false,
+      empty: null,
     });
-    expect(updated).not.toHaveProperty("profile");
-    expect(unchanged.name).toBe("已经干净");
-    expect(inserted.name).toBe("新增行");
+    expect(result[0].missing).toBeUndefined();
+    expect(result[0].big).toBe(123n);
+    expect(result[0].symbol).toBe(symbol);
+    expect(result[0].callback).toBe(callback);
+    expect(result[0].date).toBe(date);
+    expect(result[0].file).toBe(file);
+    expect(result[0].meta).toBe(meta);
+    expect(meta.label).toBe("  类实例不递归处理  ");
+    expect(result[0].emptyObject).toEqual({});
+    expect(result[0].emptyObject).not.toBe(rows[0].emptyObject);
+    expect(result[0].emptyArray).toEqual([]);
+    expect(result[0].emptyArray).not.toBe(rows[0].emptyArray);
+    expect(rows[0].name).toBe("\t  张 三  \n");
+    expect(rows[0].blank).toBe(" \t\n ");
+    wrapper.unmount();
+  });
+
+  it("相同输入同步返回相同内容，非数组入参返回空数组", async () => {
+    const rows = [{ id: 1, name: "  保持不变  " }];
+    const { wrapper } = await mountTablePro({
+      columns: [{ field: "name" }],
+      data: [],
+      pagination: false,
+    });
+
+    const first = wrapper.vm.trimCellValues(rows);
+    const second = wrapper.vm.trimCellValues(rows);
+    expect(first).toEqual([{ id: 1, name: "保持不变" }]);
+    expect(second).toEqual(first);
+    expect(second).not.toBe(first);
+    expect(second[0]).not.toBe(first[0]);
+    expect(rows[0].name).toBe("  保持不变  ");
+    expect(wrapper.vm.trimCellValues()).toEqual([]);
+    expect(wrapper.vm.trimCellValues(null)).toEqual([]);
+    expect(wrapper.vm.trimCellValues({ name: "  非数组  " })).toEqual([]);
+    wrapper.unmount();
+  });
+
+  it("500 条冻结行保持顺序且转换幂等，原数据与 Grid 调用均不变", async () => {
+    const size = 500;
+    const rows = Object.freeze(
+      Array.from({ length: size }, (_, index) =>
+        Object.freeze({
+          id: index,
+          name: `  name-${index}  `,
+          profile: Object.freeze({ remark: `  remark-${index}  ` }),
+          tags: Object.freeze([`  tag-${index}  `]),
+        }),
+      ),
+    );
+    const { wrapper, grid } = await mountTablePro({
+      columns: [{ field: "name" }],
+      data: [],
+      pagination: false,
+    });
+    const gridCalls = JSON.parse(JSON.stringify(grid.mock.calls));
+
+    const result = wrapper.vm.trimCellValues(rows);
+    expect(result).toHaveLength(size);
+    expect(
+      result.every(
+        (row, index) =>
+          row.id === index &&
+          row.name === `name-${index}` &&
+          row.profile.remark === `remark-${index}` &&
+          row.tags[0] === `tag-${index}`,
+      ),
+    ).toBe(true);
+    expect(result.map((row) => row.id)).toEqual(rows.map((row) => row.id));
+    expect(rows[0].name).toBe("  name-0  ");
+    expect(rows[size - 1].profile.remark).toBe(`  remark-${size - 1}  `);
+    expect(result[0]).not.toBe(rows[0]);
+    expect(result[0].profile).not.toBe(rows[0].profile);
+    expect(wrapper.vm.trimCellValues(result)).toEqual(result);
+    expect(grid.mock.calls).toEqual(gridCalls);
     wrapper.unmount();
   });
 });
