@@ -14,7 +14,7 @@
  * 直接调用 gridRef 的 insert / insertAt / remove 不会登记归属页。
  */
 import { nextTick, onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import TablePro from "@/components/tablePro/index.vue";
 import { getUserListApi, addUserApi, updateUserApi } from "@/api";
 
@@ -172,14 +172,44 @@ const onRemoteBatchInsert = () => {
   remoteRef.value?.insertRowAt?.(records, -1);
   syncRemote();
 };
-const onRemoteRemove = () => {
+const onRemoteRemove = async () => {
   const rows = remoteRef.value?.getCheckboxRecords?.() || [];
   if (!rows.length) {
     ElMessage.warning("请先勾选要删除的行");
     return;
   }
-  remoteRef.value?.removeRows?.(rows);
-  remoteRef.value?.clearCheckboxRow?.();
+  console.log(
+    "[远程删除] 确认前选中行",
+    rows.map((row) => ({ ...row })),
+  );
+  try {
+    await ElMessageBox.confirm(
+      `确认删除选中的 ${rows.length} 条数据吗？`,
+      "删除确认",
+      {
+        confirmButtonText: "确认删除",
+        cancelButtonText: "取消",
+        type: "warning",
+      },
+    );
+  } catch {
+    return;
+  }
+  const selectedAfterConfirm =
+    remoteRef.value?.getCheckboxRecords?.() || [];
+  const currentRows = remoteRef.value?.getFullData?.() || [];
+  console.log("[远程删除] 确认后状态", {
+    selectedRows: selectedAfterConfirm.map((row) => ({ ...row })),
+    rowKeys: rows.map((row) => row?.id),
+    rowExists: rows.map((row) => currentRows.includes(row)),
+    currentRowKeys: currentRows.map((row) => row?.id),
+  });
+  const result = await remoteRef.value?.removeRows?.(rows);
+  console.log("[远程删除] 实际删除结果", {
+    count: result?.rows?.length || 0,
+    rows: (result?.rows || []).map((row) => ({ ...row })),
+  });
+  await remoteRef.value?.clearCheckboxRow?.();
   syncRemote();
 };
 // 保存：先调真实新增/更新接口，成功后 markSaved + 重新请求（临时行落地为服务端数据）

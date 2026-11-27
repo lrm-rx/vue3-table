@@ -679,6 +679,23 @@ const onSave = async () => {
 - 临时行跨页登记只对组件暴露的 `insertRow()`、`insertRowAt()`、`removeRows()` 生效；直接调用 `gridRef.insert()`、`gridRef.insertAt()` 或 `gridRef.remove()` 不会维护该登记。
 - 远程模式的 `getAllData()` 不代表服务端全量数据，只能返回当前已加载页；未加载页仍需通过远程接口获取。
 
+#### 二次确认后临时行无法删除的定位步骤
+
+[TableTempRowPaginationDemo.vue](src/views/TableTempRowPaginationDemo.vue) 的远程表格删除操作已加入 `[远程删除]` 调试日志，可按以下步骤定位：
+
+1. 打开浏览器控制台，新增一条临时行并勾选，然后点击「删除勾选行」。
+2. 查看 **确认前选中行**：确认删除前已经取得正确的行数据及主键；此处使用行数据快照，避免控制台中的引用对象随后被修改而干扰判断。
+3. 点击「确认删除」，查看 **确认后状态**：
+   - `selectedRows` 为空：弹窗等待期间数据刷新或选区被清空，检查 `useTable` 请求、分页、过滤及数据监听逻辑。
+   - `rowExists` 包含 `false`：确认前保存的行引用已不在 Grid 当前数据中，检查 `loadData`、深拷贝和临时行恢复逻辑。
+   - `rowKeys` 包含空值，或确认前后主键变化：检查临时行主键生成、`rowConfig.keyField` 及接口数据转换；临时行必须具有稳定且唯一的行键。
+4. 查看 **实际删除结果**：
+   - `count` 为 `0`：vxe 没有匹配到删除行，结合 `rowExists` 和 `rowKeys` 检查行引用或行键。
+   - `count` 正常但行随后重新出现：删除后临时行登记可能未正确注销，检查 `removeRows()` 是否经过组件封装，以及 `unregisterTempRows`、`restoreTempRows` 的执行情况。
+5. 点击「取消」或关闭弹窗时不应执行删除，也不应出现「实际删除结果」日志。
+
+迁移组件时，若只有加入二次确认后出现问题，应重点比较迁移项目的 `useTable`、`renderData` 数据替换时机、临时行主键处理及 `removeRows()` 实现。`removeRows()` 和 `clearCheckboxRow()` 均返回 Promise 时，应按顺序 `await`，避免后续操作提前执行。定位完成后可移除演示中的调试日志。
+
 完整示例见 [src/views/TableTempRowPaginationDemo.vue](src/views/TableTempRowPaginationDemo.vue)。
 
 ---
