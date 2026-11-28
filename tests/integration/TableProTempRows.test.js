@@ -149,6 +149,116 @@ describe("TablePro 临时新增行在数据重载后的保留", () => {
     expect(names).not.toContain("drop");
   });
 
+  it("数据重载后删除唯一临时行，cellChanged 应归净", async () => {
+    const t = await mountTable(makeData([1, 2]));
+    t.wrapper.vm.insertRow({ name: "temp" });
+    await flushPromises();
+    await nextFrame();
+    expect(t.changed()).toBe(true);
+
+    await t.reload(makeData([1, 2, 3]));
+    const tempRow = t.fullData().find((row) => row.name === "temp");
+    expect(tempRow).toBeTruthy();
+
+    await t.wrapper.vm.removeRows(tempRow);
+    await flushPromises();
+    await nextFrame();
+
+    expect(t.fullData().map((row) => row.id)).toEqual([1, 2, 3]);
+    expect(t.wrapper.vm.getChangeState()).toMatchObject({
+      changed: false,
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [],
+    });
+    expect(t.changed()).toBe(false);
+    t.wrapper.unmount();
+  });
+
+  it("远程接口刷新后删除唯一临时行，cellChanged 应归净", async () => {
+    const state = { changed: false };
+    const wrapper = mount(TablePro, {
+      attachTo: document.body,
+      props: {
+        columns,
+        requestApi: async () => ({ list: makeData([1, 2]), total: 2 }),
+        requestAuto: true,
+        showToolbar: false,
+        editable: true,
+        cellChanged: false,
+        "onUpdate:cellChanged": (value) => {
+          state.changed = value;
+          wrapper.setProps({ cellChanged: value });
+        },
+      },
+      global: { plugins: [VxeGrid] },
+    });
+    await flushPromises();
+    await nextFrame();
+    const grid = wrapper.findComponent({ name: "VxeGrid" }).vm;
+
+    wrapper.vm.insertRow({ name: "temp" });
+    await flushPromises();
+    await nextFrame();
+    await wrapper.vm.getTableList();
+    await flushPromises();
+    await nextFrame();
+    const tempRow = grid.getTableData().fullData.find((row) => row.name === "temp");
+    expect(tempRow).toBeTruthy();
+    expect(state.changed).toBe(true);
+
+    // 模拟真实操作：刷新后勾选，等待二次确认，再按最新勾选记录删除。
+    await grid.setCheckboxRow(tempRow, true);
+    await flushPromises();
+    const selectedRows = grid.getCheckboxRecords();
+    expect(selectedRows.map((row) => row.id)).toEqual([tempRow.id]);
+    await nextFrame();
+    const result = await wrapper.vm.removeRows(selectedRows);
+    await grid.clearCheckboxRow();
+    await flushPromises();
+    await nextFrame();
+
+    expect(result.rows).toHaveLength(1);
+    expect(grid.getTableData().fullData.map((row) => row.id)).toEqual([1, 2]);
+    expect(wrapper.vm.getChangeState()).toMatchObject({
+      changed: false,
+      insertRecords: [],
+      removeRecords: [],
+      updateRecords: [],
+    });
+    expect(state.changed).toBe(false);
+    wrapper.unmount();
+  });
+
+  it("删除存在未提交输入的临时行后，清理编辑脏态并归净", async () => {
+    const t = await mountTable(makeData([1]), {
+      columns: [
+        columns[0],
+        { ...columns[1], editRender: { name: "ElInput" } },
+      ],
+    });
+    t.wrapper.vm.insertRow({ name: "before" });
+    await flushPromises();
+    await nextFrame();
+    const tempRow = t.fullData().find((row) => row.name === "before");
+    await t.grid().setEditCell(tempRow, "name");
+    await flushPromises();
+    t.wrapper
+      .findComponent({ name: "ElInput" })
+      .vm.$emit("update:modelValue", "dirty");
+    await flushPromises();
+    expect(t.changed()).toBe(true);
+
+    await t.wrapper.vm.removeRows(tempRow);
+    await flushPromises();
+    await nextFrame();
+
+    expect(t.fullData().map((row) => row.id)).toEqual([1]);
+    expect(t.wrapper.vm.getChangeState().changed).toBe(false);
+    expect(t.changed()).toBe(false);
+    t.wrapper.unmount();
+  });
+
   it("markSaved 后临时行落地，重载不再重插", async () => {
     const t = await mountTable(makeData([1]));
     t.wrapper.vm.insertRow({ name: "saved" });

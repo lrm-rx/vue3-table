@@ -912,8 +912,11 @@ watch(cellChangedModel, (val) => {
 });
 
 // ========== 新增/移除行封装（vxe 自带操作的包装，调用后自动同步变更状态）==========
-const afterChangeOp = (res) => {
-  nextTick(recomputeChanged);
+const afterChangeOp = async (res) => {
+  // 等 vxe 完成内部 insert/remove recordset 更新及表格渲染后再读取，避免旧脏态残留。
+  await res;
+  await nextTick();
+  recomputeChanged();
   return res;
 };
 // 临时添加行主键补齐：vxe 按行主键（rowConfig.keyField，默认 id）记录勾选/单选状态，

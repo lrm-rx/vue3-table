@@ -489,6 +489,81 @@ describe("TablePro 变更跟踪（v-model:cellChanged）", () => {
     expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(false);
   });
 
+  it("removeRows 等待 vxe 删除完成后再重算，避免 cellChanged 残留", async () => {
+    const rows = makeRows(1);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const inserted = { id: "new-1" };
+    grid.mock.recordset = {
+      insertRecords: [inserted],
+      removeRecords: [],
+      updateRecords: [],
+    };
+    wrapper.vm.insertRow(inserted);
+    await flushPromises();
+    expect(getChanged()).toBe(true);
+
+    let finishRemove;
+    const gridVm = wrapper.findComponent({ name: "VxeGridStub" }).vm;
+    vi.spyOn(gridVm.$.exposed, "remove").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRemove = () => {
+            grid.mock.recordset = {
+              insertRecords: [],
+              removeRecords: [],
+              updateRecords: [],
+            };
+            resolve({ rows: [inserted] });
+          };
+        }),
+    );
+    const removing = wrapper.vm.removeRows(inserted);
+    await flushPromises();
+    finishRemove();
+    await removing;
+    await flushPromises();
+
+    expect(getChanged()).toBe(false);
+    expect(wrapper.emitted("update:cellChanged").at(-1)[0]).toBe(false);
+  });
+
+  it("删除临时行后仍存在编辑记录时，cellChanged 保持 true", async () => {
+    const rows = makeRows(1);
+    const { wrapper, grid, getChanged } = await mountTracking(rows);
+    const inserted = { id: "new-1" };
+    grid.mock.recordset = {
+      insertRecords: [inserted],
+      removeRecords: [],
+      updateRecords: [rows[0]],
+    };
+    wrapper.vm.insertRow(inserted);
+    await flushPromises();
+
+    let finishRemove;
+    const gridVm = wrapper.findComponent({ name: "VxeGridStub" }).vm;
+    vi.spyOn(gridVm.$.exposed, "remove").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRemove = () => {
+            grid.mock.recordset = {
+              insertRecords: [],
+              removeRecords: [],
+              updateRecords: [rows[0]],
+            };
+            resolve({ rows: [inserted] });
+          };
+        }),
+    );
+    const removing = wrapper.vm.removeRows(inserted);
+    await flushPromises();
+    finishRemove();
+    await removing;
+    await flushPromises();
+
+    expect(wrapper.vm.getChangeState().updateRecords).toEqual([rows[0]]);
+    expect(getChanged()).toBe(true);
+  });
+
   it("edit-closed 提交后重算变更状态", async () => {
     const rows = makeRows(3);
     const { wrapper, grid, getChanged } = await mountTracking(rows);
