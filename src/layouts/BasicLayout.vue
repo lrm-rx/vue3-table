@@ -120,6 +120,10 @@ const activePath = computed(() => route.path);
   &__menu {
     border-right: none;
     height: calc(100vh - 60px);
+    // 菜单项超出可视高度时纵向滚动（否则被 aside 的 overflow:hidden 裁切，无法看到下方菜单）；
+    // 横向隐藏，避免折叠态或长标题触发水平滚动条
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   &__header {
     display: flex;
