@@ -357,7 +357,7 @@ const renderFieldContent = (item) => {
 
 // —— 紧凑模式：校验错误 tooltip ——
 // compact 下原生 .el-form-item__error 由样式隐藏（见 index.vue），错误信息改用 el-tooltip
-// 锚定在 el-form-item 根元素右上角（placement="top-end"）展示：
+// 锚定在控件容器（.el-form-item__content）右上角（placement="top-end"）展示：
 //   - 受控模式：只传 visible 布尔值、不传 onUpdate:visible → trigger 交互（hover/click/
 //     点击外部）全部失效，显隐完全由父级 errorTipVisible 驱动（validate 事件触发，
 //     errorTipDuration 秒后自动隐藏）；
@@ -382,6 +382,17 @@ const resolveErrorTipZIndex = (prop) => {
   return MAX_Z_INDEX;
 };
 
+// 锚点解析：取 el-form-item 的控件容器（.el-form-item__content）而非 item 根元素。
+// label-position="top" 时 label 位于控件上方，若锚定整个 item，tooltip 会落在 label
+// 之上、与控件之间隔着 label 高度与下外边距，观感偏远；锚定控件容器后 tooltip 紧贴
+// 控件顶部，与 label 位置（top/left/right）无关。ElPopperTrigger 经 unrefElement 解包，
+// DOM 元素原样返回、组件实例取 $el，两种入参均可。
+const resolveErrorTipAnchor = (prop) => {
+  const inst = props.formItemRefs?.[prop];
+  const el = inst?.$el ?? inst;
+  return el?.querySelector?.(".el-form-item__content") ?? el;
+};
+
 const renderErrorTip = (item) => {
   if (!props.compact) return null;
   const message = props.fieldErrors?.[item.prop];
@@ -389,9 +400,8 @@ const renderErrorTip = (item) => {
   return h(ElTooltip, {
     visible: !!(props.errorTipVisible && props.errorTipVisible[item.prop]),
     virtualTriggering: true,
-    // el-form-item 组件实例即可：ElPopperTrigger 内部经 unrefElement 解包出根元素，
-    // 以其右上角（top-end）为锚点定位
-    virtualRef: props.formItemRefs?.[item.prop],
+    // 锚定控件容器右上角（top-end），使 tooltip 紧贴控件而非整个 item
+    virtualRef: resolveErrorTipAnchor(item.prop),
     placement: "top-end",
     effect: "dark",
     content: message,

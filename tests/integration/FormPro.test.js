@@ -2432,8 +2432,12 @@ describe("FormPro 配置式表单", () => {
       expect(tooltip.exists()).toBe(true);
       expect(tooltip.props("visible")).toBe(true); // 受控显隐（无 onUpdate 监听 → trigger 交互失效）
       expect(tooltip.props("virtualTriggering")).toBe(true);
-      // 虚拟锚点即该字段的 el-form-item 实例 → 气泡定位在其右上角
-      expect(tooltip.props("virtualRef")).toBe(wrapper.vm.getFormItem("name"));
+      // 虚拟锚点即该字段的控件容器（.el-form-item__content）→ 气泡紧贴控件右上角，
+      // 与 label 位置无关（label-position="top" 时不会被 label 高度顶远）
+      const formItemEl = wrapper.vm.getFormItem("name").$el;
+      expect(tooltip.props("virtualRef")).toBe(
+        formItemEl.querySelector(".el-form-item__content"),
+      );
       expect(tooltip.props("placement")).toBe("top-end");
       // teleport 至 body 层的 popper 实体
       const el = popper();
