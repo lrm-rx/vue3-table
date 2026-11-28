@@ -98,6 +98,12 @@ const routes = [
         meta: { title: "FormPro ref/reactive 兼容", icon: "Document" },
       },
       {
+        path: "electronic-flow",
+        name: "ElectronicFlow",
+        component: () => import("@/views/ElectronicFlowDemo.vue"),
+        meta: { title: "电子流程图 ElectronicFlow", icon: "Share" },
+      },
+      {
         path: "float-ball",
         name: "FloatBall",
         component: () => import("@/views/FloatBallDemo.vue"),

@@ -16,6 +16,7 @@ import {
   Upload,
   Fold,
   Expand,
+  Share,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();
@@ -37,6 +38,7 @@ const iconMap = {
   Document,
   Aim,
   Upload,
+  Share,
 };
 
 // 菜单数据：取当前布局下的子路由
